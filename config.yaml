@@ -106,7 +106,7 @@ optimizer:
   trend_weight_mult_grid: [0.9, 1.0, 1.1]
 
 signals:
-  min_confidence: 55
+  min_confidence: 65
   min_risk_reward: 1.0
   default_risk_percent: 1
   max_candidates_per_run: 0  # 0 = unlimited (all passing candidates)
