@@ -55,6 +55,51 @@ trading:
   aggressive_mode: true  # relax quality gates for more demo fills
   allow_pyramiding: true  # stack positions from different signals (same symbol/side OK)
   pyramid_block_same_setup: false  # false = allow same setup type from a new signal
+  max_open_per_symbol: 5  # hard cap on open positions per symbol
+  dynamic_entries:
+    enabled: true
+    require_positive_stack_pnl: true  # only add layers when same-side stack is green
+    require_favorable_price: true  # buy higher / sell lower than last entry
+    min_atr_distance_from_last: 0.35
+    scale_lot_factor: 0.9
+    per_symbol:
+      XAUUSDm:
+        min_atr_distance_from_last: 0.3
+        scale_lot_factor: 0.88
+      USOILm:
+        min_atr_distance_from_last: 0.4
+        scale_lot_factor: 0.9
+      BTCUSDm:
+        min_atr_distance_from_last: 0.45
+        scale_lot_factor: 0.85
+  break_even:
+    enabled: true
+    trigger_atr_mult: 0.5
+    lock_profit_atr_mult: 0.1
+    per_symbol:
+      XAUUSDm:
+        trigger_atr_mult: 0.4
+        lock_profit_atr_mult: 0.08
+      USOILm:
+        trigger_atr_mult: 0.55
+        lock_profit_atr_mult: 0.12
+      BTCUSDm:
+        trigger_atr_mult: 0.5
+        lock_profit_atr_mult: 0.15
+  trailing:
+    enabled: true
+    activation_atr_mult: 0.75
+    trail_atr_mult: 0.35
+    per_symbol:
+      XAUUSDm:
+        activation_atr_mult: 0.65
+        trail_atr_mult: 0.28
+      USOILm:
+        activation_atr_mult: 0.7
+        trail_atr_mult: 0.32
+      BTCUSDm:
+        activation_atr_mult: 0.8
+        trail_atr_mult: 0.4
 
 filters:
   min_volume_ratio: 0.3

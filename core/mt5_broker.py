@@ -8,6 +8,7 @@ from typing import Any
 
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
 from core.position_sync import _setup_type_from_comment
+from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer, symbol_capacity_available
 from core.trade_limits import enrich_positions_with_orders, is_duplicate_position
 from core.trade_tracker import TradeTracker
 from core.utils import read_json_state, utc_now_iso, write_json_state
@@ -59,6 +60,13 @@ class MT5Broker:
             sid = signal.get("signal_id")
             if sid in executed:
                 self.logger.info("Skip %s — signal already executed", sid)
+                continue
+
+            if not symbol_capacity_available(self.config, signal["symbol"], open_positions):
+                self.logger.info(
+                    "Skip %s — max open positions per symbol reached",
+                    signal["symbol"],
+                )
                 continue
 
             if is_duplicate_position(
@@ -255,6 +263,8 @@ class MT5Broker:
         if not allowed:
             return 0.0
         vol = max(capped, float(info.volume_min))
+        layer = int(signal.get("pyramid_layer", pyramid_layer_index(signal, open_positions)))
+        vol = scale_lot_for_layer(self.config, signal["symbol"], vol, layer)
         return self._normalize_volume(vol, info)
 
     def _normalize_volume(self, volume: float, info: Any) -> float:

@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from core.exposure import check_exposure_limits
+from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
 from core.trade_limits import is_duplicate_position, unlimited_trades
 from core.utils import utc_now_iso
 
@@ -90,6 +91,20 @@ class Verifier:
             signal,
             active_signals,
         )
+        checks["symbol_capacity"] = symbol_capacity_available(
+            self.config,
+            signal["symbol"],
+            active_signals,
+        )
+        dyn_ok, adjusted_signal, dyn_reason = evaluate_dynamic_entry(
+            self.config,
+            signal,
+            active_signals,
+            feat,
+        )
+        checks["dynamic_entry"] = dyn_ok
+        if not dyn_ok and dyn_reason:
+            failures.append(dyn_reason)
 
         checks["kill_switch_safe"] = not kill_switch
 
@@ -114,7 +129,7 @@ class Verifier:
         }
         if approved:
             record["approved_at"] = utc_now_iso()
-            record["signal"] = signal
+            record["signal"] = adjusted_signal if dyn_ok else signal
         else:
             record["rejected_at"] = utc_now_iso()
             record["rejection_reason"] = "; ".join(failures)

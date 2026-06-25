@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
+from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
 from core.trade_limits import is_duplicate_position
 from core.utils import utc_now_iso
 
@@ -42,6 +43,9 @@ class PaperBroker:
 
         for record in approved:
             signal = record.get("signal", record)
+            if not symbol_capacity_available(self.config, signal["symbol"], positions):
+                self.logger.info("Paper skip %s — max open per symbol", signal["symbol"])
+                continue
             if is_duplicate_position(
                 self.config,
                 signal,
@@ -51,6 +55,13 @@ class PaperBroker:
                 continue
 
             symbol = signal["symbol"]
+            feat = {"price": prices.get(symbol, signal.get("entry")), "atr": signal.get("entry", 1) * 0.001}
+            dyn_ok, signal, dyn_reason = evaluate_dynamic_entry(self.config, signal, positions, feat)
+            if not dyn_ok:
+                self.logger.info("Paper skip %s — %s", symbol, dyn_reason)
+                orders.append(self._create_rejected_order(signal, feat["price"], dyn_reason or "dynamic_entry"))
+                continue
+
             price = prices.get(symbol, signal.get("entry"))
             if not price:
                 self.logger.warning("No price for %s — skipping", symbol)

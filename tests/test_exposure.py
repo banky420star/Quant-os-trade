@@ -19,6 +19,8 @@ from core.exposure import (
 )
 from core.paper_broker import PaperBroker
 from core.risk_manager import RiskManager
+from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
+from core.position_manager import compute_managed_sl
 from core.trade_limits import is_duplicate_position
 from core.verifier import Verifier
 
@@ -49,6 +51,7 @@ def test_exposure_used_pct():
 
 
 def test_verifier_rejects_exposure_limit_exceeded(config):
+    config["trading"]["dynamic_entries"] = {"enabled": False}
     existing = [{
         "symbol": "XAUUSDm",
         "side": "BUY",
@@ -98,6 +101,7 @@ def test_verifier_rejects_exposure_limit_exceeded(config):
 
 
 def test_paper_broker_blocks_oversized_exposure(config):
+    config["trading"]["dynamic_entries"] = {"enabled": False}
     positions = [{
         "position_id": "p1",
         "symbol": "USOILm",
@@ -131,6 +135,55 @@ def test_paper_broker_blocks_oversized_exposure(config):
     assert len(rejected_orders) == 1
     assert rejected_orders[0]["error"] == "exposure_limit_exceeded"
     assert len(result["positions"]) == 1
+
+
+def test_max_five_open_per_symbol(config):
+    config["trading"]["max_open_per_symbol"] = 5
+    positions = [
+        {"symbol": "XAUUSDm", "side": "SELL", "ticket": i}
+        for i in range(5)
+    ]
+    assert symbol_capacity_available(config, "XAUUSDm", positions) is False
+    assert symbol_capacity_available(config, "USOILm", positions) is True
+
+
+def test_dynamic_entry_requires_positive_stack(config):
+    config["trading"]["dynamic_entries"] = {"enabled": True, "require_positive_stack_pnl": True}
+    positions = [{
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "entry": 4000.0,
+        "size": 0.01,
+        "profit": -5.0,
+    }]
+    signal = {
+        "signal_id": "dyn-1",
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "setup_type": "pullback",
+        "entry": 3990.0,
+        "sl": 4010.0,
+        "tp1": 3960.0,
+        "confidence": 80,
+    }
+    feat = {"price": 3985.0, "atr": 8.0}
+    ok, _, reason = evaluate_dynamic_entry(config, signal, positions, feat)
+    assert ok is False
+    assert "stack_not_positive" in (reason or "")
+
+
+def test_break_even_moves_sl_on_buy(config):
+    pos = {"symbol": "XAUUSDm", "side": "BUY", "entry": 100.0, "sl": 95.0}
+    new_sl, row, actions = compute_managed_sl(
+        config,
+        pos,
+        current_price=101.0,
+        atr=2.0,
+        mgmt_row={},
+    )
+    assert new_sl is not None
+    assert new_sl > 95.0
+    assert "break_even" in actions
 
 
 def test_pyramiding_allows_different_signals_same_side(config):

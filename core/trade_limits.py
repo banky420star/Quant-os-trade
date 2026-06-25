@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.dynamic_entry import symbol_capacity_available as _symbol_capacity_available
+from core.dynamic_entry import symbol_position_count
+
 
 def unlimited_trades(config: dict[str, Any]) -> bool:
     """When true, no cap on candidates, exposure, or duplicate positions."""
@@ -40,6 +43,15 @@ def enrich_positions_with_orders(
     return enriched
 
 
+def symbol_capacity_available(
+    config: dict[str, Any],
+    symbol: str,
+    active_positions: list[dict[str, Any]],
+) -> bool:
+    """True when symbol is below max_open_per_symbol limit."""
+    return _symbol_capacity_available(config, symbol, active_positions)
+
+
 def is_duplicate_position(
     config: dict[str, Any],
     signal: dict[str, Any],
@@ -63,6 +75,9 @@ def is_duplicate_position(
 
     if unlimited_trades(config) and not allow_pyramiding(config):
         return False
+
+    if not symbol_capacity_available(config, symbol, active_positions):
+        return True
 
     if allow_pyramiding(config) or unlimited_trades(config):
         block_same_setup = bool(config.get("trading", {}).get("pyramid_block_same_setup", False))

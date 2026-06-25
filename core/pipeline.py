@@ -19,6 +19,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         health_loop,
         market_context_loop,
         memory_loop,
+        position_manager_loop,
         risk_loop,
         signal_loop,
         verifier_loop,
@@ -31,6 +32,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         ("signal_loop", signal_loop.run),
         ("verifier_loop", verifier_loop.run),
         ("execution_loop", execution_loop.run),
+        ("position_manager_loop", position_manager_loop.run),
         ("memory_loop", memory_loop.run),
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
