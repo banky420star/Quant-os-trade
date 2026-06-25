@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -35,7 +36,7 @@ def test_signal_verify_execute_chain():
                 "atr": 5.0,
                 "atr_ratio": 0.0019,
                 "volume_avg": 1000,
-                "volume_ratio": 1.3,
+                "volume_ratio": 2.0,
                 "support": 2640.0,
                 "resistance": 2660.0,
                 "rejection": "bearish_rejection",
@@ -59,7 +60,9 @@ def test_signal_verify_execute_chain():
     assert len(approved) + len(rejected) == len(candidates)
 
     if approved:
-        broker = PaperBroker(config)
+        paper_config = copy.deepcopy(config)
+        paper_config["execution"]["mode"] = "paper"
+        broker = PaperBroker(paper_config)
         result = broker.process_approved_signals(
             approved,
             {"XAUUSDm": 2650.0},

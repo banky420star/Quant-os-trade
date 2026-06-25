@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +19,16 @@ STATE_DIR = PROJECT_ROOT / "state"
 LOGS_DIR = PROJECT_ROOT / "logs"
 DATA_DIR = PROJECT_ROOT / "data"
 
+_STATE_LOCKS: dict[str, threading.Lock] = {}
+_STATE_LOCKS_GUARD = threading.Lock()
+
+
+def _state_lock(filename: str) -> threading.Lock:
+    with _STATE_LOCKS_GUARD:
+        if filename not in _STATE_LOCKS:
+            _STATE_LOCKS[filename] = threading.Lock()
+        return _STATE_LOCKS[filename]
+
 
 def ensure_dirs() -> None:
     """Create required runtime directories."""
@@ -23,11 +36,29 @@ def ensure_dirs() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    """Load YAML configuration."""
+    """Load YAML configuration, optionally overlaid with config.local.yaml."""
     config_path = path or (PROJECT_ROOT / "config.yaml")
     with config_path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+        config = yaml.safe_load(handle) or {}
+    if path is None:
+        local_path = PROJECT_ROOT / "config.local.yaml"
+        if local_path.exists():
+            with local_path.open("r", encoding="utf-8") as handle:
+                local = yaml.safe_load(handle) or {}
+            if isinstance(local, dict):
+                config = _deep_merge(config, local)
+    return config
 
 
 def setup_logger(name: str, log_file: str, level: int = logging.INFO) -> logging.Logger:
@@ -69,13 +100,32 @@ def read_json_state(filename: str, default: Any = None) -> Any:
 
 
 def write_json_state(filename: str, data: Any) -> Path:
-    """Write JSON state file atomically."""
+    """Write JSON state file atomically with per-file locking and Windows-safe retries."""
     ensure_dirs()
     path = STATE_DIR / filename
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, default=str)
-    tmp_path.replace(path)
+    payload = json.dumps(data, indent=2, default=str)
+
+    with _state_lock(filename):
+        last_err: OSError | None = None
+        for attempt in range(10):
+            try:
+                tmp_path.write_text(payload, encoding="utf-8")
+                os.replace(tmp_path, path)
+                return path
+            except OSError as exc:
+                last_err = exc
+                if attempt < 9:
+                    time.sleep(0.04 * (2 ** attempt))
+                else:
+                    try:
+                        path.write_text(payload, encoding="utf-8")
+                        tmp_path.unlink(missing_ok=True)
+                        return path
+                    except OSError:
+                        raise last_err from exc
+        if last_err:
+            raise last_err
     return path
 
 

@@ -9,7 +9,12 @@ from typing import Any
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
 from core.position_sync import _setup_type_from_comment
 from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer, symbol_capacity_available
-from core.trade_limits import enrich_positions_with_orders, is_duplicate_position
+from core.trade_limits import (
+    enrich_positions_with_orders,
+    is_duplicate_position,
+    session_trade_capacity_available,
+)
+from core.strategy_entry import resolve_mt5_pending_type, strategy_entries_enabled
 from core.trade_tracker import TradeTracker
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
@@ -65,6 +70,13 @@ class MT5Broker:
             if not symbol_capacity_available(self.config, signal["symbol"], open_positions):
                 self.logger.info(
                     "Skip %s — max open positions per symbol reached",
+                    signal["symbol"],
+                )
+                continue
+
+            if not session_trade_capacity_available(self.config, signal["symbol"], trades):
+                self.logger.info(
+                    "Skip %s — max session trades per symbol reached",
                     signal["symbol"],
                 )
                 continue
@@ -175,31 +187,64 @@ class MT5Broker:
         volume = self._calc_volume(signal, account, info, open_positions or [])
         if volume <= 0:
             return {"success": False, "error": "exposure_limit_exceeded"}
-        if side == "BUY":
-            order_type = mt5.ORDER_TYPE_BUY
-            price = tick.ask
-        else:
-            order_type = mt5.ORDER_TYPE_SELL
-            price = tick.bid
 
         sl = float(signal["sl"])
         tp = float(signal["tp1"])
         filling = self._filling_mode(info)
+        strategy_entry = float(signal.get("entry", 0))
+        use_strategy = strategy_entries_enabled(self.config)
+        entry_mode = signal.get("entry_mode", "market")
+        bid = float(tick.bid)
+        ask = float(tick.ask)
 
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
-            "volume": volume,
-            "type": order_type,
-            "price": price,
-            "sl": sl,
-            "tp": tp,
-            "deviation": self.deviation,
-            "magic": self.magic,
-            "comment": f"qagent_{signal.get('setup_type', 'signal')[:20]}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling,
-        }
+        if use_strategy and entry_mode == "limit" and strategy_entry > 0:
+            if signal.get("within_reach") is False:
+                return {
+                    "success": False,
+                    "error": f"entry_too_far_from_market:{signal.get('distance_atr')}atr",
+                }
+            _type_id, type_name = resolve_mt5_pending_type(side, strategy_entry, bid, ask)
+            type_map = {
+                "buy_limit": mt5.ORDER_TYPE_BUY_LIMIT,
+                "buy_stop": mt5.ORDER_TYPE_BUY_STOP,
+                "sell_limit": mt5.ORDER_TYPE_SELL_LIMIT,
+                "sell_stop": mt5.ORDER_TYPE_SELL_STOP,
+            }
+            request = {
+                "action": mt5.TRADE_ACTION_PENDING,
+                "symbol": symbol,
+                "volume": volume,
+                "type": type_map[type_name],
+                "price": strategy_entry,
+                "sl": sl,
+                "tp": tp,
+                "deviation": self.deviation,
+                "magic": self.magic,
+                "comment": f"qagent_{signal.get('setup_type', 'signal')[:20]}",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": filling,
+            }
+        else:
+            if side == "BUY":
+                order_type = mt5.ORDER_TYPE_BUY
+                price = ask
+            else:
+                order_type = mt5.ORDER_TYPE_SELL
+                price = bid
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": volume,
+                "type": order_type,
+                "price": price,
+                "sl": sl,
+                "tp": tp,
+                "deviation": self.deviation,
+                "magic": self.magic,
+                "comment": f"qagent_{signal.get('setup_type', 'signal')[:20]}",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": filling,
+            }
 
         self.logger.info("Sending order: %s", {k: v for k, v in request.items() if k != "comment"})
         result = mt5.order_send(request)
@@ -251,18 +296,22 @@ class MT5Broker:
             else:
                 ideal = calc_risk_based_size(equity, risk_pct, entry, sl, max_size=max_lot)
 
+        vmin = float(info.volume_min or 0.01)
         ideal = min(ideal, max_lot)
+        # Micro accounts: tick-based risk sizing can fall below broker minimum lot.
+        if ideal < vmin:
+            ideal = min(max(default_lot, vmin), max_lot)
         capped, allowed = cap_size_to_exposure_limits(
             ideal,
             entry,
             signal["symbol"],
             open_positions,
             self.config,
-            min_size=float(info.volume_min or 0.01),
+            min_size=vmin,
         )
         if not allowed:
             return 0.0
-        vol = max(capped, float(info.volume_min))
+        vol = max(capped, vmin)
         layer = int(signal.get("pyramid_layer", pyramid_layer_index(signal, open_positions)))
         vol = scale_lot_for_layer(self.config, signal["symbol"], vol, layer)
         return self._normalize_volume(vol, info)

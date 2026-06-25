@@ -149,6 +149,9 @@ def run() -> dict | None:
         or config["execution"].get("starting_cash", 1000)
     )
 
+    trades_data = read_json_state("paper_trades.json", default={"trades": []})
+    closed_trades = list(trades_data.get("trades", []))
+
     verifier = Verifier(config, logger)
     approved, rejected = verifier.verify_batch(
         candidates,
@@ -157,6 +160,7 @@ def run() -> dict | None:
         kill_switch=kill_data.get("kill_switch", False),
         spread_data=spread_data,
         equity=equity,
+        closed_trades=closed_trades,
     )
 
     meta = {

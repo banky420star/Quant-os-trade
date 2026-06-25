@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
-MAX_POINTS = 5000
+MAX_POINTS = 50_000
+
+EQUITY_RANGE_SECONDS: dict[str, int | None] = {
+    "1m": 60,
+    "1h": 3600,
+    "1d": 86400,
+    "7d": 86400 * 7,
+    "30d": 86400 * 30,
+    "all": None,
+}
 
 
 def record_snapshot(
@@ -16,11 +26,10 @@ def record_snapshot(
     source: str = "risk_loop",
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Append an equity snapshot (skip duplicate within same minute)."""
+    """Append an equity snapshot (skip only if unchanged within 30s)."""
     history = read_json_state("equity_history.json", default={"points": []})
     points: list[dict[str, Any]] = list(history.get("points", []))
     now = utc_now_iso()
-    minute = now[:16]
     cash_val = round(float(cash if cash is not None else equity), 2)
     equity_val = round(float(equity), 2)
     unrealized = round(equity_val - cash_val, 2)
@@ -35,10 +44,18 @@ def record_snapshot(
         **(extra or {}),
     }
 
-    if points and str(points[-1].get("ts", ""))[:16] == minute:
-        points[-1] = point
-    else:
-        points.append(point)
+    if points:
+        last = points[-1]
+        try:
+            last_dt = _parse_ts(str(last.get("ts", "")))
+            now_dt = _parse_ts(now)
+            elapsed = (now_dt - last_dt).total_seconds()
+            unchanged = abs(float(last.get("equity", 0)) - equity_val) < 0.001
+            if elapsed < 30 and unchanged:
+                return history
+        except ValueError:
+            pass
+    points.append(point)
 
     if len(points) > MAX_POINTS:
         points = points[-MAX_POINTS:]
@@ -190,7 +207,7 @@ def build_equity_curve(
     session_start = enriched[0]["equity"] if enriched else starting
     session_pnl = round(current_equity - session_start, 2)
 
-    return {
+    curve = {
         "starting_equity": round(starting, 2),
         "current_equity": round(current_equity, 2),
         "current_balance": round(current_cash, 2),
@@ -205,6 +222,83 @@ def build_equity_curve(
         "points": enriched,
         "markers": markers,
         "range": _curve_range(enriched, starting),
+        "ranges": {key: filter_curve_by_range(enriched, markers, key, starting) for key in EQUITY_RANGE_SECONDS},
+    }
+    return curve
+
+
+def _parse_ts(raw: str) -> datetime:
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
+def filter_curve_by_range(
+    points: list[dict[str, Any]],
+    markers: list[dict[str, Any]],
+    range_key: str,
+    starting: float,
+) -> dict[str, Any]:
+    """Slice equity series for dashboard timeframe tabs."""
+    seconds = EQUITY_RANGE_SECONDS.get(range_key)
+    if not points:
+        empty = {
+            "key": range_key,
+            "points": [],
+            "markers": [],
+            "point_count": 0,
+            "range_stats": {},
+        }
+        return empty
+
+    now = datetime.now(timezone.utc)
+    if seconds is None:
+        sliced = list(points)
+        sliced_markers = list(markers)
+    else:
+        cutoff = now - timedelta(seconds=seconds)
+        sliced = [p for p in points if _parse_ts(str(p["ts"])) >= cutoff]
+        if not sliced:
+            sliced = [points[-1]]
+        sliced_markers = [m for m in markers if _parse_ts(str(m["ts"])) >= cutoff]
+
+    stats = _range_stats(sliced, starting)
+    return {
+        "key": range_key,
+        "points": sliced,
+        "markers": sliced_markers,
+        "point_count": len(sliced),
+        "range_stats": stats,
+    }
+
+
+def _range_stats(points: list[dict[str, Any]], starting: float) -> dict[str, Any]:
+    if not points:
+        return {}
+    equities = [float(p["equity"]) for p in points]
+    balances = [float(p.get("cash", p.get("balance", p["equity"]))) for p in points]
+    period_start = equities[0]
+    period_end = equities[-1]
+    change = round(period_end - period_start, 2)
+    change_pct = round((change / period_start * 100) if period_start else 0.0, 2)
+    peak = max(equities)
+    trough = min(equities)
+    max_dd = 0.0
+    run_peak = peak
+    for eq in equities:
+        run_peak = max(run_peak, eq)
+        if run_peak > 0:
+            max_dd = max(max_dd, (run_peak - eq) / run_peak * 100)
+    return {
+        "period_start_equity": round(period_start, 2),
+        "period_end_equity": round(period_end, 2),
+        "period_change": change,
+        "period_change_pct": change_pct,
+        "period_high": round(peak, 2),
+        "period_low": round(trough, 2),
+        "period_max_drawdown_pct": round(max_dd, 2),
+        "period_min_balance": round(min(balances), 2),
+        "period_max_balance": round(max(balances), 2),
+        "first_ts": points[0].get("ts"),
+        "last_ts": points[-1].get("ts"),
     }
 
 

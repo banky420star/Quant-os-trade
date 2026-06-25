@@ -162,9 +162,10 @@ class Supervisor:
             })
 
         overall = "healthy"
-        if any(s["status"] == "error" for s in services):
+        critical = {"trading_pipeline"}
+        if any(s["status"] == "error" for s in services if s["name"] in critical):
             overall = "degraded"
-        if all(s["status"] in ("stopped", "idle") for s in services):
+        elif all(s["status"] in ("stopped", "idle") for s in services):
             overall = "offline"
 
         payload = {

@@ -1,0 +1,181 @@
+"""Strategy-pinned entry prices — entries at technical levels, not blind market price."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def strategy_entries_enabled(config: dict[str, Any]) -> bool:
+    return bool(config.get("trading", {}).get("strategy_entries", {}).get("enabled", True))
+
+
+def _cfg(config: dict[str, Any]) -> dict[str, Any]:
+    return config.get("trading", {}).get("strategy_entries", {})
+
+
+def _round_price(value: float, digits: int = 5) -> float:
+    return round(value, digits)
+
+
+def _anchor_for_setup(
+    setup_type: str,
+    side: str,
+    feat: dict[str, Any],
+    ctx: dict[str, Any],
+) -> tuple[float, str, str]:
+    """Return (anchor_price, anchor_name, anchor_reason)."""
+    price = float(feat.get("price", 0))
+    atr = float(feat.get("atr", price * 0.001) or price * 0.001)
+    support = float(feat.get("support", price - atr))
+    resistance = float(feat.get("resistance", price + atr))
+    bb_mid = float(feat.get("bb_middle", price))
+    bb_lower = float(feat.get("bb_lower", support))
+    bb_upper = float(feat.get("bb_upper", resistance))
+    breakout = feat.get("breakout", "none")
+
+    if setup_type == "pullback":
+        if side == "BUY":
+            anchor = max(support, bb_mid) if bb_mid <= price else support
+            anchor = min(anchor, price)
+            return anchor, "support_retest", "Pullback buy — pin entry at structure support / EMA zone"
+        anchor = min(resistance, bb_mid) if bb_mid >= price else resistance
+        anchor = max(anchor, price)
+        return anchor, "resistance_retest", "Pullback sell — pin entry at structure resistance / EMA zone"
+
+    if setup_type == "trend_continuation":
+        if side == "BUY":
+            anchor = bb_mid if bb_mid < price else price - 0.25 * atr
+            return min(anchor, price), "trend_continuation_zone", "Trend continuation buy — entry on value zone (BB mid / shallow dip)"
+        anchor = bb_mid if bb_mid > price else price + 0.25 * atr
+        return max(anchor, price), "trend_continuation_zone", "Trend continuation sell — entry on value zone (BB mid / shallow pop)"
+
+    if setup_type in ("breakout", "compression_breakout"):
+        if side == "BUY":
+            level = resistance if breakout in ("breakout", "breakout_retest") else resistance
+            return level, "breakout_level", "Breakout buy — entry at broken resistance retest"
+        level = support if breakout in ("breakdown", "breakdown_retest") else support
+        return level, "breakdown_level", "Breakdown sell — entry at broken support retest"
+
+    if setup_type == "mean_reversion":
+        if side == "BUY":
+            return bb_lower, "bb_lower", "Mean reversion buy — entry at lower band / stretch"
+        return bb_upper, "bb_upper", "Mean reversion sell — entry at upper band / stretch"
+
+    if setup_type == "range_fade":
+        if side == "BUY":
+            return support, "range_support", "Range fade buy — entry at range support"
+        return resistance, "range_resistance", "Range fade sell — entry at range resistance"
+
+    if setup_type == "liquidity_sweep":
+        if side == "BUY":
+            return support, "liquidity_low", "Liquidity sweep buy — entry after sweep below support"
+        return resistance, "liquidity_high", "Liquidity sweep sell — entry after sweep above resistance"
+
+    if setup_type == "false_breakout":
+        if side == "BUY":
+            return support, "false_breakdown", "False breakdown buy — entry at rejected lows"
+        return resistance, "false_breakout", "False breakout sell — entry at rejected highs"
+
+    return price, "market_price", "Default — use current price"
+
+
+def _levels_from_entry(
+    entry: float,
+    side: str,
+    feat: dict[str, Any],
+    atr: float,
+) -> tuple[float, float, float]:
+    support = float(feat.get("support", entry - atr))
+    resistance = float(feat.get("resistance", entry + atr))
+    risk_floor = max(atr * 1.5, entry * 0.001)
+
+    if side == "BUY":
+        sl = min(support - 0.5 * atr, entry - risk_floor)
+        risk = max(entry - sl, risk_floor)
+        tp1 = entry + risk * 1.5
+        tp2 = entry + risk * 2.5
+    else:
+        sl = max(resistance + 0.5 * atr, entry + risk_floor)
+        risk = max(sl - entry, risk_floor)
+        tp1 = entry - risk * 1.5
+        tp2 = entry - risk * 2.5
+
+    return sl, tp1, tp2
+
+
+def resolve_entry_mode(
+    entry: float,
+    market_price: float,
+    atr: float,
+    config: dict[str, Any],
+) -> str:
+    cfg = _cfg(config)
+    within = float(cfg.get("market_if_within_atr", 0.15)) * atr
+    if abs(market_price - entry) <= within:
+        return "market"
+    return "limit"
+
+
+def pin_strategy_entry(
+    setup_type: str,
+    side: str,
+    feat: dict[str, Any],
+    ctx: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Compute strategy-pinned entry, SL, TP and whether to use a limit/stop order.
+
+    Entry is anchored to the technical level the setup describes — not the live tick.
+    """
+    price = float(feat.get("price", 0))
+    atr = float(feat.get("atr", price * 0.001) or price * 0.001)
+    cfg = _cfg(config)
+
+    anchor, anchor_name, anchor_reason = _anchor_for_setup(setup_type, side, feat, ctx)
+    buffer = float(cfg.get("entry_buffer_atr", 0.05)) * atr
+
+    if side == "BUY":
+        entry = anchor + buffer if anchor <= price else anchor
+    else:
+        entry = anchor - buffer if anchor >= price else anchor
+
+    entry = _round_price(entry)
+    sl, tp1, tp2 = _levels_from_entry(entry, side, feat, atr)
+    sl = _round_price(sl)
+    tp1 = _round_price(tp1)
+    tp2 = _round_price(tp2)
+
+    entry_mode = resolve_entry_mode(entry, price, atr, config)
+    if entry_mode == "market":
+        entry = _round_price(price)
+
+    max_wait = float(cfg.get("max_entry_wait_atr", 2.0)) * atr
+    distance_atr = abs(price - entry) / atr if atr > 0 else 0.0
+    within_reach = distance_atr <= float(cfg.get("max_entry_wait_atr", 2.0))
+
+    return {
+        "entry": entry,
+        "sl": sl,
+        "tp1": tp1,
+        "tp2": tp2,
+        "entry_mode": entry_mode,
+        "entry_anchor": anchor_name,
+        "entry_anchor_price": _round_price(anchor),
+        "entry_reason": anchor_reason,
+        "market_price": _round_price(price),
+        "distance_atr": round(distance_atr, 3),
+        "within_reach": within_reach,
+        "order_type": "limit" if entry_mode == "limit" else "market",
+    }
+
+
+def resolve_mt5_pending_type(side: str, entry: float, bid: float, ask: float) -> tuple[int, str]:
+    """Map strategy entry vs market to MT5 pending order type name."""
+    if side == "BUY":
+        if entry <= ask:
+            return 2, "buy_limit"  # ORDER_TYPE_BUY_LIMIT
+        return 4, "buy_stop"  # ORDER_TYPE_BUY_STOP
+    if entry >= bid:
+        return 3, "sell_limit"  # ORDER_TYPE_SELL_LIMIT
+    return 5, "sell_stop"  # ORDER_TYPE_SELL_STOP

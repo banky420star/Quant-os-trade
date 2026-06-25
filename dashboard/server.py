@@ -600,7 +600,7 @@ def aggregate_state() -> dict:
     payload["logs"] = _tail_log(50)
     dash_cfg = config.get("app", {}).get("dashboard", {})
     payload["meta"] = {
-        "refresh_seconds": int(dash_cfg.get("refresh_seconds", 5)),
+        "refresh_seconds": int(dash_cfg.get("refresh_seconds", 2)),
         "replay_default_bars": int(config.get("replay", {}).get("max_bars", 800)),
     }
     return payload

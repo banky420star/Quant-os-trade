@@ -56,6 +56,13 @@ def build_explain_report(
             "sl": signal.get("sl"),
             "tp1": signal.get("tp1"),
             "tp2": signal.get("tp2"),
+            "market_price": signal.get("market_price"),
+            "entry_mode": signal.get("entry_mode"),
+            "entry_anchor": signal.get("entry_anchor"),
+            "entry_anchor_price": signal.get("entry_anchor_price"),
+            "entry_reason": signal.get("entry_reason"),
+            "distance_atr": signal.get("distance_atr"),
         },
         "vetoes": signal.get("consensus_vetoes", []),
+        "trade_score": signal.get("trade_score"),
     }

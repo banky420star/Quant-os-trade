@@ -108,6 +108,7 @@ class TradeTracker:
                 continue
             comment = deal.comment or ""
             setup_type = comment.replace("qagent_", "") if comment.startswith("qagent_") else comment
+            deal_ts = datetime.fromtimestamp(int(deal.time), tz=timezone.utc).isoformat()
             incoming.append({
                 "trade_id": str(deal.ticket),
                 "mt5_deal": deal.ticket,
@@ -119,7 +120,7 @@ class TradeTracker:
                 "result": "win" if deal.profit > 0 else "loss",
                 "exit_reason": "mt5_close",
                 "setup_type": setup_type or "unknown",
-                "closed_at": utc_now_iso(),
+                "closed_at": deal_ts,
             })
 
         merged, added = self.merge_new_trades(existing_trades, incoming)

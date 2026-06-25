@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from core.strategy_entry import strategy_entries_enabled
+
 
 def _trading_cfg(config: dict[str, Any]) -> dict[str, Any]:
     return config.get("trading", {})
@@ -103,6 +105,8 @@ def evaluate_dynamic_entry(
 
     layer = pyramid_layer_index(signal, positions)
     if layer == 0:
+        if strategy_entries_enabled(config) and signal.get("entry_anchor"):
+            return True, signal, None
         return True, refresh_entry_levels(signal, feat), None
 
     stack = same_side_positions(positions, symbol, side)
@@ -114,11 +118,12 @@ def evaluate_dynamic_entry(
         if stack_pnl <= 0:
             return False, signal, f"dynamic_entry:stack_not_positive:{stack_pnl}"
 
+    aggressive = bool(_trading_cfg(config).get("aggressive_mode", False))
     min_dist_mult = float(sym_cfg.get("min_atr_distance_from_last", cfg.get("min_atr_distance_from_last", 0.35)))
     min_dist = atr * min_dist_mult
     last_entry = float(stack[-1].get("entry", price))
     moved = abs(price - last_entry)
-    if moved < min_dist:
+    if not aggressive and moved < min_dist:
         return False, signal, f"dynamic_entry:too_close_to_last:{round(moved, 5)}<{round(min_dist, 5)}"
 
     if bool(cfg.get("require_favorable_price", True)):

@@ -8,7 +8,7 @@ from typing import Any
 
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
-from core.trade_limits import is_duplicate_position
+from core.trade_limits import is_duplicate_position, session_trade_capacity_available
 from core.utils import utc_now_iso
 
 
@@ -45,6 +45,9 @@ class PaperBroker:
             signal = record.get("signal", record)
             if not symbol_capacity_available(self.config, signal["symbol"], positions):
                 self.logger.info("Paper skip %s — max open per symbol", signal["symbol"])
+                continue
+            if not session_trade_capacity_available(self.config, signal["symbol"], trades):
+                self.logger.info("Paper skip %s — max session trades per symbol", signal["symbol"])
                 continue
             if is_duplicate_position(
                 self.config,
@@ -93,8 +96,9 @@ class PaperBroker:
             order = self._create_order(signal, price)
             orders.append(order)
 
+            fill_price = float(signal.get("entry", price)) if order.get("type") == "limit" else price
             if self._should_fill(order, price):
-                position, trade, pnl = self._fill_order(order, price, capped_size)
+                position, trade, pnl = self._fill_order(order, fill_price, capped_size)
                 positions.append(position)
                 if trade:
                     trades.append(trade)
@@ -147,12 +151,13 @@ class PaperBroker:
         }
 
     def _create_order(self, signal: dict[str, Any], price: float) -> dict[str, Any]:
+        order_type = signal.get("order_type", "market")
         return {
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
             "symbol": signal["symbol"],
             "side": signal["side"],
-            "type": "market",
+            "type": order_type,
             "entry": signal["entry"],
             "sl": signal["sl"],
             "tp1": signal["tp1"],

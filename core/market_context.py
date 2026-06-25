@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
 
+from core.session_scorer import resolve_trading_session
 from core.utils import utc_now_iso
-
-SESSIONS_UTC = {
-    "asian": (0, 8),
-    "london": (7, 16),
-    "new_york": (12, 21),
-    "overlap_london_ny": (12, 16),
-}
 
 
 class MarketContextEngine:
@@ -158,16 +151,7 @@ class MarketContextEngine:
         return "stable"
 
     def _session(self) -> str:
-        hour = datetime.now(timezone.utc).hour
-        if SESSIONS_UTC["overlap_london_ny"][0] <= hour < SESSIONS_UTC["overlap_london_ny"][1]:
-            return "overlap_london_ny"
-        if SESSIONS_UTC["london"][0] <= hour < SESSIONS_UTC["london"][1]:
-            return "london"
-        if SESSIONS_UTC["new_york"][0] <= hour < SESSIONS_UTC["new_york"][1]:
-            return "new_york"
-        if SESSIONS_UTC["asian"][0] <= hour < SESSIONS_UTC["asian"][1]:
-            return "asian"
-        return "off_hours"
+        return resolve_trading_session()
 
     def _unusual_move(self, closes: list) -> dict[str, Any]:
         if len(closes) < 30:

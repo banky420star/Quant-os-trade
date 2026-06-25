@@ -11,6 +11,8 @@ from core.evidence_engine import EvidenceEngine
 from core.explain_report import build_explain_report
 from core.setup_classifier import SetupClassifier
 from core.strategy_ranker import StrategyRanker
+from core.strategy_entry import pin_strategy_entry, strategy_entries_enabled
+from core.trade_score import compute_trade_score
 from core.utils import utc_now_iso
 from core.trade_limits import max_candidates_per_run
 from core.weight_defaults import SUBSYSTEM_WEIGHTS
@@ -82,7 +84,26 @@ class DecisionEngine:
                 )
                 continue
 
+            trade_score = compute_trade_score(symbol, feat, ctx, rank_info, self.config)
+            signal["trade_score"] = trade_score
+            if trade_score.get("enabled") and not trade_score.get("passed"):
+                self.logger.info(
+                    "Trade score blocked %s %s — %.1f < %.1f (session=%s)",
+                    symbol,
+                    setup["setup_type"],
+                    trade_score.get("total", 0),
+                    trade_score.get("threshold", 80),
+                    trade_score.get("session_detail", {}).get("session"),
+                )
+                continue
+
             signal["strategy_rank"] = rank_info
+            if trade_score.get("enabled"):
+                sess = trade_score.get("session_detail", {})
+                signal["reasons"].append(
+                    f"Trade score {trade_score['total']:.0f}/100 — "
+                    f"{sess.get('session', 'unknown').replace('_', ' ')} session ({sess.get('quality', 'n/a')})"
+                )
             signal["explain"] = build_explain_report(signal, edge_scores)
             candidates.append(signal)
 
@@ -144,33 +165,54 @@ class DecisionEngine:
         ctx: dict[str, Any],
         ev: dict[str, Any],
     ) -> dict[str, Any]:
-        price = feat["price"]
-        atr = feat.get("atr", price * 0.001)
         side = setup["side"]
-        risk_dist = max(atr * 1.5, price * 0.001)
-        reward_dist = risk_dist * 1.5
+        setup_type = setup["setup_type"]
 
-        if side == "BUY":
-            sl = round(price - risk_dist, 5)
-            tp1 = round(price + reward_dist, 5)
-            tp2 = round(price + reward_dist * 2, 5)
+        if strategy_entries_enabled(self.config):
+            levels = pin_strategy_entry(setup_type, side, feat, ctx, self.config)
+            entry = levels["entry"]
+            sl = levels["sl"]
+            tp1 = levels["tp1"]
+            tp2 = levels["tp2"]
+            entry_meta = levels
         else:
-            sl = round(price + risk_dist, 5)
-            tp1 = round(price - reward_dist, 5)
-            tp2 = round(price - reward_dist * 2, 5)
+            price = feat["price"]
+            atr = feat.get("atr", price * 0.001)
+            risk_dist = max(atr * 1.5, price * 0.001)
+            reward_dist = risk_dist * 1.5
+            if side == "BUY":
+                entry = round(price, 5)
+                sl = round(price - risk_dist, 5)
+                tp1 = round(price + reward_dist, 5)
+                tp2 = round(price + reward_dist * 2, 5)
+            else:
+                entry = round(price, 5)
+                sl = round(price + risk_dist, 5)
+                tp1 = round(price - reward_dist, 5)
+                tp2 = round(price - reward_dist * 2, 5)
+            entry_meta = {"entry_mode": "market", "order_type": "market"}
 
         reasons = self._build_reasons(setup, votes, ctx)
+        if entry_meta.get("entry_reason"):
+            reasons.append(entry_meta["entry_reason"])
         regime = ctx.get("market_regime", {})
 
         return {
             "signal_id": str(uuid.uuid4()),
             "symbol": symbol,
             "side": side,
-            "setup_type": setup["setup_type"],
-            "entry": price,
+            "setup_type": setup_type,
+            "entry": entry,
             "sl": sl,
             "tp1": tp1,
             "tp2": tp2,
+            "entry_mode": entry_meta.get("entry_mode", "market"),
+            "order_type": entry_meta.get("order_type", "market"),
+            "entry_anchor": entry_meta.get("entry_anchor"),
+            "entry_anchor_price": entry_meta.get("entry_anchor_price"),
+            "entry_reason": entry_meta.get("entry_reason"),
+            "market_price": entry_meta.get("market_price", feat.get("price")),
+            "distance_atr": entry_meta.get("distance_atr"),
             "confidence": confidence,
             "confidence_tree": votes,
             "evidence": ev,

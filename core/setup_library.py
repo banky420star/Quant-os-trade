@@ -23,8 +23,8 @@ SETUP_LIBRARY: dict[str, SetupDefinition] = {
     "trend_continuation": SetupDefinition(
         name="trend_continuation",
         display_name="Trend Continuation",
-        allowed_regimes=("strong_trend", "weak_trend", "expansion"),
-        blocked_regimes=("range", "compression", "volatility_spike"),
+        allowed_regimes=("strong_trend", "weak_trend", "expansion", "compression", "transitional"),
+        blocked_regimes=("range", "volatility_spike"),
         min_confidence=0.55,
         description="Trade with aligned trend after momentum confirmation.",
         entry_hints=["M5 and M15 aligned", "move_type continuation", "volume confirming"],
@@ -33,7 +33,7 @@ SETUP_LIBRARY: dict[str, SetupDefinition] = {
     "pullback": SetupDefinition(
         name="pullback",
         display_name="Pullback",
-        allowed_regimes=("strong_trend", "weak_trend", "expansion"),
+        allowed_regimes=("strong_trend", "weak_trend", "expansion", "compression", "transitional"),
         blocked_regimes=("range", "volatility_spike"),
         min_confidence=0.5,
         description="Retest of broken level or EMA in trending market.",

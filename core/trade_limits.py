@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from core.dynamic_entry import symbol_capacity_available as _symbol_capacity_available
 from core.dynamic_entry import symbol_position_count
+from core.utils import read_json_state
 
 
 def unlimited_trades(config: dict[str, Any]) -> bool:
@@ -73,13 +75,10 @@ def is_duplicate_position(
     side = signal.get("side")
     setup = signal.get("setup_type")
 
-    if unlimited_trades(config) and not allow_pyramiding(config):
-        return False
-
     if not symbol_capacity_available(config, symbol, active_positions):
         return True
 
-    if allow_pyramiding(config) or unlimited_trades(config):
+    if allow_pyramiding(config):
         block_same_setup = bool(config.get("trading", {}).get("pyramid_block_same_setup", False))
         for active in active_positions:
             if sid and active.get("signal_id") == sid:
@@ -103,6 +102,135 @@ def is_duplicate_position(
         if active.get("setup_type") == setup:
             return True
     return False
+
+
+def max_session_trades_per_symbol(config: dict[str, Any]) -> int | None:
+    """Max closed trades allowed per symbol in the current session."""
+    n = int(config.get("trading", {}).get("max_session_trades_per_symbol", 0))
+    return n if n > 0 else None
+
+
+def session_start_ts() -> datetime | None:
+    """Session boundary from last equity/baseline reset (mt5_baseline.set_at)."""
+    baseline = read_json_state("mt5_baseline.json", default={})
+    raw = baseline.get("set_at")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def trades_in_current_session(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only closed trades at or after the current session start."""
+    start = session_start_ts()
+    if start is None:
+        return trades
+    kept: list[dict[str, Any]] = []
+    for trade in trades:
+        raw = trade.get("closed_at") or trade.get("timestamp")
+        if not raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if ts >= start:
+            kept.append(trade)
+    return kept
+
+
+def closed_trades_for_symbol(trades: list[dict[str, Any]], symbol: str) -> int:
+    session_trades = trades_in_current_session(trades)
+    return sum(1 for t in session_trades if t.get("symbol") == symbol)
+
+
+def session_trade_capacity_available(
+    config: dict[str, Any],
+    symbol: str,
+    closed_trades: list[dict[str, Any]],
+) -> bool:
+    """True when symbol is below max_session_trades_per_symbol limit."""
+    limit = max_session_trades_per_symbol(config)
+    if limit is None:
+        return True
+    return closed_trades_for_symbol(closed_trades, symbol) < limit
+
+
+def session_trade_capacity_status(
+    config: dict[str, Any],
+    symbol: str,
+    closed_trades: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Session closed-trade usage for dashboards and rejection messages."""
+    limit = max_session_trades_per_symbol(config)
+    used = closed_trades_for_symbol(closed_trades, symbol)
+    if limit is None:
+        return {"limit": None, "used": used, "available": True}
+    return {
+        "limit": limit,
+        "used": used,
+        "available": used < limit,
+        "remaining": max(0, limit - used),
+    }
+
+
+def symbol_capacity_status(
+    config: dict[str, Any],
+    symbol: str,
+    active_positions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Open-position usage for dashboards and rejection messages."""
+    from core.dynamic_entry import max_open_per_symbol, symbol_position_count
+
+    limit = max_open_per_symbol(config)
+    used = symbol_position_count(active_positions, symbol)
+    if limit is None:
+        return {"limit": None, "used": used, "available": True}
+    return {
+        "limit": limit,
+        "used": used,
+        "available": used < limit,
+        "remaining": max(0, limit - used),
+    }
+
+
+def humanize_verifier_failure(
+    check_name: str,
+    signal: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    active_positions: list[dict[str, Any]] | None = None,
+    closed_trades: list[dict[str, Any]] | None = None,
+) -> str:
+    """Plain-English rejection reason for the dashboard."""
+    symbol = signal.get("symbol", "?")
+    active_positions = active_positions or []
+    closed_trades = closed_trades or []
+
+    open_status = symbol_capacity_status(config, symbol, active_positions)
+    session_status = session_trade_capacity_status(config, symbol, closed_trades)
+
+    if check_name == "symbol_capacity":
+        return (
+            f"Open position cap full — {symbol} already has "
+            f"{open_status['used']}/{open_status['limit']} open (close it before a new entry)"
+        )
+    if check_name == "session_trade_capacity":
+        return (
+            f"Session trade cap full — {symbol} hit "
+            f"{session_status['used']}/{session_status['limit']} closed trades this session "
+            f"(run reset_equity_curve.py to start fresh)"
+        )
+    if check_name == "no_duplicate":
+        return f"Duplicate blocked — same {symbol} {signal.get('side')} setup already open"
+    if check_name == "exposure_limit_exceeded":
+        cap = config.get("risk", {}).get("max_symbol_exposure_usd", 100)
+        return f"Exposure limit — not enough room for {symbol} on ${cap} cap"
+    if check_name == "kill_switch_safe":
+        return "Kill switch is ON — trading paused"
+    return check_name.replace("_", " ")
 
 
 def max_candidates_per_run(config: dict[str, Any]) -> int | None:

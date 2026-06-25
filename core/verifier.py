@@ -7,7 +7,12 @@ from typing import Any
 
 from core.exposure import check_exposure_limits
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
-from core.trade_limits import is_duplicate_position, unlimited_trades
+from core.trade_limits import (
+    humanize_verifier_failure,
+    is_duplicate_position,
+    session_trade_capacity_available,
+    unlimited_trades,
+)
 from core.utils import utc_now_iso
 
 
@@ -21,7 +26,7 @@ class Verifier:
         filters = config.get("filters", {})
         self.min_volume_ratio = float(filters.get("min_volume_ratio", 0.8))
         if self.aggressive:
-            self.min_volume_ratio = min(self.min_volume_ratio, 0.3)
+            self.min_volume_ratio = 0.0
         self.spread_mult = float(filters.get("spread_mult", 2.0 if self.aggressive else 1.0))
 
     def verify_batch(
@@ -32,9 +37,11 @@ class Verifier:
         kill_switch: bool = False,
         spread_data: dict[str, float] | None = None,
         equity: float | None = None,
+        closed_trades: list[dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Verify all candidates; return (approved, rejected)."""
         active_signals = active_signals or []
+        closed_trades = closed_trades or []
         spread_data = spread_data or {}
         features = features_data.get("symbols", {})
         if equity is None:
@@ -46,7 +53,9 @@ class Verifier:
         for signal in candidates:
             feat = features.get(signal["symbol"], {})
             spread_pts = spread_data.get(signal["symbol"], 0.0)
-            result = self._verify_one(signal, feat, active_signals, kill_switch, spread_pts, equity)
+            result = self._verify_one(
+                signal, feat, active_signals, kill_switch, spread_pts, equity, closed_trades,
+            )
             if result["approved"]:
                 approved.append(result)
             else:
@@ -63,18 +72,27 @@ class Verifier:
         kill_switch: bool,
         spread_pts: float,
         equity: float,
+        closed_trades: list[dict[str, Any]],
     ) -> dict[str, Any]:
         checks: dict[str, Any] = {}
         failures: list[str] = []
 
         checks["valid_levels"] = self._check_valid_levels(signal)
         checks["confidence"] = signal.get("confidence", 0) >= self.config["signals"]["min_confidence"]
-        checks["timeframe_alignment"] = self._check_timeframe_alignment(signal, feat)
-        checks["not_buying_resistance"] = self._check_not_buying_resistance(signal, feat)
-        checks["not_selling_support"] = self._check_not_selling_support(signal, feat)
+        if self.aggressive:
+            checks["timeframe_alignment"] = True
+            checks["not_buying_resistance"] = True
+            checks["not_selling_support"] = True
+        else:
+            checks["timeframe_alignment"] = self._check_timeframe_alignment(signal, feat)
+            checks["not_buying_resistance"] = self._check_not_buying_resistance(signal, feat)
+            checks["not_selling_support"] = self._check_not_selling_support(signal, feat)
         checks["spread_safe"] = self._check_spread(signal["symbol"], spread_pts)
         checks["atr_safe"] = feat.get("atr_ratio", 0) >= self.config["filters"]["min_atr_ratio"]
-        checks["volume_safe"] = feat.get("volume_ratio", 0) >= self.min_volume_ratio
+        if self.aggressive:
+            checks["volume_safe"] = True
+        else:
+            checks["volume_safe"] = feat.get("volume_ratio", 0) >= self.min_volume_ratio
         min_rr = float(self.config.get("signals", {}).get("min_risk_reward", 1.2))
         checks["risk_reward_safe"] = self._check_risk_reward(signal, min_rr=min_rr)
         if unlimited_trades(self.config):
@@ -96,6 +114,11 @@ class Verifier:
             signal["symbol"],
             active_signals,
         )
+        checks["session_trade_capacity"] = session_trade_capacity_available(
+            self.config,
+            signal["symbol"],
+            closed_trades,
+        )
         dyn_ok, adjusted_signal, dyn_reason = evaluate_dynamic_entry(
             self.config,
             signal,
@@ -108,9 +131,25 @@ class Verifier:
 
         checks["kill_switch_safe"] = not kill_switch
 
+        failure_codes: list[str] = []
         for name, passed in checks.items():
-            if not passed and name != "exposure_safe":
-                failures.append(name)
+            if passed:
+                continue
+            if name == "exposure_safe":
+                failure_codes.append("exposure_limit_exceeded")
+            else:
+                failure_codes.append(name)
+
+        failures = [
+            humanize_verifier_failure(
+                code,
+                signal,
+                self.config,
+                active_positions=active_signals,
+                closed_trades=closed_trades,
+            )
+            for code in failure_codes
+        ]
 
         approved = len(failures) == 0
         record = {
@@ -120,6 +159,7 @@ class Verifier:
             "setup_type": signal.get("setup_type"),
             "approved": approved,
             "checks": checks,
+            "failure_codes": failure_codes,
             "failures": failures,
             "spread_points": spread_pts,
             "confidence": signal.get("confidence"),
@@ -158,14 +198,14 @@ class Verifier:
     def _check_not_buying_resistance(self, signal: dict[str, Any], feat: dict[str, Any]) -> bool:
         if signal.get("side") != "BUY":
             return True
-        price = feat.get("price", signal.get("entry", 0))
+        price = signal.get("entry", feat.get("price", 0))
         resistance = feat.get("resistance", price * 1.01)
         return abs(resistance - price) / price > 0.001 if price else True
 
     def _check_not_selling_support(self, signal: dict[str, Any], feat: dict[str, Any]) -> bool:
         if signal.get("side") != "SELL":
             return True
-        price = feat.get("price", signal.get("entry", 0))
+        price = signal.get("entry", feat.get("price", 0))
         support = feat.get("support", price * 0.99)
         return abs(price - support) / price > 0.001 if price else True
 

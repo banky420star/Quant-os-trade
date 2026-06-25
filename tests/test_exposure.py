@@ -52,6 +52,8 @@ def test_exposure_used_pct():
 
 def test_verifier_rejects_exposure_limit_exceeded(config):
     config["trading"]["dynamic_entries"] = {"enabled": False}
+    config["trading"]["max_open_per_symbol"] = 5
+    config["trading"]["allow_pyramiding"] = True
     existing = [{
         "symbol": "XAUUSDm",
         "side": "BUY",
@@ -96,12 +98,14 @@ def test_verifier_rejects_exposure_limit_exceeded(config):
     )
     assert len(approved) == 0
     assert len(rejected) == 1
-    assert "exposure_limit_exceeded" in rejected[0]["failures"]
-    assert rejected[0]["rejection_reason"] == "exposure_limit_exceeded"
+    assert "exposure_limit_exceeded" in rejected[0]["failure_codes"]
+    assert "Exposure limit" in rejected[0]["rejection_reason"]
 
 
 def test_paper_broker_blocks_oversized_exposure(config):
     config["trading"]["dynamic_entries"] = {"enabled": False}
+    config["trading"]["max_open_per_symbol"] = 5
+    config["trading"]["allow_pyramiding"] = True
     positions = [{
         "position_id": "p1",
         "symbol": "USOILm",
@@ -147,6 +151,43 @@ def test_max_five_open_per_symbol(config):
     assert symbol_capacity_available(config, "USOILm", positions) is True
 
 
+def test_session_trades_uncapped_by_default(config):
+    from core.trade_limits import session_trade_capacity_available
+
+    config["trading"]["max_session_trades_per_symbol"] = 0
+    trades = [{"symbol": "XAUUSDm", "pnl": 1.0} for _ in range(20)]
+    assert session_trade_capacity_available(config, "XAUUSDm", trades) is True
+
+
+def test_session_trades_ignore_pre_reset_history(config, monkeypatch):
+    from core import trade_limits
+    from core.trade_limits import session_trade_capacity_available
+
+    config["trading"]["max_session_trades_per_symbol"] = 3
+    monkeypatch.setattr(
+        trade_limits,
+        "session_start_ts",
+        lambda: __import__("datetime").datetime(2026, 6, 25, 16, 0, tzinfo=__import__("datetime").timezone.utc),
+    )
+    trades = [
+        {"symbol": "XAUUSDm", "closed_at": "2026-06-25T11:00:00+00:00"},
+        {"symbol": "XAUUSDm", "closed_at": "2026-06-25T11:05:00+00:00"},
+        {"symbol": "XAUUSDm", "closed_at": "2026-06-25T11:10:00+00:00"},
+        {"symbol": "XAUUSDm", "closed_at": "2026-06-25T16:30:00+00:00"},
+    ]
+    assert session_trade_capacity_available(config, "XAUUSDm", trades) is True
+
+
+def test_session_trades_cap_when_configured(config, monkeypatch):
+    from core import trade_limits
+    from core.trade_limits import session_trade_capacity_available
+
+    monkeypatch.setattr(trade_limits, "session_start_ts", lambda: None)
+    config["trading"]["max_session_trades_per_symbol"] = 5
+    trades = [{"symbol": "XAUUSDm", "pnl": 1.0, "closed_at": "2026-06-25T12:00:00+00:00"} for _ in range(5)]
+    assert session_trade_capacity_available(config, "XAUUSDm", trades) is False
+
+
 def test_dynamic_entry_requires_positive_stack(config):
     config["trading"]["dynamic_entries"] = {"enabled": True, "require_positive_stack_pnl": True}
     positions = [{
@@ -189,6 +230,8 @@ def test_break_even_moves_sl_on_buy(config):
 def test_pyramiding_allows_different_signals_same_side(config):
     config["execution"]["mode"] = "mt5"
     config["trading"]["allow_pyramiding"] = True
+    config["trading"]["pyramid_block_same_setup"] = False
+    config["trading"]["max_open_per_symbol"] = 5
     config["risk"]["unlimited_trades"] = False
 
     existing = [{
@@ -215,6 +258,47 @@ def test_pyramiding_allows_different_signals_same_side(config):
 
     repeat_signal = {**new_signal, "signal_id": "sig-a"}
     assert is_duplicate_position(config, repeat_signal, existing) is True
+
+
+def test_pyramiding_blocks_same_setup_when_configured(config):
+    config["execution"]["mode"] = "mt5"
+    config["trading"]["allow_pyramiding"] = True
+    config["trading"]["pyramid_block_same_setup"] = True
+    config["trading"]["max_open_per_symbol"] = 5
+    config["risk"]["unlimited_trades"] = False
+
+    existing = [{
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "setup_type": "pullback",
+        "signal_id": "sig-a",
+        "ticket": 1001,
+    }]
+    repeat_setup = {
+        "signal_id": "sig-b",
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "setup_type": "pullback",
+        "entry": 2650.0,
+        "sl": 2660.0,
+        "tp1": 2635.0,
+        "confidence": 80,
+    }
+    different_setup = {**repeat_setup, "signal_id": "sig-c", "setup_type": "trend_continuation"}
+
+    assert is_duplicate_position(config, repeat_setup, existing) is True
+    assert is_duplicate_position(config, different_setup, existing) is False
+
+
+def test_max_three_open_positions_per_symbol(config):
+    config["trading"]["max_open_per_symbol"] = 3
+    positions = [
+        {"symbol": "XAUUSDm", "side": "SELL", "setup_type": "pullback"},
+        {"symbol": "XAUUSDm", "side": "SELL", "setup_type": "trend_continuation"},
+        {"symbol": "XAUUSDm", "side": "BUY", "setup_type": "pullback"},
+    ]
+    assert symbol_capacity_available(config, "XAUUSDm", positions) is False
+    assert symbol_capacity_available(config, "XAUUSDm", positions[:2]) is True
 
 
 def test_pyramiding_blocked_without_flag(config):

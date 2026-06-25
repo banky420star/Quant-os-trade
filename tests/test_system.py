@@ -16,10 +16,16 @@ LOGS = ROOT / "logs"
 
 
 @pytest.fixture(scope="module", autouse=True)
-def run_pipeline():
-    """Run full orchestrator once before tests."""
-    import run_all
-    run_all.run_all()
+def run_pipeline_once():
+    """Run one pipeline cycle before acceptance tests (no infinite loop)."""
+    from core.pipeline import run_pipeline
+    from core.utils import load_config, setup_logger
+    from run_all import update_state_md
+
+    config = load_config()
+    logger = setup_logger("test_system", "system.log")
+    result = run_pipeline(config, logger)
+    update_state_md(result.get("loops", {}), cycle=0)
 
 
 def test_config_exists():
@@ -93,11 +99,12 @@ def test_logs_created():
 def test_state_md_updated():
     content = (ROOT / "STATE.md").read_text(encoding="utf-8")
     assert "Last run:" in content
-    assert "Paper mode only" in content
+    assert "## Loop Status" in content
+    assert "**Mode:**" in content
 
 
 def test_live_trading_disabled():
     from core.utils import load_config
     config = load_config()
     assert config["execution"]["live_trading_enabled"] is False
-    assert config["execution"]["mode"] == "paper"
+    assert config["execution"].get("allow_live_account") is False

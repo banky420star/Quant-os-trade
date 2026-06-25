@@ -7,6 +7,7 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
+from core.setup_library import SETUP_LIBRARY
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
 MAX_RECORDS = 50_000
@@ -59,13 +60,42 @@ class EdgeDatabase:
         trades: list[dict[str, Any]],
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        added = []
+        """Ingest multiple trades in one read/write cycle (safe for replay)."""
+        if not trades:
+            return []
+
+        db = self.load()
+        records: list[dict] = list(db.get("records", []))
+        known = {r.get("trade_id") for r in records}
+        added: list[dict[str, Any]] = []
+
         for trade in trades:
-            rec = self.ingest_trade(trade, **kwargs)
-            if rec:
-                added.append(rec)
-        if added:
-            self.logger.info("Edge DB: ingested %d new records (total context-rich)", len(added))
+            tid = trade.get("trade_id")
+            if not tid or tid in known:
+                continue
+            record = self._build_edge_record(
+                trade,
+                kwargs.get("features"),
+                kwargs.get("context"),
+                kwargs.get("signal"),
+                kwargs.get("source", "live"),
+            )
+            records.append(record)
+            known.add(tid)
+            added.append(record)
+
+        if not added:
+            return []
+
+        if len(records) > MAX_RECORDS:
+            records = records[-MAX_RECORDS:]
+
+        db["records"] = records
+        db["count"] = len(records)
+        db["timestamp"] = utc_now_iso()
+        db["aggregates"] = self._compute_aggregates(records)
+        self.save(db)
+        self.logger.info("Edge DB: ingested %d new records (total context-rich)", len(added))
         return added
 
     def query_win_rate(
@@ -125,6 +155,8 @@ class EdgeDatabase:
 
         rankings: list[dict[str, Any]] = []
         for setup, stats in cell.items():
+            if setup not in SETUP_LIBRARY:
+                continue
             if stats.get("total", 0) < min_samples:
                 score = 50.0
                 insufficient = True

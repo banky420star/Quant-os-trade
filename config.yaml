@@ -2,13 +2,13 @@ app:
   name: mt5_quant_os
   display_name: MT5 Quant OS
   version: "1.0"
-  loop_interval_seconds: 60
+  loop_interval_seconds: 45
   dashboard:
     enabled: true
     host: 127.0.0.1
     port: 8080
     auto_open_browser: true
-    refresh_seconds: 5
+    refresh_seconds: 2
   supervisor:
     heartbeat_seconds: 10
     history_interval_seconds: 300
@@ -16,16 +16,16 @@ app:
     restart_delay_seconds: 5
 
 mt5:
-  # Use the MT5 terminal already logged in (demo). No live orders from this agent.
+  # Attaches to whatever account is logged into the MT5 terminal.
   use_logged_in_account: true
-  account_mode: demo
+  account_mode: real
   path: "C:\\Users\\Administrator\\MT5Agent\\terminal64.exe"
   prefer_logged_in_session: true
   timeout_ms: 60000
   # Fallback only if terminal is open but not logged in:
-  login: 435656990
-  password: "Fuckyou2/"
-  server: "Exness-MT5Trial9"
+  login: 295959027
+  password: ""  # prefer MT5_PASSWORD env var; or set in config.local.yaml (gitignored)
+  server: "Exness-MT5Real27"
   symbols:
     - XAUUSDm
     - USOILm
@@ -53,24 +53,31 @@ health:
 
 trading:
   aggressive_mode: true  # relax quality gates for more demo fills
-  allow_pyramiding: true  # stack positions from different signals (same symbol/side OK)
-  pyramid_block_same_setup: false  # false = allow same setup type from a new signal
-  max_open_per_symbol: 5  # hard cap on open positions per symbol
+  allow_pyramiding: false  # one position per symbol — no stacking
+  pyramid_block_same_setup: true  # no duplicate: block same setup on same symbol/side
+  max_open_per_symbol: 1  # max concurrent open positions per symbol
+  max_session_trades_per_symbol: 3  # max closed round-trips per symbol per session
+  strategy_entries:
+    enabled: true
+    use_limit_orders: true
+    entry_buffer_atr: 0.05       # pad above support / below resistance
+    market_if_within_atr: 0.15   # already at level → market fill
+    max_entry_wait_atr: 2.0      # skip limit if ideal entry > this many ATR away
   dynamic_entries:
     enabled: true
-    require_positive_stack_pnl: true  # only add layers when same-side stack is green
-    require_favorable_price: true  # buy higher / sell lower than last entry
-    min_atr_distance_from_last: 0.35
+    require_positive_stack_pnl: false  # allow pyramids even when stack is red
+    require_favorable_price: false  # allow adds without strict price improvement
+    min_atr_distance_from_last: 0.08
     scale_lot_factor: 0.9
     per_symbol:
       XAUUSDm:
-        min_atr_distance_from_last: 0.3
+        min_atr_distance_from_last: 0.06
         scale_lot_factor: 0.88
       USOILm:
-        min_atr_distance_from_last: 0.4
+        min_atr_distance_from_last: 0.06
         scale_lot_factor: 0.9
       BTCUSDm:
-        min_atr_distance_from_last: 0.45
+        min_atr_distance_from_last: 0.05
         scale_lot_factor: 0.85
   break_even:
     enabled: true
@@ -102,8 +109,8 @@ trading:
         trail_atr_mult: 0.4
 
 filters:
-  min_volume_ratio: 0.3
-  spread_mult: 2.5
+  min_volume_ratio: 0  # aggressive demo: do not block on thin volume bars
+  spread_mult: 3.5
   max_spread_points:
     XAUUSDm: 300
     USOILm: 50
@@ -116,13 +123,13 @@ intelligence:
   confidence_tree: true
   setup_classifier: true
   consensus_gates: true
-  risk_veto_threshold: 25
+  risk_veto_threshold: 12
   regime_veto_enabled: false
   regime_filter: false
   trend_structure_veto_enabled: false
-  setup_confidence_mult: 0.85
-  memory_veto_win_rate: 30
-  memory_veto_min_trades: 15
+  setup_confidence_mult: 0.72
+  memory_veto_win_rate: 15
+  memory_veto_min_trades: 25
 
 replay:
   symbol: XAUUSDm
@@ -130,12 +137,43 @@ replay:
   bars_per_step: 10
   # Overnight bulk runs: increase max_bars (e.g. 50000) and bars_per_step (e.g. 5)
 
+session_scoring:
+  enabled: true
+  min_trade_score: 80          # strict threshold (London/Overlap setups target this)
+  min_trade_score_aggressive: 62 # used when aggressive_mode is on
+  weights:
+    strategy_rank: 0.30
+    session: 0.20
+    trend_strength: 0.15
+    volume: 0.15
+    spread_quality: 0.10
+    volatility: 0.10
+  session_scores:
+    london_open: 10
+    overlap_london_ny: 10
+    london_mid: 8
+    new_york: 6
+    tokyo: 4
+    sydney: 2
+    off_hours: 1
+    rollover: 0
+  symbol_session_boost:
+    XAUUSDm:
+      london_open: 2
+      overlap_london_ny: 2
+      london_mid: 1
+
 quant:
   use_adaptive_weights: true
-  strategy_ranking_enabled: true
-  require_top_ranked_setup: false
+  strategy_ranking_enabled: true  # rank setups from edge DB / session memory
+  require_top_ranked_setup: true  # trade only top-ranked setups (see flex rules below)
+  ranking_flex_enabled: true  # allow top-N when leader has thin/weak history
+  ranking_flex_min_win_rate: 55  # below this WR → relax to top-N
+  ranking_flex_min_samples: 10  # fewer trades than this → relax to top-N
+  ranking_flex_top_n: 2  # how many ranks to allow while flex is active
+  ranking_context_align: true  # allow pullback/continuation when live move_type matches ranked setup
   min_rank_sample_size: 3
-  min_rank_win_rate: 25
+  min_rank_win_rate: 0
   replay_ingest_edge_db: true
 
 research:
@@ -151,8 +189,8 @@ optimizer:
   trend_weight_mult_grid: [0.9, 1.0, 1.1]
 
 signals:
-  min_confidence: 65
-  min_risk_reward: 1.0
+  min_confidence: 52
+  min_risk_reward: 0.9
   default_risk_percent: 1
   max_candidates_per_run: 0  # 0 = unlimited (all passing candidates)
 
@@ -169,7 +207,7 @@ execution:
   starting_cash: 1000
 
 risk:
-  unlimited_trades: true  # no cap on trade count, exposure slots, or duplicate positions
+  unlimited_trades: false  # enforce per-symbol caps, duplicates, and exposure limits
   max_symbol_exposure_usd: 100
   max_total_exposure_usd: 300
   max_drawdown_pct: 5

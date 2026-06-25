@@ -147,6 +147,180 @@ def test_strategy_ranker_allow_setup(config):
     assert info["allowed"] is True
 
 
+def test_ranking_flex_allows_second_when_leader_is_weak(config):
+    config["quant"]["ranking_flex_enabled"] = True
+    config["quant"]["ranking_flex_min_win_rate"] = 55
+    config["quant"]["ranking_flex_min_samples"] = 10
+    config["quant"]["ranking_flex_top_n"] = 2
+
+    ranker = StrategyRanker(config)
+    rankings = [
+        {
+            "setup_type": "pullback",
+            "score": 47.1,
+            "win_rate_pct": 47.1,
+            "total": 68,
+            "rank": 1,
+            "insufficient_data": False,
+        },
+        {
+            "setup_type": "trend_continuation",
+            "score": 28.6,
+            "win_rate_pct": 28.6,
+            "total": 28,
+            "rank": 2,
+            "insufficient_data": False,
+        },
+    ]
+    ranker.rank_for_symbol = lambda *args, **kwargs: rankings  # type: ignore[method-assign]
+    ctx = {"session": "London", "market_regime": {"primary": "expansion"}}
+
+    allowed_top, info_top = ranker.allow_setup("pullback", "BTCUSDm", ctx, {})
+    allowed_second, info_second = ranker.allow_setup("trend_continuation", "BTCUSDm", ctx, {})
+    allowed_third, _ = ranker.allow_setup("mean_reversion", "BTCUSDm", ctx, {})
+
+    assert allowed_top is True
+    assert info_top["reason"] == "top_n_flex"
+    assert allowed_second is True
+    assert info_second["allowed_depth"] == 2
+    assert allowed_third is False
+
+
+def test_ranking_flex_strict_when_leader_is_strong(config):
+    config["quant"]["ranking_flex_enabled"] = True
+    config["quant"]["ranking_flex_min_win_rate"] = 55
+    config["quant"]["ranking_flex_min_samples"] = 10
+
+    ranker = StrategyRanker(config)
+    rankings = [
+        {
+            "setup_type": "trend_continuation",
+            "score": 72.7,
+            "win_rate_pct": 72.7,
+            "total": 44,
+            "rank": 1,
+            "insufficient_data": False,
+        },
+        {
+            "setup_type": "pullback",
+            "score": 45.5,
+            "win_rate_pct": 45.5,
+            "total": 44,
+            "rank": 2,
+            "insufficient_data": False,
+        },
+    ]
+    ranker.rank_for_symbol = lambda *args, **kwargs: rankings  # type: ignore[method-assign]
+    ctx = {"session": "London", "market_regime": {"primary": "weak_trend"}}
+
+    allowed_top, info_top = ranker.allow_setup("trend_continuation", "XAUUSDm", ctx, {})
+    allowed_second, info_second = ranker.allow_setup("pullback", "XAUUSDm", ctx, {})
+
+    assert allowed_top is True
+    assert info_top["reason"] == "top_ranked"
+    assert allowed_second is False
+    assert info_second["reason"] == "not_top_ranked"
+
+
+def test_context_align_allows_pullback_in_pullback_market(config):
+    config["quant"]["ranking_flex_enabled"] = True
+    config["quant"]["ranking_context_align"] = True
+    config["quant"]["ranking_flex_top_n"] = 2
+
+    ranker = StrategyRanker(config)
+    rankings = [
+        {
+            "setup_type": "trend_continuation",
+            "score": 57.1,
+            "win_rate_pct": 57.1,
+            "total": 28,
+            "rank": 1,
+            "insufficient_data": False,
+        },
+        {
+            "setup_type": "pullback",
+            "score": 46.7,
+            "win_rate_pct": 46.7,
+            "total": 60,
+            "rank": 2,
+            "insufficient_data": False,
+        },
+    ]
+    ranker.rank_for_symbol = lambda *args, **kwargs: rankings  # type: ignore[method-assign]
+    ctx = {
+        "session": "new_york",
+        "move_type": "pullback",
+        "market_regime": {"primary": "strong_trend"},
+    }
+
+    allowed_pullback, info_pullback = ranker.allow_setup("pullback", "XAUUSDm", ctx, {})
+    allowed_other, info_other = ranker.allow_setup("mean_reversion", "XAUUSDm", ctx, {})
+
+    assert allowed_pullback is True
+    assert info_pullback["reason"] == "context_aligned"
+    assert allowed_other is False
+    assert info_other["reason"] == "not_top_ranked"
+
+
+def test_resolve_trading_session_london_open():
+    from core.session_scorer import resolve_trading_session
+
+    assert resolve_trading_session(8) == "london_open"
+    assert resolve_trading_session(13) == "overlap_london_ny"
+    assert resolve_trading_session(17) == "new_york"
+    assert resolve_trading_session(23) == "rollover"
+
+
+def test_session_score_xau_overlap_boost(config):
+    from core.session_scorer import session_score
+
+    result = session_score("overlap_london_ny", "XAUUSDm", config)
+    assert result["raw_score"] == 10
+    assert result["quality"] == "excellent"
+
+
+def test_trade_score_blocks_low_session(config):
+    from core.trade_score import compute_trade_score
+
+    config["session_scoring"]["enabled"] = True
+    config["session_scoring"]["min_trade_score"] = 80
+    config["trading"]["aggressive_mode"] = False
+
+    feat = {
+        "volume_ratio": 0.3,
+        "volatility_regime": "high",
+        "atr_ratio": 0.002,
+    }
+    ctx = {"trend_strength": "weak", "session": "sydney"}
+    rank_info = {"score": 40, "win_rate_pct": 40}
+
+    score = compute_trade_score("XAUUSDm", feat, ctx, rank_info, config, session="sydney")
+    assert score["enabled"] is True
+    assert score["total"] < 80
+    assert score["passed"] is False
+
+
+def test_trade_score_passes_gold_london_open(config):
+    from core.trade_score import compute_trade_score
+
+    config["session_scoring"]["enabled"] = True
+    config["session_scoring"]["min_trade_score"] = 80
+    config["trading"]["aggressive_mode"] = False
+
+    feat = {
+        "volume_ratio": 0.9,
+        "volatility_regime": "high",
+        "atr_ratio": 0.002,
+        "spread_points": 50,
+    }
+    ctx = {"trend_strength": "strong", "session": "london_open"}
+    rank_info = {"score": 72, "win_rate_pct": 72}
+
+    score = compute_trade_score("XAUUSDm", feat, ctx, rank_info, config, session="london_open")
+    assert score["passed"] is True
+    assert score["total"] >= 80
+
+
 def test_trade_enrichment():
     trade = {"trade_id": "t1", "signal_id": "sig-1", "symbol": "XAUUSDm", "result": "win"}
     index = {

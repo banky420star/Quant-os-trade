@@ -6,24 +6,26 @@
   <title>MT5 Quant OS</title>
   <style>
     :root {
-      --bg: #0a0a0c;
-      --surface: #141416;
-      --surface2: #1c1c1f;
-      --surface3: #242428;
-      --border: rgba(255,255,255,.08);
+      --bg: #07070a;
+      --surface: #111114;
+      --surface2: #18181c;
+      --surface3: #222228;
+      --border: rgba(255,255,255,.09);
       --text: #f5f5f7;
-      --muted: #98989d;
-      --muted2: #636366;
-      --blue: #0a84ff;
-      --green: #30d158;
+      --muted: #a1a1a6;
+      --muted2: #6e6e73;
+      --blue: #2997ff;
+      --green: #32d74b;
       --red: #ff453a;
       --orange: #ff9f0a;
       --purple: #bf5af2;
+      --glow-blue: rgba(41,151,255,.18);
+      --glow-green: rgba(50,215,75,.12);
       --sidebar-w: 220px;
       --right-w: 300px;
       --top-h: 52px;
-      --bottom-h: 88px;
-      --radius: 12px;
+      --bottom-h: 76px;
+      --radius: 14px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; }
@@ -34,6 +36,102 @@
       font-size: 13px;
       -webkit-font-smoothing: antialiased;
     }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% -10%, rgba(41,151,255,.14), transparent 55%),
+        radial-gradient(ellipse 60% 40% at 85% 10%, rgba(50,215,75,.08), transparent 50%),
+        radial-gradient(ellipse 50% 30% at 50% 100%, rgba(191,90,242,.06), transparent 45%);
+    }
+
+    /* Loading screen */
+    .loader-screen {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: #050508;
+      transition: opacity .6s ease, visibility .6s ease;
+    }
+    .loader-screen.hiding { opacity: 0; pointer-events: none; }
+    .loader-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .loader-orb {
+      position: relative; width: 88px; height: 88px; margin-bottom: 28px;
+    }
+    .loader-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 2px solid transparent;
+      border-top-color: var(--blue);
+      border-right-color: rgba(41,151,255,.35);
+      animation: spin 1.1s cubic-bezier(.5,.1,.3,.9) infinite;
+    }
+    .loader-ring:nth-child(2) {
+      inset: 10px; border-top-color: var(--green);
+      border-right-color: rgba(50,215,75,.25);
+      animation-duration: 1.6s; animation-direction: reverse;
+    }
+    .loader-core {
+      position: absolute; inset: 22px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--surface2), var(--surface3));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 800; letter-spacing: -.04em;
+      box-shadow: 0 0 40px var(--glow-blue), inset 0 1px 0 rgba(255,255,255,.08);
+      animation: pulse-core 2s ease-in-out infinite;
+    }
+    .loader-title {
+      font-size: 20px; font-weight: 700; letter-spacing: -.03em; margin-bottom: 6px;
+      background: linear-gradient(90deg, #fff 0%, #a1a1a6 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .loader-sub { font-size: 12px; color: var(--muted2); margin-bottom: 24px; }
+    .loader-steps { display: flex; flex-direction: column; gap: 8px; min-width: 220px; }
+    .loader-step {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 12px; color: var(--muted2);
+      opacity: .4; transform: translateY(4px);
+      transition: opacity .4s ease, transform .4s ease, color .4s ease;
+    }
+    .loader-step.active { opacity: 1; color: var(--muted); transform: translateY(0); }
+    .loader-step.done { opacity: .7; color: var(--green); }
+    .loader-step-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--muted2); flex-shrink: 0;
+      transition: background .3s, box-shadow .3s;
+    }
+    .loader-step.active .loader-step-dot {
+      background: var(--blue);
+      box-shadow: 0 0 8px var(--glow-blue);
+      animation: blink 1s ease infinite;
+    }
+    .loader-step.done .loader-step-dot { background: var(--green); box-shadow: 0 0 6px var(--glow-green); }
+    .loader-bar {
+      width: 200px; height: 3px; background: var(--surface3);
+      border-radius: 99px; margin-top: 20px; overflow: hidden;
+    }
+    .loader-bar > i {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--blue), var(--green));
+      border-radius: 99px;
+      animation: load-progress 2.4s ease forwards;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse-core { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+    @keyframes load-progress { 0% { width: 0%; } 40% { width: 45%; } 70% { width: 78%; } 100% { width: 100%; } }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes status-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(.85); } }
+
+    .app-root {
+      position: relative; z-index: 1; height: 100%;
+      opacity: 0; visibility: hidden; pointer-events: none;
+    }
+    .app-root.ready {
+      opacity: 1; visibility: visible; pointer-events: auto;
+      transition: opacity .55s ease, visibility .55s ease;
+    }
+    .app-root.ready .topbar { animation: fade-up .5s ease both; }
+    .app-root.ready .shell { animation: fade-up .55s ease .08s both; }
+    .app-root.ready .bottombar { animation: fade-up .5s ease .14s both; }
 
     /* Top bar */
     .topbar {
@@ -52,11 +150,13 @@
     .status-pill {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;
-      background: rgba(48,209,88,.12); color: var(--green);
+      background: rgba(50,215,75,.12); color: var(--green);
+      border: 1px solid rgba(50,215,75,.2);
     }
-    .status-pill.warn { background: rgba(255,159,10,.12); color: var(--orange); }
-    .status-pill.bad { background: rgba(255,69,58,.12); color: var(--red); }
+    .status-pill.warn { background: rgba(255,159,10,.12); color: var(--orange); border-color: rgba(255,159,10,.2); }
+    .status-pill.bad { background: rgba(255,69,58,.12); color: var(--red); border-color: rgba(255,69,58,.2); }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .status-pill:not(.bad):not(.warn) .dot { animation: status-pulse 2s ease infinite; }
 
     /* Shell */
     .shell { display: flex; height: calc(100vh - var(--top-h) - var(--bottom-h)); }
@@ -101,30 +201,50 @@
       overflow-y: auto; padding: 20px 16px;
     }
 
-    /* Bottom bar */
+    /* Bottom bar — portfolio always pinned left */
     .bottombar {
       height: var(--bottom-h);
-      background: var(--surface);
+      background: linear-gradient(180deg, var(--surface) 0%, #0e0e11 100%);
       border-top: 1px solid var(--border);
       display: flex; align-items: center;
-      padding: 0 24px; gap: 32px;
+      padding: 0 20px; gap: 20px;
       flex-shrink: 0; overflow-x: auto;
+      position: relative; z-index: 20;
+    }
+    .bottom-portfolio {
+      display: flex; align-items: center; gap: 24px; flex-shrink: 0;
+      padding-right: 20px; margin-right: 4px;
+      border-right: 1px solid var(--border);
     }
     .bottom-metric .label { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
     .bottom-metric .val { font-size: 18px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
     .bottom-metric .val.sm { font-size: 14px; }
+    .bottom-metric.portfolio .val { font-size: 15px; }
+    .bottom-metric.portfolio.equity .val { font-size: 20px; color: var(--text); }
+    .bottom-risk { display: flex; align-items: center; gap: 24px; flex-shrink: 0; }
 
     /* Cards */
     .card {
-      background: var(--surface2);
+      background: linear-gradient(160deg, rgba(255,255,255,.03) 0%, transparent 40%), var(--surface2);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.25);
     }
-    .card-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
+    .section-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .section-head .card-title { margin-bottom: 0; }
+    .section-head .hint { font-size: 11px; color: var(--muted2); }
+    .card-title { font-size: 10px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 12px; }
 
     /* Hero market card */
-    .hero-card { padding: 28px 32px; }
+    .hero-card {
+      padding: 28px 32px;
+      background: linear-gradient(135deg, rgba(41,151,255,.08) 0%, rgba(50,215,75,.04) 50%, transparent 100%), var(--surface2);
+      border-color: rgba(41,151,255,.15);
+    }
     .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
     .hero-symbol { font-size: 13px; color: var(--muted); font-weight: 500; margin-bottom: 4px; }
     .hero-action { font-size: 48px; font-weight: 700; letter-spacing: -.04em; line-height: 1; }
@@ -148,22 +268,41 @@
     .ai-stat-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
     .ai-stat-row:last-child { border: none; }
 
-    /* Chart */
+    /* Equity chart — main feature */
+    .equity-hero {
+      background: linear-gradient(180deg, rgba(10,132,255,.06) 0%, var(--surface2) 42%);
+      border: 1px solid rgba(10,132,255,.12);
+      border-radius: 16px;
+      padding: 18px 20px 16px;
+      margin-bottom: 8px;
+    }
+    .equity-hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .equity-hero-head .card-title { font-size: 15px; margin: 0; }
+    .equity-hero-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .chart-range-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chart-range-btn {
+      border: 1px solid var(--border); background: var(--surface3); color: var(--muted);
+      font-size: 11px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    }
+    .chart-range-btn:hover { color: var(--text); border-color: rgba(10,132,255,.35); }
+    .chart-range-btn.active { background: rgba(10,132,255,.18); color: #7ac0ff; border-color: rgba(10,132,255,.45); }
     .chart-wrap { position: relative; }
-    #equityChart { width: 100%; height: 320px; display: block; cursor: crosshair; }
+    #equityChart { width: 100%; height: 420px; display: block; cursor: crosshair; }
+    #equityChartFull { width: 100%; height: calc(100vh - 220px); min-height: 480px; display: block; cursor: crosshair; }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 11px; color: var(--muted); }
     .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
     .chart-legend i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
-    .chart-stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-top: 14px; }
+    .chart-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
     .chart-stat { background: var(--surface3); border-radius: 8px; padding: 10px 12px; }
     .chart-stat .lbl { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
     .chart-stat .val { font-size: 15px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
     .chart-tooltip {
       position: absolute; pointer-events: none; display: none;
       background: rgba(28,28,31,.96); border: 1px solid var(--border);
-      border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--text);
-      box-shadow: 0 8px 24px rgba(0,0,0,.35); z-index: 5; min-width: 140px;
+      border-radius: 8px; padding: 10px 12px; font-size: 11px; color: var(--text);
+      box-shadow: 0 8px 24px rgba(0,0,0,.35); z-index: 5; min-width: 168px; line-height: 1.45;
     }
+    .equity-view-wrap { padding: 4px 0; }
     .trade-alert {
       display: none; padding: 12px 16px; border-radius: 10px; margin-bottom: 4px;
       font-size: 12px; line-height: 1.5; border: 1px solid var(--border);
@@ -222,17 +361,24 @@
     @media (max-width: 1200px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 800px) { .grid-3 { grid-template-columns: 1fr; } }
 
-    /* Live portfolio strip */
-    .live-strip {
-      display: flex; gap: 28px; flex-wrap: wrap; align-items: center;
-      background: linear-gradient(135deg, rgba(10,132,255,.12), rgba(48,209,88,.06));
-      border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 16px 24px;
+    /* KPI row — portfolio at a glance (secondary to hero) */
+    .kpi-row {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
     }
-    .live-strip .live-metric .lbl { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
-    .live-strip .live-metric .val { font-size: 24px; font-weight: 700; letter-spacing: -.03em; margin-top: 2px; font-variant-numeric: tabular-nums; }
-    .live-strip .live-metric .val.lg { font-size: 32px; }
-    .live-strip .live-metric .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .kpi-tile {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 18px;
+      transition: border-color .2s;
+    }
+    .kpi-tile.primary {
+      background: linear-gradient(135deg, rgba(41,151,255,.1), rgba(41,151,255,.02));
+      border-color: rgba(41,151,255,.2);
+    }
+    .kpi-tile .lbl { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+    .kpi-tile .val { font-size: 22px; font-weight: 700; letter-spacing: -.03em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .kpi-tile.primary .val { font-size: 26px; }
+    .kpi-tile .sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    @media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
 
     /* Symbol cards */
     .sym-card {
@@ -265,6 +411,25 @@
 </head>
 <body>
 
+  <div class="loader-screen" id="loaderScreen">
+    <div class="loader-orb">
+      <div class="loader-ring"></div>
+      <div class="loader-ring"></div>
+      <div class="loader-core">Q</div>
+    </div>
+    <div class="loader-title">MT5 Quant OS</div>
+    <div class="loader-sub">Initializing trading intelligence</div>
+    <div class="loader-steps" id="loaderSteps">
+      <div class="loader-step active" data-step="0"><span class="loader-step-dot"></span>Connecting to dashboard API</div>
+      <div class="loader-step" data-step="1"><span class="loader-step-dot"></span>Loading market features</div>
+      <div class="loader-step" data-step="2"><span class="loader-step-dot"></span>Syncing portfolio state</div>
+      <div class="loader-step" data-step="3"><span class="loader-step-dot"></span>Rendering live view</div>
+    </div>
+    <div class="loader-bar"><i></i></div>
+  </div>
+
+  <div class="app-root" id="appRoot">
+
   <header class="topbar">
     <div class="brand">
       <h1>MT5 Quant OS</h1>
@@ -280,6 +445,7 @@
       <div id="marketNav"></div>
       <div class="sidebar-section" style="margin-top:12px">System</div>
       <button class="nav-item active" data-view="dashboard">⌂ Dashboard</button>
+      <button class="nav-item" data-view="equity">📈 Equity</button>
       <button class="nav-item" data-view="research">⚗ Research</button>
       <button class="nav-item" data-view="memory">🧠 Memory</button>
       <button class="nav-item" data-view="replay">▶ Replay</button>
@@ -293,18 +459,21 @@
         <!-- DASHBOARD VIEW -->
         <div class="view active" id="view-dashboard">
           <div class="trade-alert" id="tradeAlert"></div>
-          <div class="live-strip" id="livePortfolio"></div>
-          <div class="card hero-card" id="heroCard"></div>
-          <div>
-            <div class="card-title" style="margin-bottom:10px">Market Watch — Live Features</div>
-            <div class="grid-3" id="symbolCards"></div>
-          </div>
-          <div class="card" id="openPositionsCard" style="display:none">
-            <div class="card-title">Open Positions — Live PnL</div>
-            <div id="openPositionsLive"></div>
-          </div>
-          <div class="card">
-            <div class="card-title">Equity Curve — Live Detail</div>
+          <div class="card equity-hero" id="equityHeroCard">
+            <div class="equity-hero-head">
+              <div>
+                <div class="card-title">Equity Curve</div>
+                <div class="equity-hero-sub" id="equityRangeLabel">Live account equity · select timeframe</div>
+              </div>
+              <div class="chart-range-bar" id="chartRangeBar">
+                <button type="button" class="chart-range-btn" data-range="1m">1m</button>
+                <button type="button" class="chart-range-btn" data-range="1h">1h</button>
+                <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
+                <button type="button" class="chart-range-btn" data-range="7d">7d</button>
+                <button type="button" class="chart-range-btn" data-range="30d">30d</button>
+                <button type="button" class="chart-range-btn" data-range="all">All</button>
+              </div>
+            </div>
             <div class="chart-wrap">
               <canvas id="equityChart"></canvas>
               <div class="chart-tooltip" id="chartTooltip"></div>
@@ -312,15 +481,63 @@
             <div class="chart-legend">
               <span><i style="background:#0a84ff"></i> Equity</span>
               <span><i style="background:#98989d;opacity:.8"></i> Balance</span>
+              <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized</span>
               <span><i style="background:#30d158;height:8px;width:8px;border-radius:50%"></i> Win close</span>
               <span><i style="background:#ff453a;height:8px;width:8px;border-radius:50%"></i> Loss close</span>
-              <span><i style="background:rgba(255,159,10,.35);height:12px"></i> Drawdown zone</span>
+              <span><i style="background:rgba(255,69,58,.22);height:12px"></i> Drawdown fill</span>
             </div>
             <div class="chart-stats-grid" id="chartStats"></div>
+          </div>
+          <div class="card hero-card" id="heroCard"></div>
+          <div class="kpi-row" id="kpiRow"></div>
+          <div>
+            <div class="section-head">
+              <div class="card-title">Market Watch</div>
+              <span class="hint">Live features per symbol — click to focus</span>
+            </div>
+            <div class="grid-3" id="symbolCards"></div>
+          </div>
+          <div class="card" id="openPositionsCard" style="display:none">
+            <div class="card-title">Open Positions — Live PnL</div>
+            <div id="openPositionsLive"></div>
           </div>
           <div class="grid-2">
             <div class="card" id="signalsCard"><div class="card-title">Recent Signals</div><div id="signalsTable"></div></div>
             <div class="card" id="tradesCard"><div class="card-title">Closed Trades</div><div id="tradesTable"></div></div>
+          </div>
+        </div>
+
+        <!-- EQUITY VIEW -->
+        <div class="view" id="view-equity">
+          <div class="equity-view-wrap">
+            <div class="card equity-hero">
+              <div class="equity-hero-head">
+                <div>
+                  <div class="card-title">Equity Analytics</div>
+                  <div class="equity-hero-sub" id="equityRangeLabelFull">Full-screen equity curve with trade markers</div>
+                </div>
+                <div class="chart-range-bar" id="chartRangeBarFull">
+                  <button type="button" class="chart-range-btn" data-range="1m">1m</button>
+                  <button type="button" class="chart-range-btn" data-range="1h">1h</button>
+                  <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
+                  <button type="button" class="chart-range-btn" data-range="7d">7d</button>
+                  <button type="button" class="chart-range-btn" data-range="30d">30d</button>
+                  <button type="button" class="chart-range-btn" data-range="all">All</button>
+                </div>
+              </div>
+              <div class="chart-wrap">
+                <canvas id="equityChartFull"></canvas>
+                <div class="chart-tooltip" id="chartTooltipFull"></div>
+              </div>
+              <div class="chart-legend">
+                <span><i style="background:#0a84ff"></i> Equity</span>
+                <span><i style="background:#98989d;opacity:.8"></i> Balance</span>
+                <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized</span>
+                <span><i style="background:#30d158;height:8px;width:8px;border-radius:50%"></i> Win</span>
+                <span><i style="background:#ff453a;height:8px;width:8px;border-radius:50%"></i> Loss</span>
+              </div>
+              <div class="chart-stats-grid" id="chartStatsFull"></div>
+            </div>
           </div>
         </div>
 
@@ -401,21 +618,75 @@
       </div>
 
       <aside class="right-panel" id="rightPanel">
-        <div class="card-title" style="margin-bottom:16px">AI Decision</div>
+        <div class="section-head" style="margin-bottom:14px">
+          <div class="card-title">Decision Engine</div>
+          <span class="hint" id="aiPanelHint">Selected symbol</span>
+        </div>
         <div id="aiPanel"></div>
-        <div class="card-title" style="margin:24px 0 12px">Evidence Tree</div>
+        <div class="card-title" style="margin:24px 0 12px">Evidence</div>
         <div id="evidenceTree"></div>
       </aside>
     </div>
   </div>
 
-  <footer class="bottombar" id="bottomBar"></footer>
+  <footer class="bottombar" id="bottomBar">
+    <div class="bottom-portfolio" id="bottomPortfolio">
+      <div class="bottom-metric portfolio equity"><div class="label">Equity</div><div class="val">—</div></div>
+      <div class="bottom-metric portfolio"><div class="label">Balance</div><div class="val">—</div></div>
+      <div class="bottom-metric portfolio"><div class="label">Session PnL</div><div class="val">—</div></div>
+      <div class="bottom-metric portfolio"><div class="label">Unrealized</div><div class="val">—</div></div>
+    </div>
+    <div class="bottom-risk" id="bottomRisk"></div>
+  </footer>
+
+  </div><!-- /app-root -->
 
   <script>
     let selectedSymbol = null;
-    let refreshMs = 5000;
+    let refreshMs = 2000;
     let refreshTimer = null;
     let lastData = null;
+    let firstLoad = true;
+    const LOADER_DURATION_MS = 2800;
+    const LOADER_STEP_MS = 650;
+    const LOADER_FADE_MS = 600;
+    const loaderStartedAt = Date.now();
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function advanceLoader(step) {
+      document.querySelectorAll(".loader-step").forEach((el, i) => {
+        el.classList.remove("active", "done");
+        if (i < step) el.classList.add("done");
+        else if (i === step) el.classList.add("active");
+      });
+    }
+
+    async function playLoaderAnimation() {
+      for (let step = 0; step < 4; step++) {
+        advanceLoader(step);
+        await delay(LOADER_STEP_MS);
+      }
+    }
+
+    async function revealApp() {
+      if (!firstLoad) return;
+      firstLoad = false;
+      advanceLoader(4);
+      const sub = document.querySelector(".loader-sub");
+      if (sub) sub.textContent = "Ready";
+      await delay(350);
+
+      const screen = document.getElementById("loaderScreen");
+      screen.classList.add("hiding");
+      await delay(LOADER_FADE_MS);
+      screen.classList.add("hidden");
+      screen.classList.remove("hiding");
+
+      document.getElementById("appRoot").classList.add("ready");
+    }
 
     function fmt(n, d=2) {
       if (n == null || isNaN(n)) return "—";
@@ -429,21 +700,55 @@
           btn.classList.add("active");
           document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
           document.getElementById("view-" + btn.dataset.view).classList.add("active");
+          if (btn.dataset.view === "equity" || btn.dataset.view === "dashboard") {
+            requestAnimationFrame(() => { if (equityCurveRaw) drawChart(equityCurveRaw); });
+          }
         });
       });
     }
 
     let chartMeta = null;
+    let chartMetaFull = null;
+    let equityCurveRaw = null;
+    let chartRange = "1d";
 
-    function fmtTs(ts) {
+    const RANGE_LABELS = { "1m": "Last 1 minute", "1h": "Last 1 hour", "1d": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "all": "Full history" };
+
+    function fmtTs(ts, rangeKey) {
       if (!ts) return "—";
       const d = new Date(ts);
-      if (isNaN(d)) return ts.slice(11, 16);
-      return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      if (isNaN(d)) return String(ts).slice(0, 16);
+      if (rangeKey === "1m" || rangeKey === "1h") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+      if (rangeKey === "1d") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      return d.toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
     }
 
-    function drawChart(curve) {
-      const canvas = document.getElementById("equityChart");
+    function downsamplePoints(points, maxPts) {
+      if (points.length <= maxPts) return points;
+      const out = [];
+      const step = (points.length - 1) / (maxPts - 1);
+      for (let i = 0; i < maxPts; i++) {
+        out.push(points[Math.min(points.length - 1, Math.round(i * step))]);
+      }
+      return out;
+    }
+
+    function sliceCurveClient(curve, rangeKey) {
+      if (!curve) return { points: [], markers: [], range_stats: {} };
+      if (curve.ranges && curve.ranges[rangeKey]) {
+        const r = curve.ranges[rangeKey];
+        return { points: r.points || [], markers: r.markers || [], range_stats: r.range_stats || {} };
+      }
+      const seconds = { "1m": 60, "1h": 3600, "1d": 86400, "7d": 604800, "30d": 2592000, "all": null }[rangeKey];
+      const points = curve.points || [];
+      if (seconds == null) return { points, markers: curve.markers || [], range_stats: {} };
+      const cutoff = Date.now() - seconds * 1000;
+      const sliced = points.filter(p => new Date(p.ts).getTime() >= cutoff);
+      return { points: sliced.length ? sliced : [points[points.length - 1]], markers: (curve.markers || []).filter(m => new Date(m.ts).getTime() >= cutoff), range_stats: {} };
+    }
+
+    function drawChartOnCanvas(canvas, tipEl, statsEl, curve, rangeKey, metaRef) {
+      if (!canvas) return;
       const ctx = canvas.getContext("2d");
       const dpr = devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
@@ -451,130 +756,253 @@
       canvas.height = rect.height * dpr;
       ctx.scale(dpr, dpr);
       const W = rect.width, H = rect.height;
-      const pad = {top:18, right:16, bottom:32, left:56};
-      ctx.clearRect(0,0,W,H);
-      const points = (curve&&curve.points)||[];
-      const markers = (curve&&curve.markers)||[];
-      const el = document.getElementById("chartStats");
+      const pad = { top: 22, right: 20, bottom: 38, left: 62 };
+      ctx.clearRect(0, 0, W, H);
+
+      const slice = sliceCurveClient(curve, rangeKey);
+      let points = slice.points || [];
+      const markers = slice.markers || [];
+      const stats = slice.range_stats || {};
+
       if (!points.length) {
         ctx.fillStyle = "#636366";
         ctx.font = "13px -apple-system,sans-serif";
-        ctx.fillText("No equity data yet — snapshots record every pipeline cycle", pad.left, H/2);
-        el.innerHTML = "";
-        chartMeta = null;
+        ctx.fillText("No equity data for this range — collecting snapshots each cycle", pad.left, H / 2);
+        if (statsEl) statsEl.innerHTML = "";
+        if (metaRef === "main") chartMeta = null; else chartMetaFull = null;
         return;
       }
-      const equities = points.map(p=>p.equity);
-      const balances = points.map(p=>p.cash ?? p.balance ?? p.equity);
-      const start = curve.starting_equity ?? equities[0];
-      const peak = curve.peak_equity ?? Math.max(...equities, start);
-      let minV = Math.min(...equities, ...balances, start);
-      let maxV = Math.max(...equities, ...balances, peak, start);
-      const range = maxV-minV||1;
-      minV -= range*.06; maxV += range*.06;
-      const pW = W-pad.left-pad.right, pH = H-pad.top-pad.bottom;
-      const xAt = i => pad.left + (points.length===1?pW/2:(i/(points.length-1))*pW);
-      const yAt = v => pad.top + pH - ((v-minV)/(maxV-minV))*pH;
 
-      const yTicks = 5;
+      if (points.length > 1800) points = downsamplePoints(points, 1800);
+
+      const times = points.map(p => new Date(p.ts).getTime());
+      const t0 = times[0], t1 = times[times.length - 1] || t0 + 1;
+      const equities = points.map(p => p.equity);
+      const balances = points.map(p => p.cash ?? p.balance ?? p.equity);
+      const unrealized = points.map(p => p.unrealized_pnl ?? (p.equity - (p.cash ?? p.balance ?? p.equity)));
+      const start = curve.starting_equity ?? equities[0];
+      let minV = Math.min(...equities, ...balances, start);
+      let maxV = Math.max(...equities, ...balances, start);
+      const span = maxV - minV || 1;
+      minV -= span * 0.08;
+      maxV += span * 0.08;
+      const pW = W - pad.left - pad.right, pH = H - pad.top - pad.bottom;
+      const xAt = t => pad.left + ((t - t0) / (t1 - t0 || 1)) * pW;
+      const yAt = v => pad.top + pH - ((v - minV) / (maxV - minV)) * pH;
+
+      const yTicks = 6;
       ctx.strokeStyle = "rgba(255,255,255,.06)";
       ctx.lineWidth = 1;
       ctx.fillStyle = "#636366";
       ctx.font = "10px -apple-system,sans-serif";
-      for (let t=0; t<=yTicks; t++) {
-        const v = minV + (maxV-minV)*(t/yTicks);
+      for (let t = 0; t <= yTicks; t++) {
+        const v = minV + (maxV - minV) * (t / yTicks);
         const y = yAt(v);
-        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W-pad.right, y); ctx.stroke();
-        ctx.fillText("$"+fmt(v, v>500?0:2), 4, y+3);
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+        ctx.fillText("$" + fmt(v, v > 500 ? 0 : 2), 4, y + 3);
       }
 
-      const xLabels = [0, Math.floor((points.length-1)/2), points.length-1].filter((v,i,a)=>a.indexOf(v)===i);
-      xLabels.forEach(i => {
-        ctx.fillText(fmtTs(points[i].ts), xAt(i)-16, H-10);
-      });
+      const xTickCount = Math.min(8, Math.max(3, Math.floor(pW / 90)));
+      ctx.fillStyle = "#636366";
+      for (let i = 0; i <= xTickCount; i++) {
+        const frac = i / xTickCount;
+        const ts = t0 + (t1 - t0) * frac;
+        const x = xAt(ts);
+        ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.strokeStyle = "rgba(255,255,255,.03)"; ctx.stroke();
+        ctx.fillStyle = "#636366";
+        ctx.fillText(fmtTs(new Date(ts).toISOString(), rangeKey), x - 24, H - 12);
+      }
 
-      ctx.setLineDash([4,4]);
-      ctx.strokeStyle = "rgba(255,159,10,.35)";
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad.left, yAt(start)); ctx.lineTo(W-pad.right, yAt(start)); ctx.stroke();
+      let runPeak = equities[0];
+      ctx.fillStyle = "rgba(255,69,58,.12)";
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
+      for (let i = 1; i < equities.length; i++) {
+        runPeak = Math.max(runPeak, equities[i - 1]);
+        const ddTop = yAt(runPeak);
+        const ddBot = yAt(equities[i]);
+        ctx.lineTo(xAt(times[i]), ddBot);
+      }
+      for (let i = equities.length - 1; i >= 0; i--) {
+        runPeak = Math.max(runPeak, equities[i]);
+        ctx.lineTo(xAt(times[i]), yAt(runPeak));
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(255,159,10,.4)";
+      ctx.beginPath(); ctx.moveTo(pad.left, yAt(start)); ctx.lineTo(W - pad.right, yAt(start)); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(255,159,10,.5)";
-      ctx.font = "9px -apple-system,sans-serif";
-      ctx.fillText("Start", W-pad.right-30, yAt(start)-4);
 
-      const peakY = yAt(peak);
-      ctx.setLineDash([2,3]);
-      ctx.strokeStyle = "rgba(48,209,88,.25)";
-      ctx.beginPath(); ctx.moveTo(pad.left, peakY); ctx.lineTo(W-pad.right, peakY); ctx.stroke();
-      ctx.setLineDash([]);
+      const uGrad = ctx.createLinearGradient(0, pad.top, 0, H);
+      uGrad.addColorStop(0, "rgba(48,209,88,.18)");
+      uGrad.addColorStop(1, "rgba(48,209,88,0)");
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
+      for (let i = 1; i < equities.length; i++) ctx.lineTo(xAt(times[i]), yAt(unrealized[i] > 0 ? equities[i] : equities[i]));
+      for (let i = 0; i < equities.length; i++) {
+        const u = unrealized[i] || 0;
+        if (u !== 0) ctx.lineTo(xAt(times[i]), yAt(equities[i] - Math.min(u, equities[i] * 0.05)));
+      }
+      ctx.closePath();
+      ctx.fillStyle = uGrad;
+      ctx.globalAlpha = 0.35;
+      ctx.fill();
+      ctx.globalAlpha = 1;
 
-      const grad = ctx.createLinearGradient(0,pad.top,0,H);
-      grad.addColorStop(0,"rgba(10,132,255,.22)"); grad.addColorStop(1,"rgba(10,132,255,0)");
-      ctx.beginPath(); ctx.moveTo(xAt(0),yAt(equities[0]));
-      for(let i=1;i<equities.length;i++) ctx.lineTo(xAt(i),yAt(equities[i]));
-      ctx.lineTo(xAt(equities.length-1),H-pad.bottom); ctx.lineTo(xAt(0),H-pad.bottom);
-      ctx.closePath(); ctx.fillStyle=grad; ctx.fill();
+      const grad = ctx.createLinearGradient(0, pad.top, 0, H);
+      grad.addColorStop(0, "rgba(10,132,255,.28)");
+      grad.addColorStop(1, "rgba(10,132,255,0)");
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
+      for (let i = 1; i < equities.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
+      ctx.lineTo(xAt(times[times.length - 1]), H - pad.bottom);
+      ctx.lineTo(xAt(times[0]), H - pad.bottom);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
 
-      ctx.strokeStyle="rgba(152,152,157,.55)"; ctx.lineWidth=1.5;
-      ctx.beginPath(); ctx.moveTo(xAt(0),yAt(balances[0]));
-      for(let i=1;i<balances.length;i++) ctx.lineTo(xAt(i),yAt(balances[i]));
+      ctx.strokeStyle = "rgba(152,152,157,.6)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(balances[0]));
+      for (let i = 1; i < balances.length; i++) ctx.lineTo(xAt(times[i]), yAt(balances[i]));
       ctx.stroke();
 
-      ctx.strokeStyle="#0a84ff"; ctx.lineWidth=2.5; ctx.lineJoin="round";
-      ctx.beginPath(); ctx.moveTo(xAt(0),yAt(equities[0]));
-      for(let i=1;i<equities.length;i++) ctx.lineTo(xAt(i),yAt(equities[i]));
+      ctx.strokeStyle = "#0a84ff";
+      ctx.lineWidth = 2.75;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
+      for (let i = 1; i < equities.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
       ctx.stroke();
 
       markers.forEach(m => {
-        const idx = points.findIndex(p => p.ts === m.ts && p.event === "trade_close");
-        const i = idx >= 0 ? idx : points.length - 1;
-        const color = (m.result === "win" || (m.pnl||0) >= 0) ? "#30d158" : "#ff453a";
-        const x = xAt(i), y = yAt(m.equity);
+        const mt = new Date(m.ts).getTime();
+        const color = (m.result === "win" || (m.pnl || 0) >= 0) ? "#30d158" : "#ff453a";
+        const x = xAt(mt), y = yAt(m.equity);
         ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = "#0a0a0c"; ctx.lineWidth=1.5; ctx.stroke();
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#0a0a0c"; ctx.lineWidth = 1.5; ctx.stroke();
       });
 
-      chartMeta = {points, markers, pad, W, H, xAt, yAt, minV, maxV};
+      const meta = { points, markers, pad, W, H, xAt, yAt, minV, maxV, times, rangeKey };
+      if (metaRef === "main") chartMeta = meta; else chartMetaFull = meta;
 
-      const pnl = curve.pnl_total??0;
-      const dd = curve.max_drawdown_pct??0;
-      const unreal = curve.unrealized_pnl??0;
-      el.innerHTML = `
-        <div class="chart-stat"><div class="lbl">Start</div><div class="val">$${fmt(curve.starting_equity)}</div></div>
-        <div class="chart-stat"><div class="lbl">Equity</div><div class="val">$${fmt(curve.current_equity)}</div></div>
-        <div class="chart-stat"><div class="lbl">Balance</div><div class="val">$${fmt(curve.current_balance)}</div></div>
-        <div class="chart-stat"><div class="lbl">Unrealized</div><div class="val" style="color:${unreal>=0?"var(--green)":"var(--red)"}">$${fmt(unreal)}</div></div>
-        <div class="chart-stat"><div class="lbl">Session PnL</div><div class="val" style="color:${pnl>=0?"var(--green)":"var(--red)"}">${pnl>=0?"+":""}$${fmt(pnl)} (${fmt(curve.pnl_pct,1)}%)</div></div>
-        <div class="chart-stat"><div class="lbl">Max DD / Peak</div><div class="val">${fmt(dd,2)}% / $${fmt(curve.peak_equity)}</div></div>`;
+      const rs = stats.period_change != null ? stats : {};
+      const pnl = rs.period_change ?? (curve.pnl_total ?? 0);
+      const pnlPct = rs.period_change_pct ?? (curve.pnl_pct ?? 0);
+      const dd = rs.period_max_drawdown_pct ?? (curve.max_drawdown_pct ?? 0);
+      const unreal = curve.unrealized_pnl ?? 0;
+      if (statsEl) {
+        statsEl.innerHTML = `
+          <div class="chart-stat"><div class="lbl">Period Start</div><div class="val">$${fmt(rs.period_start_equity ?? equities[0])}</div></div>
+          <div class="chart-stat"><div class="lbl">Period End</div><div class="val">$${fmt(rs.period_end_equity ?? curve.current_equity)}</div></div>
+          <div class="chart-stat"><div class="lbl">Period Change</div><div class="val" style="color:${pnl>=0?"var(--green)":"var(--red)"}">${pnl>=0?"+":""}$${fmt(pnl)} (${fmt(pnlPct,2)}%)</div></div>
+          <div class="chart-stat"><div class="lbl">Period High</div><div class="val">$${fmt(rs.period_high ?? Math.max(...equities))}</div></div>
+          <div class="chart-stat"><div class="lbl">Period Low</div><div class="val">$${fmt(rs.period_low ?? Math.min(...equities))}</div></div>
+          <div class="chart-stat"><div class="lbl">Max DD</div><div class="val">${fmt(dd,2)}%</div></div>
+          <div class="chart-stat"><div class="lbl">Live Equity</div><div class="val">$${fmt(curve.current_equity)}</div></div>
+          <div class="chart-stat"><div class="lbl">Unrealized</div><div class="val" style="color:${unreal>=0?"var(--green)":"var(--red)"}">$${fmt(unreal)}</div></div>
+          <div class="chart-stat"><div class="lbl">Points</div><div class="val">${points.length}</div></div>`;
+      }
     }
 
-    function setupChartHover() {
-      const canvas = document.getElementById("equityChart");
-      const tip = document.getElementById("chartTooltip");
+    function drawChart(curve) {
+      equityCurveRaw = curve || equityCurveRaw;
+      const rangeText = RANGE_LABELS[chartRange] || chartRange;
+      const label = document.getElementById("equityRangeLabel");
+      if (label) label.textContent = `Live account equity · ${rangeText}`;
+      const labelFull = document.getElementById("equityRangeLabelFull");
+      if (labelFull) labelFull.textContent = `Full-screen equity curve · ${rangeText}`;
+      drawChartOnCanvas(
+        document.getElementById("equityChart"),
+        document.getElementById("chartTooltip"),
+        document.getElementById("chartStats"),
+        equityCurveRaw,
+        chartRange,
+        "main"
+      );
+      drawChartOnCanvas(
+        document.getElementById("equityChartFull"),
+        document.getElementById("chartTooltipFull"),
+        document.getElementById("chartStatsFull"),
+        equityCurveRaw,
+        chartRange,
+        "full"
+      );
+      syncRangeButtons(chartRange);
+    }
+
+    function syncRangeButtons(rangeKey) {
+      document.querySelectorAll(".chart-range-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.range === rangeKey);
+      });
+    }
+
+    function bindChartHover(canvasId, tipId, metaGetter) {
+      const canvas = document.getElementById(canvasId);
+      const tip = document.getElementById(tipId);
+      if (!canvas || !tip) return;
       canvas.onmousemove = (e) => {
-        if (!chartMeta || !chartMeta.points.length) { tip.style.display = "none"; return; }
+        const meta = metaGetter();
+        if (!meta || !meta.points.length) { tip.style.display = "none"; return; }
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const {points, pad, W, xAt} = chartMeta;
+        const { points, pad, W, xAt, rangeKey } = meta;
         if (x < pad.left || x > W - pad.right) { tip.style.display = "none"; return; }
         let best = 0, bestDist = Infinity;
-        points.forEach((p,i) => {
-          const d = Math.abs(xAt(i) - x);
+        points.forEach((p, i) => {
+          const px = xAt(new Date(p.ts).getTime());
+          const d = Math.abs(px - x);
           if (d < bestDist) { bestDist = d; best = i; }
         });
         const p = points[best];
+        const px = xAt(new Date(p.ts).getTime());
+        ctxLine(canvas, meta, px);
         tip.style.display = "block";
-        tip.style.left = Math.min(x + 12, rect.width - 150) + "px";
-        tip.style.top = "12px";
-        tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${fmtTs(p.ts)}</div>
+        tip.style.left = Math.min(x + 14, rect.width - 180) + "px";
+        tip.style.top = "14px";
+        tip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${fmtTs(p.ts, rangeKey)}</div>
           <div>Equity <strong>$${fmt(p.equity)}</strong></div>
           <div>Balance <strong>$${fmt(p.cash ?? p.balance)}</strong></div>
           ${p.unrealized_pnl != null ? `<div>Unrealized <strong style="color:${p.unrealized_pnl>=0?"#30d158":"#ff453a"}">$${fmt(p.unrealized_pnl)}</strong></div>` : ""}
           ${p.drawdown_pct != null ? `<div>Drawdown <strong>${fmt(p.drawdown_pct,2)}%</strong></div>` : ""}
-          ${p.event ? `<div style="color:#98989d;margin-top:4px">${p.event}</div>` : ""}`;
+          ${p.peak_equity != null ? `<div>Peak <strong>$${fmt(p.peak_equity)}</strong></div>` : ""}
+          ${p.event ? `<div style="color:#98989d;margin-top:6px">${p.event}${p.source ? " · "+p.source : ""}</div>` : ""}`;
       };
-      canvas.onmouseleave = () => { tip.style.display = "none"; };
+      canvas.onmouseleave = () => { tip.style.display = "none"; redrawChart(metaGetter); };
+    }
+
+    function ctxLine(canvas, meta, x) {
+      redrawChart(() => meta);
+      const ctx = canvas.getContext("2d");
+      const { pad, H } = meta;
+      ctx.strokeStyle = "rgba(10,132,255,.55)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function redrawChart(metaGetter) {
+      if (equityCurveRaw) drawChart(equityCurveRaw);
+    }
+
+    function setupChartRanges() {
+      document.querySelectorAll(".chart-range-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          chartRange = btn.dataset.range || "1d";
+          drawChart(equityCurveRaw);
+        });
+      });
+    }
+
+    function initChartInteractions() {
+      bindChartHover("equityChart", "chartTooltip", () => chartMeta);
+      bindChartHover("equityChartFull", "chartTooltipFull", () => chartMetaFull);
+      setupChartRanges();
     }
 
     function renderTradeAlert(status) {
@@ -634,15 +1062,32 @@
       if (lastData) render(lastData);
     }
 
-    function renderLivePortfolio(live) {
+    function renderKpiRow(live) {
       if (!live) return;
       const up = (live.session_pnl||0) >= 0;
+      const unrealUp = (live.unrealized_pnl||0) >= 0;
       const sign = up ? "+" : "";
-      document.getElementById("livePortfolio").innerHTML = `
-        <div class="live-metric"><div class="lbl">Balance</div><div class="val">$${fmt(live.cash)}</div></div>
-        <div class="live-metric"><div class="lbl">Equity (Live)</div><div class="val lg">$${fmt(live.equity)}</div></div>
-        <div class="live-metric"><div class="lbl">Unrealized PnL</div><div class="val" style="color:${(live.unrealized_pnl||0)>=0?"var(--green)":"var(--red)"}">${sign}$${fmt(live.unrealized_pnl)}</div><div class="sub">${live.position_count||0} open position(s)</div></div>
-        <div class="live-metric"><div class="lbl">Session PnL</div><div class="val" style="color:${up?"var(--green)":"var(--red)"}">${sign}$${fmt(live.session_pnl)} (${sign}${fmt(live.session_pnl_pct)}%)</div><div class="sub">Realized: $${fmt(live.realized_pnl)}</div></div>`;
+      document.getElementById("kpiRow").innerHTML = `
+        <div class="kpi-tile primary">
+          <div class="lbl">Equity</div>
+          <div class="val">$${fmt(live.equity)}</div>
+          <div class="sub">Balance $${fmt(live.cash)}</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Session PnL</div>
+          <div class="val" style="color:${up?"var(--green)":"var(--red)"}">${sign}$${fmt(live.session_pnl)}</div>
+          <div class="sub">${sign}${fmt(live.session_pnl_pct)}% · Realized $${fmt(live.realized_pnl)}</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Unrealized</div>
+          <div class="val" style="color:${unrealUp?"var(--green)":"var(--red)"}">${unrealUp?"+":""}$${fmt(live.unrealized_pnl)}</div>
+          <div class="sub">${live.position_count||0} open position(s)</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Closed Trades</div>
+          <div class="val">${live.trade_count||0}</div>
+          <div class="sub">Paper portfolio</div>
+        </div>`;
     }
 
     function renderSymbolCards(cards) {
@@ -769,21 +1214,54 @@
       }
     }
 
+    function portfolioSnapshot(data, live) {
+      const account = data.account || {};
+      const orders = data.paper_orders || {};
+      const balance = orders.balance || {};
+      const cash = live?.cash ?? account.balance ?? balance.cash ?? 0;
+      const equity = live?.equity ?? account.equity ?? balance.equity ?? cash;
+      const starting = live?.starting_equity ?? balance.starting_cash ?? cash;
+      const sessionPnl = live?.session_pnl ?? (equity - starting);
+      const unrealized = live?.unrealized_pnl ?? 0;
+      return { cash, equity, sessionPnl, unrealized };
+    }
+
     function renderBottom(data, live) {
-      const risk = data.risk_state||{};
-      const trades = ((data.paper_trades||{}).trades)||[];
-      const wins = trades.filter(t=>t.result==="win").length;
-      const wr = trades.length ? Math.round(wins/trades.length*100) : 0;
-      const equity = live?.equity ?? data.account?.equity;
-      const cash = live?.cash ?? data.account?.balance;
-      document.getElementById("bottomBar").innerHTML = `
-        <div class="bottom-metric"><div class="label">Cash</div><div class="val sm">$${fmt(cash)}</div></div>
-        <div class="bottom-metric"><div class="label">Equity</div><div class="val">$${fmt(equity)}</div></div>
-        <div class="bottom-metric"><div class="label">Unrealized</div><div class="val sm" style="color:${(live?.unrealized_pnl||0)>=0?"var(--green)":"var(--red)"}">$${fmt(live?.unrealized_pnl)}</div></div>
-        <div class="bottom-metric"><div class="label">Session PnL</div><div class="val sm" style="color:${(live?.session_pnl||0)>=0?"var(--green)":"var(--red)"}">$${fmt(live?.session_pnl)}</div></div>
-        <div class="bottom-metric"><div class="label">Exposure</div><div class="val sm">${fmt(risk.exposure_used_pct,1)}%</div></div>
-        <div class="bottom-metric"><div class="label">Drawdown</div><div class="val sm">${fmt(risk.drawdown,2)}%</div></div>
-        <div class="bottom-metric"><div class="label">Win Rate</div><div class="val sm">${wr}%</div></div>`;
+      const risk = data.risk_state || {};
+      const trades = ((data.paper_trades || {}).trades) || [];
+      const wins = trades.filter(t => t.result === "win").length;
+      const wr = trades.length ? Math.round(wins / trades.length * 100) : 0;
+      const status = data.trading_status || {};
+      const p = portfolioSnapshot(data, live);
+      const pnlUp = p.sessionPnl >= 0;
+      const unrealUp = p.unrealized >= 0;
+      const pnlSign = pnlUp ? "+" : "";
+
+      document.getElementById("bottomPortfolio").innerHTML = `
+        <div class="bottom-metric portfolio equity">
+          <div class="label">Equity</div>
+          <div class="val">$${fmt(p.equity)}</div>
+        </div>
+        <div class="bottom-metric portfolio">
+          <div class="label">Balance</div>
+          <div class="val">$${fmt(p.cash)}</div>
+        </div>
+        <div class="bottom-metric portfolio">
+          <div class="label">Session PnL</div>
+          <div class="val" style="color:${pnlUp ? "var(--green)" : "var(--red)"}">${pnlSign}$${fmt(p.sessionPnl)}</div>
+        </div>
+        <div class="bottom-metric portfolio">
+          <div class="label">Unrealized</div>
+          <div class="val" style="color:${unrealUp ? "var(--green)" : "var(--red)"}">${unrealUp ? "+" : ""}$${fmt(p.unrealized)}</div>
+        </div>`;
+
+      document.getElementById("bottomRisk").innerHTML = `
+        <div class="bottom-metric"><div class="label">Trading</div><div class="val sm" style="color:${status.kill_switch ? "var(--red)" : status.can_execute ? "var(--green)" : "var(--orange)"}">${(status.status || "—").toUpperCase()}</div></div>
+        <div class="bottom-metric"><div class="label">Signals</div><div class="val sm">${status.approved_count || 0} / ${status.candidate_count || 0}</div></div>
+        <div class="bottom-metric"><div class="label">Exposure</div><div class="val sm">${fmt(risk.exposure_used_pct, 1)}%</div></div>
+        <div class="bottom-metric"><div class="label">Drawdown</div><div class="val sm">${fmt(risk.drawdown, 2)}%</div></div>
+        <div class="bottom-metric"><div class="label">Win Rate</div><div class="val sm">${wr}%</div></div>
+        <div class="bottom-metric"><div class="label">Positions</div><div class="val sm">${live?.position_count || 0}</div></div>`;
     }
 
     function render(data) {
@@ -812,13 +1290,15 @@
       if (!selectedSymbol && cards.length) selectedSymbol = cards[0].symbol;
 
       const live = data.live_portfolio || {};
-      renderLivePortfolio(live);
+      renderKpiRow(live);
       renderMarketNav(cards);
       renderSymbolCards(cards);
       renderOpenPositions(live);
 
       const card = getSelectedCard(data);
       const ai = (data.ai_decision && data.ai_decision.symbol === selectedSymbol) ? data.ai_decision : null;
+      const hintEl = document.getElementById("aiPanelHint");
+      if (hintEl) hintEl.textContent = selectedSymbol ? selectedSymbol.replace("m","") : "—";
       renderHero(card, ai);
       renderAiPanel(card, ai);
       drawChart(data.equity_curve||{});
@@ -869,15 +1349,7 @@
       if (!symSel.options.length) syms.forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; symSel.appendChild(o); });
       const job = data.replay_job||{};
       const replay = data.replay_results||{};
-      document.getElementById("replayStatus").innerHTML = job.status
-        ? `<p style="margin-top:8px">Job: <span class="badge ${job.status==="complete"?"ok":job.status==="error"?"bad":"warn"}">${job.status}</span> ${job.error||""}</p>` : "";
-      document.getElementById("replayResults").innerHTML = replay.trades_closed!=null ? `
-        <div class="ai-stat-row"><span>Symbol</span><strong>${replay.symbol||"—"}</strong></div>
-        <div class="ai-stat-row"><span>Bars</span><strong>${replay.bars_replayed||"—"}</strong></div>
-        <div class="ai-stat-row"><span>Trades</span><strong>${replay.trades_closed}</strong></div>
-        <div class="ai-stat-row"><span>Win Rate</span><strong>${replay.win_rate_pct}%</strong></div>
-        <div class="ai-stat-row"><span>PnL</span><strong style="color:${(replay.pnl_total||0)>=0?"var(--green)":"var(--red)"}">$${fmt(replay.pnl_total)}</strong></div>`
-        : '<p class="empty">No replay results yet</p>';
+      renderReplayPanel(job, replay);
 
       // Logs
       document.getElementById("logLines").innerHTML = (data.logs||[]).map(l=>`<div class="log-line">${l}</div>`).join("")||'<p class="empty">No logs</p>';
@@ -897,12 +1369,58 @@
         <div class="ai-stat-row"><span>Symbols</span><strong>${(cfg.symbols||[]).join(", ")}</strong></div>
         <div class="ai-stat-row"><span>Max Exposure</span><strong>$${cfg.risk?.max_total_exposure_usd||"—"}</strong></div>`;
 
-      const secs = (data.meta||{}).refresh_seconds||5;
+      const secs = (data.meta||{}).refresh_seconds||2;
       if (refreshMs !== secs*1000) {
         refreshMs = secs*1000;
         if (refreshTimer) clearInterval(refreshTimer);
         refreshTimer = setInterval(refresh, refreshMs);
       }
+    }
+
+    function renderReplayPanel(job, replay) {
+      const statusEl = document.getElementById("replayStatus");
+      const resultsEl = document.getElementById("replayResults");
+      if (job.status) {
+        const badge = job.status === "complete" ? "ok" : job.status === "error" ? "bad" : "warn";
+        const err = job.error ? `<p style="margin-top:8px;font-size:12px;color:var(--red);line-height:1.5">${job.error}</p>` : "";
+        const req = job.max_bars ? `<span style="color:var(--muted);margin-left:8px">${job.symbol||""} · ${job.max_bars} bars requested</span>` : "";
+        statusEl.innerHTML = `<p style="margin-top:8px">Job: <span class="badge ${badge}">${job.status}</span>${req}${err}</p>`;
+      } else {
+        statusEl.innerHTML = "";
+      }
+      if (replay.trades_closed != null) {
+        const barsNote = job.max_bars && replay.bars_replayed < job.max_bars
+          ? `<div class="ai-stat-row"><span>History</span><strong style="color:var(--orange)">${replay.bars_replayed} bars available (requested ${job.max_bars})</strong></div>` : "";
+        resultsEl.innerHTML = `
+          <div class="ai-stat-row"><span>Symbol</span><strong>${replay.symbol||"—"}</strong></div>
+          <div class="ai-stat-row"><span>Bars Replayed</span><strong>${replay.bars_replayed||"—"}</strong></div>
+          ${barsNote}
+          <div class="ai-stat-row"><span>Trades</span><strong>${replay.trades_closed}</strong></div>
+          <div class="ai-stat-row"><span>Win Rate</span><strong>${replay.win_rate_pct}%</strong></div>
+          <div class="ai-stat-row"><span>PnL</span><strong style="color:${(replay.pnl_total||0)>=0?"var(--green)":"var(--red)"}">$${fmt(replay.pnl_total)}</strong></div>
+          <div class="ai-stat-row"><span>Final Equity</span><strong>$${fmt(replay.final_equity)}</strong></div>`;
+      } else {
+        resultsEl.innerHTML = '<p class="empty">No replay results yet</p>';
+      }
+    }
+
+    let replayPollTimer = null;
+
+    async function pollReplayJob() {
+      if (replayPollTimer) clearInterval(replayPollTimer);
+      replayPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch("/api/state/replay_job.json");
+          const job = await res.json();
+          if (!job.status || job.status === "complete" || job.status === "error") {
+            clearInterval(replayPollTimer);
+            replayPollTimer = null;
+            await refresh();
+          } else {
+            renderReplayPanel(job, lastData?.replay_results || {});
+          }
+        } catch (_) { /* retry on next tick */ }
+      }, 2000);
     }
 
     document.getElementById("replayBtn").addEventListener("click", async () => {
@@ -919,9 +1437,14 @@
           }),
         });
         const out = await res.json();
-        document.getElementById("replayStatus").innerHTML = `<p style="margin-top:8px;color:var(--muted)">${out.message||out.error||"Started"}</p>`;
+        if (!res.ok) {
+          document.getElementById("replayStatus").innerHTML = `<p style="margin-top:8px;color:var(--red)">${out.message||out.error||"Replay rejected"}</p>`;
+        } else {
+          document.getElementById("replayStatus").innerHTML = `<p style="margin-top:8px;color:var(--muted)">${out.message||"Started"}</p>`;
+          pollReplayJob();
+        }
       } catch(e) {
-        document.getElementById("replayStatus").innerHTML = `<p style="color:var(--red)">Replay failed</p>`;
+        document.getElementById("replayStatus").innerHTML = `<p style="color:var(--red)">Replay failed — could not reach API</p>`;
       }
       btn.disabled = false;
       btn.textContent = "Run Replay";
@@ -929,19 +1452,35 @@
 
     async function refresh() {
       try {
-        const res = await fetch("/api/state");
-        render(await res.json());
+        if (firstLoad) {
+          const [data] = await Promise.all([
+            fetch("/api/state").then(res => res.json()),
+            playLoaderAnimation(),
+          ]);
+          const remaining = LOADER_DURATION_MS - (Date.now() - loaderStartedAt);
+          if (remaining > 0) await delay(remaining);
+          render(data);
+          await revealApp();
+        } else {
+          const res = await fetch("/api/state");
+          render(await res.json());
+        }
       } catch(e) {
-        document.getElementById("osStatus").className = "status-pill bad";
-        document.getElementById("osStatus").innerHTML = '<span class="dot"></span> Offline';
+        if (firstLoad) {
+          document.querySelector(".loader-sub").textContent = "Waiting for agent — retrying…";
+          advanceLoader(0);
+        } else {
+          document.getElementById("osStatus").className = "status-pill bad";
+          document.getElementById("osStatus").innerHTML = '<span class="dot"></span> Offline';
+        }
       }
     }
 
     setupNav();
-    setupChartHover();
+    initChartInteractions();
     refresh();
     refreshTimer = setInterval(refresh, refreshMs);
-    window.addEventListener("resize", () => { if (lastData) drawChart(lastData.equity_curve); });
+    window.addEventListener("resize", () => { if (equityCurveRaw) drawChart(equityCurveRaw); });
   </script>
 </body>
 </html>

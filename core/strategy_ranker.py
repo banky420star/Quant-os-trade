@@ -8,6 +8,14 @@ from typing import Any
 from core.edge_database import EdgeDatabase
 from core.setup_library import SETUP_LIBRARY
 
+# Live move_type from market context → setup the classifier can emit.
+MOVE_TYPE_SETUP_MAP: dict[str, str] = {
+    "pullback": "pullback",
+    "continuation": "trend_continuation",
+    "compression": "compression_breakout",
+    "range": "range_fade",
+}
+
 
 class StrategyRanker:
     """Rank strategies by historical edge under today's regime and session."""
@@ -21,6 +29,11 @@ class StrategyRanker:
         self.min_samples = int(quant.get("min_rank_sample_size", 3))
         self.min_win_rate = float(quant.get("min_rank_win_rate", 35))
         self.require_top_rank = bool(quant.get("require_top_ranked_setup", True))
+        self.ranking_flex_enabled = bool(quant.get("ranking_flex_enabled", True))
+        self.ranking_flex_min_win_rate = float(quant.get("ranking_flex_min_win_rate", 55))
+        self.ranking_flex_min_samples = int(quant.get("ranking_flex_min_samples", 10))
+        self.ranking_flex_top_n = max(1, int(quant.get("ranking_flex_top_n", 2)))
+        self.ranking_context_align = bool(quant.get("ranking_context_align", True))
 
     def rank_for_symbol(
         self,
@@ -78,6 +91,13 @@ class StrategyRanker:
                 "rankings": rankings[:5],
             }
 
+        if match is None and all(r.get("insufficient_data") for r in rankings):
+            return True, {
+                "allowed": True,
+                "reason": "unranked_insufficient_fallback",
+                "rankings": rankings[:5],
+            }
+
         if not self.require_top_rank:
             if match and match.get("win_rate_pct", 0) >= self.min_win_rate:
                 return True, {"allowed": True, "rank": match["rank"], "rankings": rankings[:5]}
@@ -87,13 +107,26 @@ class StrategyRanker:
                 "rankings": rankings[:5],
             }
 
-        if setup_type == top["setup_type"]:
+        allowed_depth = self._allowed_rank_depth(rankings)
+        allowed_setups = {r["setup_type"] for r in rankings[:allowed_depth]}
+
+        if setup_type in allowed_setups:
+            rank = match["rank"] if match else 1
+            reason = "top_ranked" if allowed_depth == 1 and rank == 1 else "top_n_flex"
             return True, {
                 "allowed": True,
-                "reason": "top_ranked",
-                "score": top["score"],
+                "reason": reason,
+                "rank": rank,
+                "allowed_depth": allowed_depth,
+                "score": match.get("score") if match else top.get("score"),
                 "rankings": rankings[:5],
             }
+
+        context_allowed, context_info = self._context_aligned_allowance(
+            setup_type, match, rankings, context
+        )
+        if context_allowed:
+            return True, context_info
 
         if top.get("insufficient_data"):
             return True, {"allowed": True, "reason": "top_insufficient_fallback", "rankings": rankings[:5]}
@@ -103,8 +136,59 @@ class StrategyRanker:
             "reason": "not_top_ranked",
             "top_setup": top["setup_type"],
             "top_score": top["score"],
+            "allowed_depth": allowed_depth,
             "rankings": rankings[:5],
         }
+
+    def _context_aligned_allowance(
+        self,
+        setup_type: str,
+        match: dict[str, Any] | None,
+        rankings: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
+        """Allow a ranked setup that matches the live market move when strict top-1 blocks it."""
+        if not self.ranking_context_align or not match:
+            return False, {}
+
+        move_type = context.get("move_type", "")
+        aligned_setup = MOVE_TYPE_SETUP_MAP.get(move_type)
+        if not aligned_setup or setup_type != aligned_setup:
+            return False, {}
+
+        depth = min(self.ranking_flex_top_n, len(rankings))
+        top_slice = rankings[:depth]
+        if setup_type not in {r["setup_type"] for r in top_slice}:
+            return False, {}
+
+        return True, {
+            "allowed": True,
+            "reason": "context_aligned",
+            "rank": match["rank"],
+            "allowed_depth": depth,
+            "move_type": move_type,
+            "score": match.get("score"),
+            "rankings": rankings[:5],
+        }
+
+    def _allowed_rank_depth(self, rankings: list[dict[str, Any]]) -> int:
+        """Return how many ranked setups may trade (1 = strict leader only)."""
+        if not self.require_top_rank:
+            return len(rankings)
+
+        if not self.ranking_flex_enabled or not rankings:
+            return 1
+
+        top = rankings[0]
+        if top.get("insufficient_data"):
+            return min(self.ranking_flex_top_n, len(rankings))
+
+        win_rate = float(top.get("win_rate_pct", 0))
+        samples = int(top.get("total", 0))
+        if win_rate < self.ranking_flex_min_win_rate or samples < self.ranking_flex_min_samples:
+            return min(self.ranking_flex_top_n, len(rankings))
+
+        return 1
 
     def _default_rankings(self, primary: str) -> list[dict[str, Any]]:
         """Prioritize setups compatible with regime when no history exists."""
@@ -112,8 +196,9 @@ class StrategyRanker:
             "strong_trend": ["trend_continuation", "pullback", "breakout"],
             "weak_trend": ["pullback", "trend_continuation"],
             "range": ["range_fade", "mean_reversion", "liquidity_sweep"],
-            "compression": ["compression_breakout", "breakout"],
+            "compression": ["compression_breakout", "breakout", "trend_continuation", "pullback"],
             "expansion": ["breakout", "trend_continuation"],
+            "transitional": ["pullback", "trend_continuation", "breakout", "liquidity_sweep"],
             "volatility_spike": [],
         }
         preferred = regime_setup_map.get(primary, list(SETUP_LIBRARY.keys()))

@@ -9,8 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import os
+
 import MetaTrader5 as mt5
 from core.mt5_client import detect_session_alignment, format_mt5_connection_error
+from core.utils import load_config
 
 OUT = ROOT / "logs" / "mt5_connect_test_result.json"
 TERMINAL = r"C:\Users\Administrator\MT5Agent\terminal64.exe"
@@ -21,20 +24,28 @@ result: dict = {
     "success": False,
 }
 
-probes = [
+mt5_cfg = load_config().get("mt5", {})
+explicit_password = os.environ.get("MT5_PASSWORD") or mt5_cfg.get("password")
+explicit_login = mt5_cfg.get("login")
+explicit_server = mt5_cfg.get("server")
+
+probes: list[tuple[str, dict]] = [
     ("no_args", {}),
     ("path_only", {"path": TERMINAL, "timeout": 30000}),
-    (
-        "explicit_login",
-        {
-            "path": TERMINAL,
-            "login": 435656990,
-            "password": "Fuckyou2/",
-            "server": "Exness-MT5Trial9",
-            "timeout": 30000,
-        },
-    ),
 ]
+if explicit_login and explicit_password and explicit_server:
+    probes.append(
+        (
+            "explicit_login",
+            {
+                "path": TERMINAL,
+                "login": int(explicit_login),
+                "password": str(explicit_password),
+                "server": str(explicit_server),
+                "timeout": 30000,
+            },
+        )
+    )
 
 for name, kwargs in probes:
     mt5.shutdown()

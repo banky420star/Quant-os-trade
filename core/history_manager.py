@@ -89,11 +89,27 @@ class HistoryManager:
 
         return results
 
-    def load(self, logical_symbol: str, timeframe: str) -> pd.DataFrame | None:
-        path = self.parquet_path(logical_symbol, timeframe)
+    def _read_parquet_safe(self, path: Path) -> pd.DataFrame | None:
+        """Load parquet or remove corrupt files so the next update can rebuild."""
         if not path.exists():
             return None
-        return pd.read_parquet(path)
+        size = path.stat().st_size
+        if size < 12:
+            self.logger.warning("Corrupt parquet (%d bytes), removing: %s", size, path)
+            path.unlink(missing_ok=True)
+            return None
+        try:
+            df = pd.read_parquet(path)
+            if df is None or df.empty:
+                return None
+            return df
+        except Exception as exc:
+            self.logger.warning("Failed to read parquet %s: %s — removing", path, exc)
+            path.unlink(missing_ok=True)
+            return None
+
+    def load(self, logical_symbol: str, timeframe: str) -> pd.DataFrame | None:
+        return self._read_parquet_safe(self.parquet_path(logical_symbol, timeframe))
 
     def serve_recent(self, logical_symbol: str, timeframe: str, count: int) -> list[dict[str, Any]]:
         """Serve recent candles from Parquet for loops (avoids hammering MT5)."""
@@ -108,8 +124,12 @@ class HistoryManager:
         if not bars:
             return path
         df = pd.DataFrame(bars)
+        if df.empty:
+            return path
         df = df.drop_duplicates(subset=["time"], keep="last").sort_values("time")
-        df.to_parquet(path, index=False)
+        tmp = path.with_suffix(".parquet.tmp")
+        df.to_parquet(tmp, index=False)
+        tmp.replace(path)
         return path
 
     def status(self, symbol_map: dict[str, str]) -> dict[str, Any]:
@@ -120,8 +140,8 @@ class HistoryManager:
             symbols_status[logical] = {}
             for tf in timeframes:
                 path = self.parquet_path(logical, tf)
-                if path.exists():
-                    df = pd.read_parquet(path)
+                df = self._read_parquet_safe(path)
+                if df is not None:
                     symbols_status[logical][tf] = {
                         "bars": len(df),
                         "size_mb": round(path.stat().st_size / 1_048_576, 2),
