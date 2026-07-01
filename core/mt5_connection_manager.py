@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 from core.mt5_terminal_manager import MT5TerminalManager, get_python_session_id
@@ -14,6 +15,7 @@ except ImportError:
     mt5 = None  # type: ignore
 
 IPC_TIMEOUT_CODE = -10005
+_MT5_SESSION_LOCK = threading.RLock()
 
 
 class MT5ConnectionManager:
@@ -26,6 +28,7 @@ class MT5ConnectionManager:
         self._connected = False
         self._terminal_path: str | None = None
         self._connect_latency_ms: float | None = None
+        self._lock_acquired = False
 
     @property
     def connected(self) -> bool:
@@ -36,56 +39,72 @@ class MT5ConnectionManager:
         return self._terminal_path
 
     def connect(self) -> bool:
+        if self._connected:
+            return True
         if mt5 is None:
             raise ConnectionError("MetaTrader5 package not installed")
 
         import time
 
-        alignment = self.terminal_manager.session_alignment()
-        self.logger.info(
-            "Session alignment: python_session=%s aligned=%s processes=%s",
-            alignment.get("python_session_id"),
-            alignment.get("aligned"),
-            alignment.get("mt5_processes"),
-        )
-        if alignment.get("warning"):
-            self.logger.warning(alignment["warning"])
-
-        if not alignment.get("aligned") and self.config.get("mt5", {}).get("auto_launch_terminal", True):
-            self.terminal_manager.ensure_terminal(auto_launch=True)
+        _MT5_SESSION_LOCK.acquire()
+        self._lock_acquired = True
+        try:
             alignment = self.terminal_manager.session_alignment()
+            self.logger.info(
+                "Session alignment: python_session=%s aligned=%s processes=%s",
+                alignment.get("python_session_id"),
+                alignment.get("aligned"),
+                alignment.get("mt5_processes"),
+            )
+            if alignment.get("warning"):
+                self.logger.warning(alignment["warning"])
 
-        timeout = int(self.config.get("mt5", {}).get("timeout_ms", 120000))
-        paths = self.terminal_manager.discover_paths()
-        if not paths:
-            raise ConnectionError("No terminal64.exe found")
+            if not alignment.get("aligned") and self.config.get("mt5", {}).get("auto_launch_terminal", True):
+                self.terminal_manager.ensure_terminal(auto_launch=True)
+                alignment = self.terminal_manager.session_alignment()
 
-        mt5_cfg = self.config.get("mt5", {})
-        logged_in_only = bool(mt5_cfg.get("use_logged_in_account", True))
-        modes = (False,) if logged_in_only else (False, True)
+            timeout = int(self.config.get("mt5", {}).get("timeout_ms", 120000))
+            paths = self.terminal_manager.discover_paths()
+            if not paths:
+                raise ConnectionError("No terminal64.exe found")
 
-        if logged_in_only:
-            self.logger.info("Attaching to logged-in MT5 demo account (no forced re-login)")
+            mt5_cfg = self.config.get("mt5", {})
+            logged_in_only = bool(mt5_cfg.get("use_logged_in_account", True))
+            modes = (False,) if logged_in_only else (False, True)
 
-        last_error: Any = "no attempts"
-        for path in paths:
-            for use_creds in modes:
-                t0 = time.perf_counter()
-                err = self._try_path(path, timeout, use_creds)
-                elapsed = (time.perf_counter() - t0) * 1000
-                if self._connected:
-                    self._connect_latency_ms = round(elapsed, 1)
-                    return True
-                last_error = err
+            if logged_in_only:
+                self.logger.info("Attaching to logged-in MT5 demo account (no forced re-login)")
 
-        msg = self._format_error(last_error, alignment)
-        raise ConnectionError(msg)
+            last_error: Any = "no attempts"
+            for path in paths:
+                for use_creds in modes:
+                    t0 = time.perf_counter()
+                    err = self._try_path(path, timeout, use_creds)
+                    elapsed = (time.perf_counter() - t0) * 1000
+                    if self._connected:
+                        self._connect_latency_ms = round(elapsed, 1)
+                        return True
+                    last_error = err
+
+            msg = self._format_error(last_error, alignment)
+            raise ConnectionError(msg)
+        except Exception:
+            self._release_session_lock()
+            raise
 
     def disconnect(self) -> None:
-        if mt5 and self._connected:
-            mt5.shutdown()
-            self._connected = False
-            self.logger.info("Disconnected from MT5")
+        try:
+            if mt5 and self._connected:
+                mt5.shutdown()
+                self._connected = False
+                self.logger.info("Disconnected from MT5")
+        finally:
+            self._release_session_lock()
+
+    def _release_session_lock(self) -> None:
+        if self._lock_acquired:
+            self._lock_acquired = False
+            _MT5_SESSION_LOCK.release()
 
     def account_snapshot(self) -> dict[str, Any]:
         if not self._connected or mt5 is None:

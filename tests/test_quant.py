@@ -148,6 +148,13 @@ def test_strategy_ranker_allow_setup(config):
 
 
 def test_ranking_flex_allows_second_when_leader_is_weak(config):
+    # sync_practice_gates forces strategy_ranking_enabled=False while the
+    # aggressive growth plan is enabled (config.yaml practice.growth.enabled:
+    # true -> practice_session.py overwrites quant.strategy_ranking_enabled).
+    # These tests exercise the flex/context-align branches, which only run when
+    # ranking is ENABLED, so re-enable it explicitly here.
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_flex_min_win_rate"] = 55
     config["quant"]["ranking_flex_min_samples"] = 10
@@ -187,6 +194,10 @@ def test_ranking_flex_allows_second_when_leader_is_weak(config):
 
 
 def test_ranking_flex_strict_when_leader_is_strong(config):
+    # See note in test_ranking_flex_allows_second_when_leader_is_weak:
+    # re-enable ranking (forced off by sync_practice_gates under growth plan).
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_flex_min_win_rate"] = 55
     config["quant"]["ranking_flex_min_samples"] = 10
@@ -223,6 +234,10 @@ def test_ranking_flex_strict_when_leader_is_strong(config):
 
 
 def test_context_align_allows_pullback_in_pullback_market(config):
+    # See note in test_ranking_flex_allows_second_when_leader_is_weak:
+    # re-enable ranking (forced off by sync_practice_gates under growth plan).
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_context_align"] = True
     config["quant"]["ranking_flex_top_n"] = 2

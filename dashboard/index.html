@@ -2,8 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <title>MT5 Quant OS</title>
+  <!-- build: 2026-06-26-mobile-v3 -->
   <style>
     :root {
       --bg: #07070a;
@@ -276,9 +279,39 @@
       padding: 18px 20px 16px;
       margin-bottom: 8px;
     }
-    .equity-hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .equity-hero-head {
+      display: grid;
+      grid-template-columns: minmax(140px, auto) 1fr auto;
+      align-items: center;
+      gap: 16px 24px;
+      margin-bottom: 12px;
+    }
     .equity-hero-head .card-title { font-size: 15px; margin: 0; }
     .equity-hero-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .equity-headline-kpis {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 32px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .equity-headline-kpi { text-align: center; min-width: 100px; }
+    .equity-headline-kpi .lbl {
+      font-size: 10px; color: var(--muted2); text-transform: uppercase;
+      letter-spacing: .06em; font-weight: 700; margin-bottom: 4px;
+    }
+    .equity-headline-kpi .val {
+      font-size: 30px; font-weight: 700; letter-spacing: -.03em;
+      line-height: 1.1; font-variant-numeric: tabular-nums;
+    }
+    .equity-headline-kpi.primary .val { font-size: 34px; color: #7ac0ff; }
+    .equity-headline-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    @media (max-width: 1100px) {
+      .equity-hero-head { grid-template-columns: 1fr; }
+      .equity-headline-kpis { justify-content: flex-start; }
+      .chart-range-bar { justify-content: flex-start; }
+    }
     .chart-range-bar { display: flex; flex-wrap: wrap; gap: 6px; }
     .chart-range-btn {
       border: 1px solid var(--border); background: var(--surface3); color: var(--muted);
@@ -287,8 +320,18 @@
     .chart-range-btn:hover { color: var(--text); border-color: rgba(10,132,255,.35); }
     .chart-range-btn.active { background: rgba(10,132,255,.18); color: #7ac0ff; border-color: rgba(10,132,255,.45); }
     .chart-wrap { position: relative; }
-    #equityChart { width: 100%; height: 420px; display: block; cursor: crosshair; }
-    #equityChartFull { width: 100%; height: calc(100vh - 220px); min-height: 480px; display: block; cursor: crosshair; }
+    .chart-canvas { width: 100%; display: block; cursor: crosshair; }
+    #equityChart { height: 460px; }
+    #equityChartFull { height: calc(100vh - 220px); min-height: 520px; }
+    .chart-overlay {
+      position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+      pointer-events: none; display: block;
+    }
+    .chart-live-badge {
+      position: absolute; top: 10px; right: 12px; font-size: 10px; font-weight: 600;
+      color: var(--muted); background: rgba(28,28,31,.85); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 8px; pointer-events: none;
+    }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 11px; color: var(--muted); }
     .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
     .chart-legend i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
@@ -311,6 +354,7 @@
     .trade-alert.blocked { background: rgba(255,69,58,.1); border-color: rgba(255,69,58,.25); color: #ffb4af; }
     .trade-alert.ready { background: rgba(48,209,88,.1); border-color: rgba(48,209,88,.25); color: #8ae99a; }
     .trade-alert.scan { background: rgba(255,159,10,.08); border-color: rgba(255,159,10,.2); color: #ffc46b; }
+    .trade-alert .verdict-line { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--muted); border-top: 1px solid rgba(255,255,255,.08); padding-top: 4px; cursor: help; }
 
     /* Tables */
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -402,10 +446,165 @@
       .right-panel { display: none; }
       :root { --right-w: 0px; }
     }
-    @media (max-width: 800px) {
-      .sidebar { width: 56px; }
-      .nav-item span:not(.sym-price) { display: none; }
-      .sidebar-section { display: none; }
+
+    /* Phone layout */
+    .mobile-summary, .mobile-symbols, .mobile-tab-bar, .mobile-ai-wrap, .mobile-empty { display: none; }
+
+    @media (max-width: 768px) {
+      :root {
+        --top-h: 52px;
+        --bottom-h: 0px;
+        --mobile-tabs-h: calc(56px + env(safe-area-inset-bottom, 0px));
+      }
+      html, body {
+        height: 100%;
+        height: 100dvh;
+        overflow: hidden;
+      }
+      .topbar {
+        padding: env(safe-area-inset-top, 0px) 14px 0;
+        min-height: var(--top-h);
+      }
+      .brand h1 { font-size: 14px; }
+      .brand .ver { display: none; }
+      .topbar-stats { display: none; }
+      .sidebar { display: none !important; }
+      .right-panel { display: none !important; }
+      .bottombar { display: none !important; }
+      .shell {
+        height: calc(100dvh - var(--top-h) - var(--mobile-tabs-h));
+        min-height: 0;
+      }
+      .main { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+      .center {
+        flex: 1;
+        min-height: 0;
+        padding: 12px 14px 20px;
+        -webkit-overflow-scrolling: touch;
+        overflow-y: auto;
+      }
+      .mobile-empty {
+        display: block;
+        text-align: center;
+        padding: 28px 16px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .mobile-empty.hidden { display: none !important; }
+      .mobile-empty .retry-btn {
+        margin-top: 14px;
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface3);
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 600;
+        font-family: inherit;
+      }
+      .card { padding: 14px; border-radius: 12px; }
+      .hero-card { padding: 16px; }
+      .hero-action { font-size: 34px; }
+      .hero-action.wait { font-size: 28px; }
+      .hero-meta { grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+      .hero-meta-item .val { font-size: 14px; }
+      .equity-hero { padding: 12px; margin-bottom: 0; }
+      .equity-hero-head { grid-template-columns: 1fr; gap: 10px; }
+      .equity-headline-kpis { justify-content: space-between; gap: 12px; width: 100%; }
+      .equity-headline-kpi .val { font-size: 22px; }
+      .equity-headline-kpi.primary .val { font-size: 26px; }
+      #equityChart { height: 200px; }
+      #equityChartFull { height: 280px; min-height: 0; }
+      .chart-range-btn { padding: 8px 10px; min-height: 36px; }
+      .chart-legend { gap: 8px; font-size: 10px; }
+      .kpi-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .kpi-tile { padding: 12px; }
+      .kpi-tile .val { font-size: 18px; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .section-head .hint { display: none; }
+      .mobile-hide { display: none !important; }
+      .mobile-summary {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .mobile-symbols {
+        display: flex !important;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        margin-bottom: 8px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .mobile-symbols::-webkit-scrollbar { display: none; }
+      .mobile-sym-chip {
+        flex-shrink: 0;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--muted);
+        border-radius: 99px;
+        padding: 8px 14px;
+        font-size: 12px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .mobile-sym-chip.active {
+        border-color: rgba(41,151,255,.5);
+        background: rgba(41,151,255,.12);
+        color: var(--text);
+      }
+      .ms-tile {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+      .ms-tile.wide { grid-column: 1 / -1; }
+      .ms-tile.primary {
+        background: linear-gradient(135deg, rgba(41,151,255,.12), rgba(41,151,255,.02));
+        border-color: rgba(41,151,255,.22);
+      }
+      .ms-lbl {
+        font-size: 10px; color: var(--muted2); text-transform: uppercase;
+        letter-spacing: .06em; font-weight: 700;
+      }
+      .ms-val {
+        font-size: 22px; font-weight: 700; margin-top: 4px;
+        font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+      }
+      .ms-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+      .mobile-ai-wrap {
+        display: block;
+        margin-top: 4px;
+      }
+      .mobile-tab-bar {
+        display: flex;
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        height: var(--mobile-tabs-h);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        background: rgba(17,17,20,.96);
+        border-top: 1px solid var(--border);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        z-index: 100;
+      }
+      .mobile-tab {
+        flex: 1;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 3px; border: none; background: none; color: var(--muted2);
+        font-size: 10px; font-weight: 600; font-family: inherit;
+        padding: 6px 4px; cursor: pointer;
+      }
+      .mobile-tab .ico { font-size: 18px; line-height: 1; }
+      .mobile-tab.active { color: var(--blue); }
+      .sym-card { padding: 14px; }
+      table { font-size: 11px; }
+      th, td { padding: 8px 6px; }
+      .trade-alert { font-size: 11px; padding: 10px 12px; }
+      .status-pill { font-size: 10px; padding: 4px 8px; }
     }
   </style>
 </head>
@@ -427,6 +626,31 @@
     </div>
     <div class="loader-bar"><i></i></div>
   </div>
+
+  <!-- Independent loader failsafe. Self-contained: depends on NO function defined later,
+       so it still runs if the main app <script> throws before its own watchdog arms.
+       At 10s, if the main script has not already hidden the loader, force-hide it and
+       surface an actionable banner (instead of a silent infinite spinner). If the main
+       script succeeded, the loader already has .hidden and this does nothing. -->
+  <script>
+    (function () {
+      setTimeout(function () {
+        try {
+          var ls = document.getElementById("loaderScreen");
+          if (ls && !ls.classList.contains("hidden") && !ls.classList.contains("hiding")) {
+            ls.classList.add("hidden");
+            var app = document.getElementById("appRoot");
+            if (app) app.classList.add("ready");
+            var b = document.createElement("div");
+            b.id = "bootFailsafeBanner";
+            b.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#1c1c1e;color:#f5f5f7;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 14px;font:13px system-ui,sans-serif;";
+            b.innerHTML = "Dashboard load issue (main script did not finish). Open the no-JS mirror at <a style='color:#0a84ff' href='http://localhost:8081/'>localhost:8081</a>, or press <b>F12 → Console</b> and send the red error.";
+            document.body.appendChild(b);
+          }
+        } catch (e) { /* swallow */ }
+      }, 10000);
+    })();
+  </script>
 
   <div class="app-root" id="appRoot">
 
@@ -458,16 +682,26 @@
 
         <!-- DASHBOARD VIEW -->
         <div class="view active" id="view-dashboard">
+          <div class="mobile-empty" id="mobileEmpty">
+            <div>Connecting to bot…</div>
+            <div style="font-size:11px;color:var(--muted2);margin-top:6px">Pull down or tap retry if this stays empty</div>
+            <button type="button" class="retry-btn" id="mobileRetryBtn">Retry now</button>
+          </div>
+          <div class="mobile-summary" id="mobileSummary"></div>
+          <div class="mobile-symbols" id="mobileSymbols"></div>
           <div class="trade-alert" id="tradeAlert"></div>
-          <div class="card equity-hero" id="equityHeroCard">
+          <div class="card equity-hero mobile-hide" id="equityHeroCard">
             <div class="equity-hero-head">
               <div>
                 <div class="card-title">Equity Curve</div>
                 <div class="equity-hero-sub" id="equityRangeLabel">Live account equity · select timeframe</div>
               </div>
+              <div class="equity-headline-kpis" id="equityHeadlineKpis"></div>
               <div class="chart-range-bar" id="chartRangeBar">
                 <button type="button" class="chart-range-btn" data-range="1m">1m</button>
+                <button type="button" class="chart-range-btn" data-range="15m">15m</button>
                 <button type="button" class="chart-range-btn" data-range="1h">1h</button>
+                <button type="button" class="chart-range-btn" data-range="4h">4h</button>
                 <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
                 <button type="button" class="chart-range-btn" data-range="7d">7d</button>
                 <button type="button" class="chart-range-btn" data-range="30d">30d</button>
@@ -475,7 +709,9 @@
               </div>
             </div>
             <div class="chart-wrap">
-              <canvas id="equityChart"></canvas>
+              <canvas id="equityChart" class="chart-canvas"></canvas>
+              <canvas id="equityChartOverlay" class="chart-overlay chart-canvas"></canvas>
+              <div class="chart-live-badge" id="chartLiveBadge"></div>
               <div class="chart-tooltip" id="chartTooltip"></div>
             </div>
             <div class="chart-legend">
@@ -501,6 +737,16 @@
             <div class="card-title">Open Positions — Live PnL</div>
             <div id="openPositionsLive"></div>
           </div>
+          <div class="mobile-ai-wrap">
+            <div class="card">
+              <div class="card-title">Decision Engine</div>
+              <div id="mobileAiPanel"></div>
+            </div>
+            <div class="card" style="margin-top:12px">
+              <div class="card-title">Evidence</div>
+              <div id="mobileEvidenceTree"></div>
+            </div>
+          </div>
           <div class="grid-2">
             <div class="card" id="signalsCard"><div class="card-title">Recent Signals</div><div id="signalsTable"></div></div>
             <div class="card" id="tradesCard"><div class="card-title">Closed Trades</div><div id="tradesTable"></div></div>
@@ -516,9 +762,12 @@
                   <div class="card-title">Equity Analytics</div>
                   <div class="equity-hero-sub" id="equityRangeLabelFull">Full-screen equity curve with trade markers</div>
                 </div>
+                <div class="equity-headline-kpis" id="equityHeadlineKpisFull"></div>
                 <div class="chart-range-bar" id="chartRangeBarFull">
                   <button type="button" class="chart-range-btn" data-range="1m">1m</button>
+                  <button type="button" class="chart-range-btn" data-range="15m">15m</button>
                   <button type="button" class="chart-range-btn" data-range="1h">1h</button>
+                  <button type="button" class="chart-range-btn" data-range="4h">4h</button>
                   <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
                   <button type="button" class="chart-range-btn" data-range="7d">7d</button>
                   <button type="button" class="chart-range-btn" data-range="30d">30d</button>
@@ -526,15 +775,18 @@
                 </div>
               </div>
               <div class="chart-wrap">
-                <canvas id="equityChartFull"></canvas>
+                <canvas id="equityChartFull" class="chart-canvas"></canvas>
+                <canvas id="equityChartOverlayFull" class="chart-overlay chart-canvas"></canvas>
+                <div class="chart-live-badge" id="chartLiveBadgeFull"></div>
                 <div class="chart-tooltip" id="chartTooltipFull"></div>
               </div>
               <div class="chart-legend">
                 <span><i style="background:#0a84ff"></i> Equity</span>
                 <span><i style="background:#98989d;opacity:.8"></i> Balance</span>
-                <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized</span>
+                <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized gap</span>
                 <span><i style="background:#30d158;height:8px;width:8px;border-radius:50%"></i> Win</span>
                 <span><i style="background:#ff453a;height:8px;width:8px;border-radius:50%"></i> Loss</span>
+                <span><i style="background:rgba(255,69,58,.22);height:12px"></i> Drawdown fill</span>
               </div>
               <div class="chart-stats-grid" id="chartStatsFull"></div>
             </div>
@@ -629,6 +881,13 @@
     </div>
   </div>
 
+  <nav class="mobile-tab-bar" id="mobileTabBar" aria-label="Main navigation">
+    <button type="button" class="mobile-tab active" data-view="dashboard"><span class="ico">⌂</span>Home</button>
+    <button type="button" class="mobile-tab" data-view="equity"><span class="ico">📈</span>Chart</button>
+    <button type="button" class="mobile-tab" data-view="memory"><span class="ico">🧠</span>Memory</button>
+    <button type="button" class="mobile-tab" data-view="settings"><span class="ico">⚙</span>System</button>
+  </nav>
+
   <footer class="bottombar" id="bottomBar">
     <div class="bottom-portfolio" id="bottomPortfolio">
       <div class="bottom-metric portfolio equity"><div class="label">Equity</div><div class="val">—</div></div>
@@ -647,7 +906,11 @@
     let refreshTimer = null;
     let lastData = null;
     let firstLoad = true;
-    const LOADER_DURATION_MS = 2800;
+    let refreshInFlight = false;
+    let bootDone = false;
+    const isMobile = window.matchMedia("(max-width: 768px)").matches;
+    const LOADER_DURATION_MS = isMobile ? 900 : 2800;
+    const API_BUST = "v=4";
     const LOADER_STEP_MS = 650;
     const LOADER_FADE_MS = 600;
     const loaderStartedAt = Date.now();
@@ -693,17 +956,23 @@
       return Number(n).toLocaleString(undefined, {maximumFractionDigits: d});
     }
 
-    function setupNav() {
-      document.querySelectorAll(".nav-item[data-view]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".nav-item[data-view]").forEach(b => b.classList.remove("active"));
-          btn.classList.add("active");
-          document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
-          document.getElementById("view-" + btn.dataset.view).classList.add("active");
-          if (btn.dataset.view === "equity" || btn.dataset.view === "dashboard") {
-            requestAnimationFrame(() => { if (equityCurveRaw) drawChart(equityCurveRaw); });
-          }
+    function activateView(view) {
+      document.querySelectorAll(".nav-item[data-view], .mobile-tab[data-view]").forEach(b => {
+        b.classList.toggle("active", b.dataset.view === view);
+      });
+      document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+      const panel = document.getElementById("view-" + view);
+      if (panel) panel.classList.add("active");
+      if (view === "equity" || view === "dashboard") {
+        requestAnimationFrame(() => {
+          if (equityCurveRaw) drawChart(equityCurveRaw, lastData?.live_portfolio);
         });
+      }
+    }
+
+    function setupNav() {
+      document.querySelectorAll(".nav-item[data-view], .mobile-tab[data-view]").forEach(btn => {
+        btn.addEventListener("click", () => activateView(btn.dataset.view));
       });
     }
 
@@ -712,25 +981,100 @@
     let equityCurveRaw = null;
     let chartRange = "1d";
 
-    const RANGE_LABELS = { "1m": "Last 1 minute", "1h": "Last 1 hour", "1d": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "all": "Full history" };
+    const RANGE_LABELS = { "1m": "Last 1 minute", "15m": "Last 15 minutes", "1h": "Last 1 hour", "4h": "Last 4 hours", "1d": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "all": "Full history" };
 
     function fmtTs(ts, rangeKey) {
       if (!ts) return "—";
       const d = new Date(ts);
       if (isNaN(d)) return String(ts).slice(0, 16);
-      if (rangeKey === "1m" || rangeKey === "1h") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+      if (rangeKey === "1m" || rangeKey === "15m" || rangeKey === "1h" || rangeKey === "4h") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
       if (rangeKey === "1d") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
       return d.toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
     }
 
     function downsamplePoints(points, maxPts) {
       if (points.length <= maxPts) return points;
+      const bucket = Math.ceil(points.length / maxPts);
       const out = [];
-      const step = (points.length - 1) / (maxPts - 1);
-      for (let i = 0; i < maxPts; i++) {
-        out.push(points[Math.min(points.length - 1, Math.round(i * step))]);
+      for (let i = 0; i < points.length; i += bucket) {
+        const slice = points.slice(i, i + bucket);
+        if (!slice.length) continue;
+        let lo = slice[0], hi = slice[0];
+        slice.forEach(p => {
+          const eq = p.equity;
+          if (eq < lo.equity) lo = p;
+          if (eq > hi.equity) hi = p;
+        });
+        if (lo === hi) out.push(lo);
+        else { out.push(lo); if (out[out.length - 1] !== hi) out.push(hi); }
       }
+      if (out[out.length - 1] !== points[points.length - 1]) out.push(points[points.length - 1]);
       return out;
+    }
+
+    function runningPeaks(values) {
+      const peaks = [];
+      let peak = values[0] || 0;
+      values.forEach(v => { peak = Math.max(peak, v); peaks.push(peak); });
+      return peaks;
+    }
+
+    function strokeSeries(ctx, times, values, xAt, yAt, color, width, glow) {
+      if (!values.length) return;
+      ctx.save();
+      if (glow) {
+        ctx.strokeStyle = glow;
+        ctx.lineWidth = width + 4;
+        ctx.globalAlpha = 0.25;
+        ctx.beginPath();
+        ctx.moveTo(xAt(times[0]), yAt(values[0]));
+        for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(values[0]));
+      for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function fillBetween(ctx, times, topVals, botVals, xAt, yAt, fillStyle) {
+      if (!times.length) return;
+      ctx.save();
+      ctx.fillStyle = fillStyle;
+      ctx.beginPath();
+      ctx.moveTo(xAt(times[0]), yAt(topVals[0]));
+      for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(topVals[i]));
+      for (let i = times.length - 1; i >= 0; i--) ctx.lineTo(xAt(times[i]), yAt(botVals[i]));
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function syncOverlayCanvas(overlay, baseCanvas) {
+      if (!overlay || !baseCanvas) return;
+      const dpr = devicePixelRatio || 1;
+      const rect = baseCanvas.getBoundingClientRect();
+      overlay.width = rect.width * dpr;
+      overlay.height = rect.height * dpr;
+      overlay.style.width = rect.width + "px";
+      overlay.style.height = rect.height + "px";
+      const ctx = overlay.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+    }
+
+    function clearChartOverlay(overlayId) {
+      const overlay = document.getElementById(overlayId);
+      if (!overlay) return;
+      const ctx = overlay.getContext("2d");
+      const rect = overlay.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
     }
 
     function sliceCurveClient(curve, rangeKey) {
@@ -739,7 +1083,7 @@
         const r = curve.ranges[rangeKey];
         return { points: r.points || [], markers: r.markers || [], range_stats: r.range_stats || {} };
       }
-      const seconds = { "1m": 60, "1h": 3600, "1d": 86400, "7d": 604800, "30d": 2592000, "all": null }[rangeKey];
+      const seconds = { "1m": 60, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400, "7d": 604800, "30d": 2592000, "all": null }[rangeKey];
       const points = curve.points || [];
       if (seconds == null) return { points, markers: curve.markers || [], range_stats: {} };
       const cutoff = Date.now() - seconds * 1000;
@@ -747,17 +1091,21 @@
       return { points: sliced.length ? sliced : [points[points.length - 1]], markers: (curve.markers || []).filter(m => new Date(m.ts).getTime() >= cutoff), range_stats: {} };
     }
 
-    function drawChartOnCanvas(canvas, tipEl, statsEl, curve, rangeKey, metaRef) {
-      if (!canvas) return;
+    function drawChartOnCanvas(canvas, overlayId, statsEl, curve, rangeKey, metaRef) {
+      if (!canvas) return null;
       const ctx = canvas.getContext("2d");
       const dpr = devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return null;
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
-      ctx.scale(dpr, dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const W = rect.width, H = rect.height;
-      const pad = { top: 22, right: 20, bottom: 38, left: 62 };
+      const pad = { top: 28, right: 58, bottom: 42, left: 68 };
       ctx.clearRect(0, 0, W, H);
+
+      const overlay = document.getElementById(overlayId);
+      syncOverlayCanvas(overlay, canvas);
 
       const slice = sliceCurveClient(curve, rangeKey);
       let points = slice.points || [];
@@ -767,134 +1115,121 @@
       if (!points.length) {
         ctx.fillStyle = "#636366";
         ctx.font = "13px -apple-system,sans-serif";
-        ctx.fillText("No equity data for this range — collecting snapshots each cycle", pad.left, H / 2);
+        ctx.fillText("Collecting equity snapshots — data appears each risk cycle (~45s)", pad.left, H / 2 - 8);
+        ctx.font = "11px -apple-system,sans-serif";
+        ctx.fillStyle = "#48484a";
+        ctx.fillText("Try 1d / 7d / All for historical trade-based curve", pad.left, H / 2 + 12);
         if (statsEl) statsEl.innerHTML = "";
         if (metaRef === "main") chartMeta = null; else chartMetaFull = null;
-        return;
+        return null;
       }
 
-      if (points.length > 1800) points = downsamplePoints(points, 1800);
+      const rawCount = points.length;
+      if (points.length > 2000) points = downsamplePoints(points, 2000);
 
       const times = points.map(p => new Date(p.ts).getTime());
       const t0 = times[0], t1 = times[times.length - 1] || t0 + 1;
       const equities = points.map(p => p.equity);
       const balances = points.map(p => p.cash ?? p.balance ?? p.equity);
-      const unrealized = points.map(p => p.unrealized_pnl ?? (p.equity - (p.cash ?? p.balance ?? p.equity)));
-      const start = curve.starting_equity ?? equities[0];
+      const peaks = runningPeaks(equities);
+      const periodStart = stats.period_start_equity ?? equities[0];
+      const start = periodStart;
       let minV = Math.min(...equities, ...balances, start);
-      let maxV = Math.max(...equities, ...balances, start);
-      const span = maxV - minV || 1;
-      minV -= span * 0.08;
-      maxV += span * 0.08;
+      let maxV = Math.max(...equities, ...balances, start, ...peaks);
+      const span = maxV - minV || Math.max(maxV * 0.01, 1);
+      minV -= span * 0.1;
+      maxV += span * 0.1;
       const pW = W - pad.left - pad.right, pH = H - pad.top - pad.bottom;
       const xAt = t => pad.left + ((t - t0) / (t1 - t0 || 1)) * pW;
       const yAt = v => pad.top + pH - ((v - minV) / (maxV - minV)) * pH;
 
-      const yTicks = 6;
-      ctx.strokeStyle = "rgba(255,255,255,.06)";
-      ctx.lineWidth = 1;
-      ctx.fillStyle = "#636366";
+      const bgGrad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
+      bgGrad.addColorStop(0, "rgba(10,132,255,.04)");
+      bgGrad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(pad.left, pad.top, pW, pH);
+
+      const yTicks = 7;
       ctx.font = "10px -apple-system,sans-serif";
       for (let t = 0; t <= yTicks; t++) {
         const v = minV + (maxV - minV) * (t / yTicks);
         const y = yAt(v);
+        ctx.strokeStyle = t % 2 === 0 ? "rgba(255,255,255,.07)" : "rgba(255,255,255,.03)";
+        ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
-        ctx.fillText("$" + fmt(v, v > 500 ? 0 : 2), 4, y + 3);
+        const label = "$" + fmt(v, v > 500 ? 0 : 2);
+        ctx.fillStyle = "#636366";
+        ctx.fillText(label, 6, y + 3);
+        ctx.fillText(label, W - pad.right + 8, y + 3);
       }
 
-      const xTickCount = Math.min(8, Math.max(3, Math.floor(pW / 90)));
-      ctx.fillStyle = "#636366";
+      const xTickCount = Math.min(9, Math.max(4, Math.floor(pW / 100)));
       for (let i = 0; i <= xTickCount; i++) {
         const frac = i / xTickCount;
         const ts = t0 + (t1 - t0) * frac;
         const x = xAt(ts);
-        ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.strokeStyle = "rgba(255,255,255,.03)"; ctx.stroke();
+        ctx.strokeStyle = "rgba(255,255,255,.03)";
+        ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.stroke();
         ctx.fillStyle = "#636366";
-        ctx.fillText(fmtTs(new Date(ts).toISOString(), rangeKey), x - 24, H - 12);
+        const lbl = fmtTs(new Date(ts).toISOString(), rangeKey);
+        ctx.fillText(lbl, Math.max(pad.left, Math.min(x - 28, W - pad.right - 50)), H - 14);
       }
 
-      let runPeak = equities[0];
-      ctx.fillStyle = "rgba(255,69,58,.12)";
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
-      for (let i = 1; i < equities.length; i++) {
-        runPeak = Math.max(runPeak, equities[i - 1]);
-        const ddTop = yAt(runPeak);
-        const ddBot = yAt(equities[i]);
-        ctx.lineTo(xAt(times[i]), ddBot);
-      }
-      for (let i = equities.length - 1; i >= 0; i--) {
-        runPeak = Math.max(runPeak, equities[i]);
-        ctx.lineTo(xAt(times[i]), yAt(runPeak));
-      }
-      ctx.closePath();
-      ctx.fill();
+      fillBetween(ctx, times, peaks, equities, xAt, yAt, "rgba(255,69,58,.14)");
 
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = "rgba(255,159,10,.4)";
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = "rgba(255,159,10,.45)";
+      ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(pad.left, yAt(start)); ctx.lineTo(W - pad.right, yAt(start)); ctx.stroke();
       ctx.setLineDash([]);
 
-      const uGrad = ctx.createLinearGradient(0, pad.top, 0, H);
-      uGrad.addColorStop(0, "rgba(48,209,88,.18)");
-      uGrad.addColorStop(1, "rgba(48,209,88,0)");
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
-      for (let i = 1; i < equities.length; i++) ctx.lineTo(xAt(times[i]), yAt(unrealized[i] > 0 ? equities[i] : equities[i]));
-      for (let i = 0; i < equities.length; i++) {
-        const u = unrealized[i] || 0;
-        if (u !== 0) ctx.lineTo(xAt(times[i]), yAt(equities[i] - Math.min(u, equities[i] * 0.05)));
-      }
-      ctx.closePath();
-      ctx.fillStyle = uGrad;
-      ctx.globalAlpha = 0.35;
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      const topLine = equities.map((eq, i) => Math.max(eq, balances[i]));
+      const botLine = equities.map((eq, i) => Math.min(eq, balances[i]));
+      fillBetween(ctx, times, topLine, botLine, xAt, yAt, "rgba(48,209,88,.12)");
 
-      const grad = ctx.createLinearGradient(0, pad.top, 0, H);
-      grad.addColorStop(0, "rgba(10,132,255,.28)");
-      grad.addColorStop(1, "rgba(10,132,255,0)");
+      const eqGrad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
+      eqGrad.addColorStop(0, "rgba(10,132,255,.35)");
+      eqGrad.addColorStop(1, "rgba(10,132,255,0)");
+      ctx.save();
+      ctx.fillStyle = eqGrad;
       ctx.beginPath();
       ctx.moveTo(xAt(times[0]), yAt(equities[0]));
-      for (let i = 1; i < equities.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
+      for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
       ctx.lineTo(xAt(times[times.length - 1]), H - pad.bottom);
       ctx.lineTo(xAt(times[0]), H - pad.bottom);
       ctx.closePath();
-      ctx.fillStyle = grad;
       ctx.fill();
+      ctx.restore();
 
-      ctx.strokeStyle = "rgba(152,152,157,.6)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(balances[0]));
-      for (let i = 1; i < balances.length; i++) ctx.lineTo(xAt(times[i]), yAt(balances[i]));
-      ctx.stroke();
+      strokeSeries(ctx, times, balances, xAt, yAt, "rgba(152,152,157,.75)", 1.5, null);
+      strokeSeries(ctx, times, equities, xAt, yAt, "#0a84ff", 3, "rgba(10,132,255,.5)");
 
-      ctx.strokeStyle = "#0a84ff";
-      ctx.lineWidth = 2.75;
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
-      for (let i = 1; i < equities.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
-      ctx.stroke();
+      const lastX = xAt(times[times.length - 1]), lastY = yAt(equities[equities.length - 1]);
+      ctx.fillStyle = "rgba(10,132,255,.2)";
+      ctx.beginPath(); ctx.arc(lastX, lastY, 10, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#0a84ff";
+      ctx.beginPath(); ctx.arc(lastX, lastY, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
 
       markers.forEach(m => {
         const mt = new Date(m.ts).getTime();
-        const color = (m.result === "win" || (m.pnl || 0) >= 0) ? "#30d158" : "#ff453a";
+        const win = m.result === "win" || (m.pnl || 0) >= 0;
+        const color = win ? "#30d158" : "#ff453a";
         const x = xAt(mt), y = yAt(m.equity);
+        ctx.fillStyle = "rgba(0,0,0,.35)";
+        ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = "#0a0a0c"; ctx.lineWidth = 1.5; ctx.stroke();
       });
 
-      const meta = { points, markers, pad, W, H, xAt, yAt, minV, maxV, times, rangeKey };
+      const meta = { points, markers, pad, W, H, xAt, yAt, minV, maxV, times, rangeKey, rawCount };
       if (metaRef === "main") chartMeta = meta; else chartMetaFull = meta;
 
       const rs = stats.period_change != null ? stats : {};
       const pnl = rs.period_change ?? (curve.pnl_total ?? 0);
       const pnlPct = rs.period_change_pct ?? (curve.pnl_pct ?? 0);
       const dd = rs.period_max_drawdown_pct ?? (curve.max_drawdown_pct ?? 0);
-      const unreal = curve.unrealized_pnl ?? 0;
       if (statsEl) {
         statsEl.innerHTML = `
           <div class="chart-stat"><div class="lbl">Period Start</div><div class="val">$${fmt(rs.period_start_equity ?? equities[0])}</div></div>
@@ -903,35 +1238,103 @@
           <div class="chart-stat"><div class="lbl">Period High</div><div class="val">$${fmt(rs.period_high ?? Math.max(...equities))}</div></div>
           <div class="chart-stat"><div class="lbl">Period Low</div><div class="val">$${fmt(rs.period_low ?? Math.min(...equities))}</div></div>
           <div class="chart-stat"><div class="lbl">Max DD</div><div class="val">${fmt(dd,2)}%</div></div>
-          <div class="chart-stat"><div class="lbl">Live Equity</div><div class="val">$${fmt(curve.current_equity)}</div></div>
-          <div class="chart-stat"><div class="lbl">Unrealized</div><div class="val" style="color:${unreal>=0?"var(--green)":"var(--red)"}">$${fmt(unreal)}</div></div>
-          <div class="chart-stat"><div class="lbl">Points</div><div class="val">${points.length}</div></div>`;
+          <div class="chart-stat"><div class="lbl">Data Points</div><div class="val">${rawCount}${rawCount !== points.length ? " → " + points.length : ""}</div></div>
+          <div class="chart-stat"><div class="lbl">Trade Closes</div><div class="val">${markers.length}</div></div>`;
       }
+      return meta;
     }
 
-    function drawChart(curve) {
+    function drawChartOverlay(overlayId, meta, hoverX, pointIdx, marker) {
+      const overlay = document.getElementById(overlayId);
+      if (!overlay || !meta) return;
+      syncOverlayCanvas(overlay, overlay.previousElementSibling);
+      const ctx = overlay.getContext("2d");
+      const { pad, W, H, xAt, yAt, points } = meta;
+      ctx.strokeStyle = "rgba(10,132,255,.65)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(hoverX, pad.top); ctx.lineTo(hoverX, H - pad.bottom); ctx.stroke();
+      ctx.setLineDash([]);
+
+      const p = marker || points[pointIdx];
+      if (!p) return;
+      const px = marker ? xAt(new Date(marker.ts).getTime()) : xAt(new Date(p.ts).getTime());
+      const py = yAt(p.equity);
+      ctx.fillStyle = "rgba(10,132,255,.15)";
+      ctx.beginPath(); ctx.arc(px, py, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = marker ? ((marker.result === "win" || (marker.pnl || 0) >= 0) ? "#30d158" : "#ff453a") : "#0a84ff";
+      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+    }
+
+    function updateEquityHeadline(curve, live) {
+      const c = curve || equityCurveRaw || {};
+      const slice = sliceCurveClient(c, chartRange);
+      const rs = slice.range_stats || {};
+      const equity = live?.equity ?? c.current_equity;
+      const balance = live?.cash ?? c.current_balance;
+      const periodPnl = rs.period_change ?? live?.session_pnl ?? c.session_pnl ?? c.pnl_total;
+      const periodPct = rs.period_change_pct ?? live?.session_pnl_pct ?? c.pnl_pct;
+      const unreal = live?.unrealized_pnl ?? c.unrealized_pnl ?? 0;
+      const up = (periodPnl || 0) >= 0;
+      const rangeLbl = RANGE_LABELS[chartRange] || chartRange;
+      const html = `
+        <div class="equity-headline-kpi primary">
+          <div class="lbl">Equity</div>
+          <div class="val">$${fmt(equity)}</div>
+        </div>
+        <div class="equity-headline-kpi">
+          <div class="lbl">Balance</div>
+          <div class="val">$${fmt(balance)}</div>
+        </div>
+        <div class="equity-headline-kpi">
+          <div class="lbl">PnL · ${rangeLbl}</div>
+          <div class="val" style="color:${up ? "var(--green)" : "var(--red)"}">${up ? "+" : ""}$${fmt(periodPnl)}</div>
+          <div class="equity-headline-kpi-sub">${up ? "+" : ""}${fmt(periodPct, 2)}% · ${unreal >= 0 ? "+" : ""}$${fmt(unreal)} unrealized</div>
+        </div>`;
+      ["equityHeadlineKpis", "equityHeadlineKpisFull"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = html;
+      });
+    }
+
+    function updateChartBadge(curve, rangeKey) {
+      const slice = sliceCurveClient(curve || {}, rangeKey);
+      const n = slice.points?.length || 0;
+      const text = n ? `${n} pts · ${RANGE_LABELS[rangeKey] || rangeKey}` : "Awaiting data";
+      ["chartLiveBadge", "chartLiveBadgeFull"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      });
+    }
+
+    function drawChart(curve, live) {
       equityCurveRaw = curve || equityCurveRaw;
+      updateEquityHeadline(equityCurveRaw, live);
+      updateChartBadge(equityCurveRaw, chartRange);
       const rangeText = RANGE_LABELS[chartRange] || chartRange;
       const label = document.getElementById("equityRangeLabel");
-      if (label) label.textContent = `Live account equity · ${rangeText}`;
+      if (label) label.textContent = `Live MT5 account · ${rangeText}`;
       const labelFull = document.getElementById("equityRangeLabelFull");
-      if (labelFull) labelFull.textContent = `Full-screen equity curve · ${rangeText}`;
+      if (labelFull) labelFull.textContent = `Full-screen equity · ${rangeText}`;
       drawChartOnCanvas(
         document.getElementById("equityChart"),
-        document.getElementById("chartTooltip"),
+        "equityChartOverlay",
         document.getElementById("chartStats"),
         equityCurveRaw,
         chartRange,
         "main"
       );
-      drawChartOnCanvas(
-        document.getElementById("equityChartFull"),
-        document.getElementById("chartTooltipFull"),
-        document.getElementById("chartStatsFull"),
-        equityCurveRaw,
-        chartRange,
-        "full"
-      );
+      if (document.getElementById("view-equity")?.classList.contains("active")) {
+        drawChartOnCanvas(
+          document.getElementById("equityChartFull"),
+          "equityChartOverlayFull",
+          document.getElementById("chartStatsFull"),
+          equityCurveRaw,
+          chartRange,
+          "full"
+        );
+      }
       syncRangeButtons(chartRange);
     }
 
@@ -941,78 +1344,91 @@
       });
     }
 
-    function bindChartHover(canvasId, tipId, metaGetter) {
+    function bindChartHover(canvasId, overlayId, tipId, metaGetter) {
       const canvas = document.getElementById(canvasId);
       const tip = document.getElementById(tipId);
       if (!canvas || !tip) return;
       canvas.onmousemove = (e) => {
         const meta = metaGetter();
-        if (!meta || !meta.points.length) { tip.style.display = "none"; return; }
+        if (!meta || !meta.points.length) { tip.style.display = "none"; clearChartOverlay(overlayId); return; }
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const { points, pad, W, xAt, rangeKey } = meta;
-        if (x < pad.left || x > W - pad.right) { tip.style.display = "none"; return; }
+        const y = e.clientY - rect.top;
+        const { points, markers, pad, W, H, xAt, yAt, rangeKey } = meta;
+        if (x < pad.left || x > W - pad.right) { tip.style.display = "none"; clearChartOverlay(overlayId); return; }
+
+        let nearMarker = null, nearMarkerDist = 14;
+        markers.forEach(m => {
+          const mx = xAt(new Date(m.ts).getTime()), my = yAt(m.equity);
+          const d = Math.hypot(mx - x, my - y);
+          if (d < nearMarkerDist) { nearMarkerDist = d; nearMarker = m; }
+        });
+
         let best = 0, bestDist = Infinity;
         points.forEach((p, i) => {
           const px = xAt(new Date(p.ts).getTime());
           const d = Math.abs(px - x);
           if (d < bestDist) { bestDist = d; best = i; }
         });
-        const p = points[best];
+        const p = nearMarker || points[best];
         const px = xAt(new Date(p.ts).getTime());
-        ctxLine(canvas, meta, px);
+        drawChartOverlay(overlayId, meta, px, best, nearMarker);
+
         tip.style.display = "block";
-        tip.style.left = Math.min(x + 14, rect.width - 180) + "px";
-        tip.style.top = "14px";
-        tip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${fmtTs(p.ts, rangeKey)}</div>
-          <div>Equity <strong>$${fmt(p.equity)}</strong></div>
-          <div>Balance <strong>$${fmt(p.cash ?? p.balance)}</strong></div>
-          ${p.unrealized_pnl != null ? `<div>Unrealized <strong style="color:${p.unrealized_pnl>=0?"#30d158":"#ff453a"}">$${fmt(p.unrealized_pnl)}</strong></div>` : ""}
-          ${p.drawdown_pct != null ? `<div>Drawdown <strong>${fmt(p.drawdown_pct,2)}%</strong></div>` : ""}
-          ${p.peak_equity != null ? `<div>Peak <strong>$${fmt(p.peak_equity)}</strong></div>` : ""}
-          ${p.event ? `<div style="color:#98989d;margin-top:6px">${p.event}${p.source ? " · "+p.source : ""}</div>` : ""}`;
+        tip.style.left = Math.min(Math.max(x + 16, 8), rect.width - 200) + "px";
+        tip.style.top = Math.min(Math.max(y - 10, 8), rect.height - 120) + "px";
+
+        if (nearMarker) {
+          const win = nearMarker.result === "win" || (nearMarker.pnl || 0) >= 0;
+          tip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${fmtTs(nearMarker.ts, rangeKey)} · Trade close</div>
+            <div>${nearMarker.symbol || ""} ${nearMarker.side || ""} · <strong style="color:${win ? "#30d158" : "#ff453a"}">${win ? "WIN" : "LOSS"}</strong></div>
+            <div>PnL <strong style="color:${win ? "#30d158" : "#ff453a"}">${(nearMarker.pnl || 0) >= 0 ? "+" : ""}$${fmt(nearMarker.pnl)}</strong></div>
+            <div>Equity after <strong>$${fmt(nearMarker.equity)}</strong></div>`;
+        } else {
+          tip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${fmtTs(p.ts, rangeKey)}</div>
+            <div>Equity <strong>$${fmt(p.equity)}</strong></div>
+            <div>Balance <strong>$${fmt(p.cash ?? p.balance)}</strong></div>
+            ${p.unrealized_pnl != null ? `<div>Unrealized <strong style="color:${p.unrealized_pnl>=0?"#30d158":"#ff453a"}">$${fmt(p.unrealized_pnl)}</strong></div>` : ""}
+            ${p.drawdown_pct != null ? `<div>Drawdown <strong>${fmt(p.drawdown_pct,2)}%</strong></div>` : ""}
+            ${p.peak_equity != null ? `<div>Peak <strong>$${fmt(p.peak_equity)}</strong></div>` : ""}
+            ${p.event ? `<div style="color:#98989d;margin-top:6px">${p.event}${p.source ? " · "+p.source : ""}</div>` : ""}`;
+        }
       };
-      canvas.onmouseleave = () => { tip.style.display = "none"; redrawChart(metaGetter); };
-    }
-
-    function ctxLine(canvas, meta, x) {
-      redrawChart(() => meta);
-      const ctx = canvas.getContext("2d");
-      const { pad, H } = meta;
-      ctx.strokeStyle = "rgba(10,132,255,.55)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    function redrawChart(metaGetter) {
-      if (equityCurveRaw) drawChart(equityCurveRaw);
+      canvas.onmouseleave = () => { tip.style.display = "none"; clearChartOverlay(overlayId); };
     }
 
     function setupChartRanges() {
       document.querySelectorAll(".chart-range-btn").forEach(btn => {
         btn.addEventListener("click", () => {
           chartRange = btn.dataset.range || "1d";
-          drawChart(equityCurveRaw);
+          drawChart(equityCurveRaw, lastData?.live_portfolio);
         });
       });
     }
 
     function initChartInteractions() {
-      bindChartHover("equityChart", "chartTooltip", () => chartMeta);
-      bindChartHover("equityChartFull", "chartTooltipFull", () => chartMetaFull);
+      bindChartHover("equityChart", "equityChartOverlay", "chartTooltip", () => chartMeta);
+      bindChartHover("equityChartFull", "equityChartOverlayFull", "chartTooltipFull", () => chartMetaFull);
       setupChartRanges();
     }
 
-    function renderTradeAlert(status) {
+    function renderTradeAlert(status, verdict) {
       const el = document.getElementById("tradeAlert");
       if (!status) { el.className = "trade-alert"; el.innerHTML = ""; return; }
-      const cls = status.kill_switch ? "blocked" : (status.can_execute ? "ready" : "scan");
+      // live_trading_enabled:false is the hard MT5 guard (see server.py
+      // _build_trading_status). Show it as blocked + a badge so the UI cannot
+      // imply real/demo orders are flowing when the flag is off.
+      const liveOff = status.live_trading_enabled === false;
+      const cls = (status.kill_switch || liveOff) ? "blocked" : (status.can_execute ? "ready" : "scan");
       el.className = "trade-alert show " + cls;
       const lines = (status.blockers||[]).map(b => `• ${b}`).join("<br>");
       const counts = `${status.candidate_count||0} candidates · ${status.approved_count||0} approved · ${status.rejected_count||0} rejected`;
-      el.innerHTML = `<strong>Trading: ${status.status.toUpperCase()}</strong> — ${counts}${lines ? "<br>"+lines : ""}`;
+      const liveBadge = liveOff ? ` <span class="badge bad">LIVE DISABLED</span>` : "";
+      // Surface the audited VERDICT headline so the researched negative result
+      // is visible on the dashboard (full text via /api/verdict).
+      const v = verdict || {};
+      const vLine = v.present ? `<br><span class="verdict-line" title="${(v.sections||[]).join(' · ')}">VERDICT: ${v.headline||""}</span>` : "";
+      el.innerHTML = `<strong>Trading: ${status.status.toUpperCase()}</strong>${liveBadge} — ${counts}${lines ? "<br>"+lines : ""}${vLine}`;
     }
 
     function evBars(rows) {
@@ -1059,34 +1475,32 @@
 
     function selectSymbol(sym) {
       selectedSymbol = sym;
-      if (lastData) render(lastData);
+      if (lastData) safeRender(lastData);
     }
 
     function renderKpiRow(live) {
       if (!live) return;
-      const up = (live.session_pnl||0) >= 0;
       const unrealUp = (live.unrealized_pnl||0) >= 0;
-      const sign = up ? "+" : "";
       document.getElementById("kpiRow").innerHTML = `
-        <div class="kpi-tile primary">
-          <div class="lbl">Equity</div>
-          <div class="val">$${fmt(live.equity)}</div>
-          <div class="sub">Balance $${fmt(live.cash)}</div>
+        <div class="kpi-tile">
+          <div class="lbl">Open Positions</div>
+          <div class="val">${live.position_count||0}</div>
+          <div class="sub">Unrealized ${unrealUp?"+":""}$${fmt(live.unrealized_pnl)}</div>
         </div>
         <div class="kpi-tile">
-          <div class="lbl">Session PnL</div>
-          <div class="val" style="color:${up?"var(--green)":"var(--red)"}">${sign}$${fmt(live.session_pnl)}</div>
-          <div class="sub">${sign}${fmt(live.session_pnl_pct)}% · Realized $${fmt(live.realized_pnl)}</div>
-        </div>
-        <div class="kpi-tile">
-          <div class="lbl">Unrealized</div>
-          <div class="val" style="color:${unrealUp?"var(--green)":"var(--red)"}">${unrealUp?"+":""}$${fmt(live.unrealized_pnl)}</div>
-          <div class="sub">${live.position_count||0} open position(s)</div>
+          <div class="lbl">Realized PnL</div>
+          <div class="val" style="color:${(live.realized_pnl||0)>=0?"var(--green)":"var(--red)"}">${(live.realized_pnl||0)>=0?"+":""}$${fmt(live.realized_pnl)}</div>
+          <div class="sub">From closed trades</div>
         </div>
         <div class="kpi-tile">
           <div class="lbl">Closed Trades</div>
           <div class="val">${live.trade_count||0}</div>
-          <div class="sub">Paper portfolio</div>
+          <div class="sub">This session / portfolio</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Starting Equity</div>
+          <div class="val">$${fmt(live.starting_equity)}</div>
+          <div class="sub">Session baseline</div>
         </div>`;
     }
 
@@ -1176,9 +1590,9 @@
         ${card?.market_intent ? `<p style="margin-top:16px;font-size:13px;color:var(--muted)">${card.market_intent}</p>` : ""}`;
     }
 
-    function renderAiPanel(card, ai) {
+    function panelHtml(card, ai) {
       if (ai) {
-        document.getElementById("aiPanel").innerHTML = `
+        return `
           <div style="margin-bottom:16px">
             <span class="badge ${ai.side==="BUY"?"ok":"bad"}">${ai.side}</span>
             <strong style="margin-left:8px;font-size:15px">${ai.symbol}</strong>
@@ -1190,10 +1604,9 @@
             ${ai.expected_move!=null?`<div class="ai-stat-row"><span>Expected move</span><strong>${ai.expected_move} pts</strong></div>`:""}
             ${ai.historical_success_pct!=null?`<div class="ai-stat-row"><span>Historical success</span><strong>${ai.historical_success_pct}%</strong></div>`:""}
           </div>`;
-        document.getElementById("evidenceTree").innerHTML = evBars(ai.engines) +
-          (ai.evidence?.length ? '<div style="margin-top:16px;font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Evidence</div>'+evBars(ai.evidence) : "");
-      } else if (card) {
-        document.getElementById("aiPanel").innerHTML = `
+      }
+      if (card) {
+        return `
           <div style="margin-bottom:12px"><strong style="font-size:15px">${card.symbol}</strong> <span style="color:var(--muted)">live market read</span></div>
           <div class="ai-stat-row"><span>Price</span><strong>$${fmt(card.price, card.price > 1000 ? 2 : 3)}</strong></div>
           <div class="ai-stat-row"><span>Trend</span><strong>${card.trend}</strong></div>
@@ -1203,15 +1616,146 @@
           <div class="ai-stat-row"><span>Resistance</span><strong>${fmt(card.resistance, 2)}</strong></div>
           <div class="ai-stat-row"><span>Volatility</span><strong>${card.volatility_regime}</strong></div>
           ${card.market_intent ? `<p style="margin-top:12px;font-size:12px;color:var(--muted)">${card.market_intent}</p>` : ""}`;
-        document.getElementById("evidenceTree").innerHTML = `
+      }
+      return '<p class="empty">No market data</p>';
+    }
+
+    function evidenceHtml(card, ai) {
+      if (ai) {
+        return evBars(ai.engines) +
+          (ai.evidence?.length ? '<div style="margin-top:16px;font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Evidence</div>'+evBars(ai.evidence) : "");
+      }
+      if (card) {
+        return `
           <div class="ai-stat-row"><span>Breakout</span><strong>${(card.breakout||"none").replace(/_/g," ")}</strong></div>
           <div class="ai-stat-row"><span>Volume ratio</span><strong>${fmt(card.volume_ratio, 2)}</strong></div>
           <div class="ai-stat-row"><span>Session</span><strong>${card.session||"—"}</strong></div>
           <div class="ai-stat-row"><span>Regime bias</span><strong>${card.regime_bias||"—"}</strong></div>`;
-      } else {
-        document.getElementById("aiPanel").innerHTML = '<p class="empty">No market data</p>';
-        document.getElementById("evidenceTree").innerHTML = '<p class="empty">—</p>';
       }
+      return '<p class="empty">—</p>';
+    }
+
+    function renderAiPanel(card, ai) {
+      const html = panelHtml(card, ai);
+      const evHtml = evidenceHtml(card, ai);
+      document.getElementById("aiPanel").innerHTML = html;
+      document.getElementById("evidenceTree").innerHTML = evHtml;
+      const mobileAi = document.getElementById("mobileAiPanel");
+      const mobileEv = document.getElementById("mobileEvidenceTree");
+      if (mobileAi) mobileAi.innerHTML = html;
+      if (mobileEv) mobileEv.innerHTML = evHtml;
+    }
+
+    function renderMobileSymbols(cards) {
+      const el = document.getElementById("mobileSymbols");
+      if (!el) return;
+      if (!cards.length) {
+        el.innerHTML = "";
+        return;
+      }
+      el.innerHTML = cards.map(c => {
+        const active = selectedSymbol === c.symbol ? "active" : "";
+        return `<button type="button" class="mobile-sym-chip ${active}" onclick="selectSymbol('${c.symbol}')">${c.symbol.replace("m", "")} · $${fmt(c.price, c.price > 1000 ? 2 : 3)}</button>`;
+      }).join("");
+    }
+
+    function renderMobileSummary(data) {
+      const el = document.getElementById("mobileSummary");
+      if (!el) return;
+      const account = data.account || {};
+      const live = data.live_portfolio || {};
+      const status = data.trading_status || {};
+      const risk = data.risk_state || {};
+      const conn = (data.health || {}).connection || {};
+      const equity = account.equity ?? live.equity ?? 0;
+      const sessionPnl = live.session_pnl ?? data.equity_curve?.session_pnl ?? 0;
+      const unreal = live.unrealized_pnl ?? 0;
+      const pnlUp = sessionPnl >= 0;
+      const unrealUp = unreal >= 0;
+      const tradeColor = status.kill_switch ? "var(--red)" : status.can_execute ? "var(--green)" : "var(--orange)";
+      const daily = (data.risk_state || {}).daily_growth || {};
+      const growthOn = daily.enabled || (data.runtime_mode || {}).growth_plan_active;
+      const dayPnl = daily.daily_pnl ?? sessionPnl;
+      const dayPct = daily.daily_pnl_pct ?? (live.starting_equity ? ((sessionPnl / live.starting_equity) * 100) : 0);
+      const dayTarget = daily.target_pct || (data.runtime_mode || {}).daily_target_pct || 20;
+      const dayRemain = daily.remaining_pct ?? Math.max(0, dayTarget - dayPct);
+      const dayPnlUp = dayPnl >= 0;
+      el.innerHTML = `
+        <div class="ms-tile primary wide">
+          <div class="ms-lbl">Account Equity</div>
+          <div class="ms-val">$${fmt(equity)}</div>
+          <div class="ms-sub">MT5 ${conn.logged_in ? "connected" : "offline"} · ${account.login || "—"} · ${growthOn ? "Growth +" + dayTarget + "%/day" : ((data.config||{}).runtime_mode === "live_plan" ? "Live" : "Practice")}</div>
+        </div>
+        ${growthOn ? `<div class="ms-tile wide">
+          <div class="ms-lbl">Today vs +${dayTarget}% target</div>
+          <div class="ms-val" style="font-size:20px;color:${dayPnlUp ? "var(--green)" : "var(--red)"}">${dayPnlUp ? "+" : ""}${fmt(dayPct, 2)}%</div>
+          <div class="ms-sub">${dayPnlUp ? "+" : ""}$${fmt(dayPnl)} today · ${fmt(dayRemain, 1)}% to goal</div>
+        </div>` : ""}
+        ${(data.risk_state || {}).growth_campaign?.status === "running" ? (() => {
+          const c = data.risk_state.growth_campaign;
+          const cUp = (c.campaign_pnl || 0) >= 0;
+          return `<div class="ms-tile wide">
+            <div class="ms-lbl">30-day campaign · Day ${c.days_elapsed}/${c.duration_days}</div>
+            <div class="ms-val" style="font-size:18px;color:${cUp ? "var(--green)" : "var(--red)"}">${cUp ? "+" : ""}${fmt(c.campaign_pnl_pct, 2)}%</div>
+            <div class="ms-sub">${cUp ? "+" : ""}$${fmt(c.campaign_pnl)} total · ends ${c.end_date || "—"}</div>
+          </div>`;
+        })() : ""}
+        <div class="ms-tile">
+          <div class="ms-lbl">Session PnL</div>
+          <div class="ms-val" style="color:${pnlUp ? "var(--green)" : "var(--red)"}">${pnlUp ? "+" : ""}$${fmt(sessionPnl)}</div>
+        </div>
+        <div class="ms-tile">
+          <div class="ms-lbl">Unrealized</div>
+          <div class="ms-val" style="color:${unrealUp ? "var(--green)" : "var(--red)"}">${unrealUp ? "+" : ""}$${fmt(unreal)}</div>
+        </div>
+        <div class="ms-tile">
+          <div class="ms-lbl">Trading</div>
+          <div class="ms-val" style="font-size:16px;color:${tradeColor}">${(status.status || "scan").toUpperCase()}</div>
+          <div class="ms-sub">${status.approved_count || 0} approved · ${live.position_count || 0} open</div>
+        </div>
+        <div class="ms-tile">
+          <div class="ms-lbl">Risk</div>
+          <div class="ms-val" style="font-size:16px">${fmt(risk.drawdown, 2)}%</div>
+          <div class="ms-sub">DD · ${fmt(risk.exposure_used_pct, 1)}% exposure</div>
+        </div>`;
+    }
+
+    function setMobileEmpty(show, msg) {
+      const el = document.getElementById("mobileEmpty");
+      if (!el) return;
+      if (!show) {
+        el.classList.add("hidden");
+        return;
+      }
+      el.classList.remove("hidden");
+      if (msg) el.querySelector("div").textContent = msg;
+    }
+
+    function ensurePolling() {
+      if (!refreshTimer) refreshTimer = setInterval(refresh, refreshMs);
+    }
+
+    function safeRender(data) {
+      if (!data) return;
+      lastData = data;
+      let coreOk = false;
+      try {
+        renderMobileSummary(data);
+        renderMobileSymbols(getSymbolCards(data));
+        renderCore(data);
+        coreOk = true;
+        setMobileEmpty(false);
+      } catch (err) {
+        console.error("renderCore failed", err);
+        showOffline("Display error — retrying");
+        setMobileEmpty(true, "Could not render data — tap Retry");
+      }
+      try {
+        renderExtras(data);
+      } catch (err) {
+        console.error("renderExtras failed", err);
+      }
+      if (!coreOk) setMobileEmpty(true, "Still waiting for live data…");
     }
 
     function portfolioSnapshot(data, live) {
@@ -1264,8 +1808,7 @@
         <div class="bottom-metric"><div class="label">Positions</div><div class="val sm">${live?.position_count || 0}</div></div>`;
     }
 
-    function render(data) {
-      lastData = data;
+    function renderCore(data) {
       const sup = data.supervisor||{};
       const health = data.health||{};
       const conn = health.connection||{};
@@ -1278,13 +1821,16 @@
       pill.innerHTML = `<span class="dot"></span> ${overall==="healthy"?"Listening":overall}`;
 
       const uptime = sup.uptime_seconds ? Math.floor(sup.uptime_seconds/60)+"m" : "—";
-      const cpu = sup.system?.cpu_pct ?? "—";
+      const cpu = (sup.system && sup.system.cpu_pct != null) ? sup.system.cpu_pct : "—";
+      const runtimeLabel = cfg.runtime_mode === "live_plan" ? "Live Plan" : "Practice";
+      const runtimeColor = cfg.performance_plan_active ? "var(--green)" : "var(--orange)";
       document.getElementById("topStats").innerHTML = `
         <span>MT5 <strong>${conn.logged_in?"Connected":"Offline"}</strong></span>
         <span>Account <strong>${(data.account||{}).login||"—"}</strong></span>
         <span>Uptime <strong>${uptime}</strong></span>
         <span>CPU <strong>${cpu}%</strong></span>
-        <span>Mode <strong>${cfg.mode||"—"}</strong></span>`;
+        <span>Session <strong style="color:${runtimeColor}">${runtimeLabel}</strong></span>
+        <span>Exec <strong>${cfg.mode||"—"}</strong></span>`;
 
       const cards = getSymbolCards(data);
       if (!selectedSymbol && cards.length) selectedSymbol = cards[0].symbol;
@@ -1301,8 +1847,7 @@
       if (hintEl) hintEl.textContent = selectedSymbol ? selectedSymbol.replace("m","") : "—";
       renderHero(card, ai);
       renderAiPanel(card, ai);
-      drawChart(data.equity_curve||{});
-      renderTradeAlert(data.trading_status);
+      renderTradeAlert(data.trading_status, data.verdict);
       renderBottom(data, live);
 
       // Signals / trades tables
@@ -1317,6 +1862,17 @@
       document.getElementById("tradesTable").innerHTML = trades.length ? `<table><thead><tr><th>Symbol</th><th>Result</th><th>PnL</th></tr></thead><tbody>
         ${trades.slice(-6).reverse().map(t=>`<tr><td>${t.symbol}</td><td><span class="badge ${t.result==="win"?"ok":"bad"}">${t.result}</span></td><td>$${fmt(t.pnl)}</td></tr>`).join("")}
         </tbody></table>` : '<p class="empty">No trades</p>';
+    }
+
+    function renderExtras(data) {
+      const sup = data.supervisor||{};
+      const cfg = data.config||{};
+      const live = data.live_portfolio || {};
+      try {
+        drawChart(data.equity_curve||{}, live);
+      } catch (err) {
+        console.error("chart render failed", err);
+      }
 
       // Research
       const compare = data.strategy_comparison||[];
@@ -1337,7 +1893,7 @@
       const learning = data.learning||{};
       document.getElementById("memoryBest").innerHTML = `<div class="card-title">Best Setup</div><div style="font-size:22px;font-weight:700;margin-top:8px">${learning.best_setup?learning.best_setup.name.replace(/_/g," "):"—"}</div><div style="color:var(--green);font-size:18px;font-weight:600;margin-top:4px">${learning.best_setup?learning.best_setup.win_rate_pct+"%":""}</div>`;
       document.getElementById("memoryWorst").innerHTML = `<div class="card-title">Worst Setup</div><div style="font-size:22px;font-weight:700;margin-top:8px">${learning.worst_setup?learning.worst_setup.name.replace(/_/g," "):"—"}</div><div style="color:var(--red);font-size:18px;font-weight:600;margin-top:4px">${learning.worst_setup?learning.worst_setup.win_rate_pct+"%":""}</div>`;
-      document.getElementById("memorySetups").innerHTML = (learning.setups||[]).map(s=>`<div class="ev-row"><span class="name">${s.name.replace(/_/g," ")}</span><div class="ev-bar"><i style="width:${s.win_rate_pct||0}%"></i></div><span class="ev-pct">${s.win_rate_pct||0}%</span></div>`).join("")||'<p class="empty">No data</p>';
+      document.getElementById("memorySetups").innerHTML = (learning.setups||[]).map(s=>`<div class="ev-row"><span class="name">${(s.name||"setup").replace(/_/g," ")}</span><div class="ev-bar"><i style="width:${s.win_rate_pct||0}%"></i></div><span class="ev-pct">${s.win_rate_pct||0}%</span></div>`).join("")||'<p class="empty">No data</p>';
       document.getElementById("memoryAdjustments").innerHTML = `
         <div class="ai-stat-row"><span>Avg Confidence</span><strong>${learning.avg_confidence||"—"}%</strong></div>
         <div class="ai-stat-row"><span>Total Records</span><strong>${learning.total_records||0}</strong></div>
@@ -1346,7 +1902,7 @@
       // Replay
       const syms = cfg.symbols||[];
       const symSel = document.getElementById("replaySymbol");
-      if (!symSel.options.length) syms.forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; symSel.appendChild(o); });
+      if (symSel && !symSel.options.length) syms.forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; symSel.appendChild(o); });
       const job = data.replay_job||{};
       const replay = data.replay_results||{};
       renderReplayPanel(job, replay);
@@ -1365,6 +1921,8 @@
       ).join("")||'<p class="empty">No loop data yet</p>';
 
       document.getElementById("configInfo").innerHTML = `
+        <div class="ai-stat-row"><span>Session</span><strong>${cfg.runtime_mode === "live_plan" ? "Live Plan ($50k)" : "Practice"}</strong></div>
+        <div class="ai-stat-row"><span>Account Type</span><strong>${cfg.account_mode || "—"}</strong></div>
         <div class="ai-stat-row"><span>Execution Mode</span><strong>${cfg.mode}</strong></div>
         <div class="ai-stat-row"><span>Symbols</span><strong>${(cfg.symbols||[]).join(", ")}</strong></div>
         <div class="ai-stat-row"><span>Max Exposure</span><strong>$${cfg.risk?.max_total_exposure_usd||"—"}</strong></div>`;
@@ -1450,37 +2008,115 @@
       btn.textContent = "Run Replay";
     });
 
-    async function refresh() {
+    function apiUrl(path) {
+      const sep = path.includes("?") ? "&" : "?";
+      return path + sep + API_BUST + "&t=" + Date.now();
+    }
+
+    async function fetchJson(url, timeoutMs = 20000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        if (firstLoad) {
-          const [data] = await Promise.all([
-            fetch("/api/state").then(res => res.json()),
-            playLoaderAnimation(),
-          ]);
-          const remaining = LOADER_DURATION_MS - (Date.now() - loaderStartedAt);
-          if (remaining > 0) await delay(remaining);
-          render(data);
-          await revealApp();
-        } else {
-          const res = await fetch("/api/state");
-          render(await res.json());
-        }
-      } catch(e) {
-        if (firstLoad) {
-          document.querySelector(".loader-sub").textContent = "Waiting for agent — retrying…";
-          advanceLoader(0);
-        } else {
-          document.getElementById("osStatus").className = "status-pill bad";
-          document.getElementById("osStatus").innerHTML = '<span class="dot"></span> Offline';
-        }
+        const res = await fetch(apiUrl(url), { signal: controller.signal, cache: "no-store", headers: { "Accept": "application/json" } });
+        if (!res.ok) throw new Error("API " + res.status);
+        return await res.json();
+      } finally {
+        clearTimeout(timer);
       }
     }
 
-    setupNav();
-    initChartInteractions();
+    async function fetchSummary(timeoutMs = 20000) {
+      const endpoints = ["/api/summary", "/api/state?lite=1"];
+      let lastErr = null;
+      for (const url of endpoints) {
+        try {
+          return await fetchJson(url, timeoutMs);
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr || new Error("API unreachable");
+    }
+
+    async function startLoaderWatchdog(maxMs) {
+      const limit = maxMs || (isMobile ? 12000 : 22000);
+      await delay(limit);
+      if (bootDone) return;
+      const sub = document.querySelector(".loader-sub");
+      if (sub) sub.textContent = "Still loading — opening dashboard…";
+      try {
+        safeRender(await fetchSummary(isMobile ? 30000 : 15000));
+      } catch (_) {
+        setMobileEmpty(true, "Could not reach API — tap Retry");
+      }
+      if (!bootDone) {
+        bootDone = true;
+        firstLoad = false;
+        await revealApp();
+        ensurePolling();
+      }
+    }
+
+    function showOffline(msg) {
+      const pill = document.getElementById("osStatus");
+      if (!pill) return;
+      pill.className = "status-pill bad";
+      pill.innerHTML = `<span class="dot"></span> ${msg || "Offline"}`;
+    }
+
+    async function refresh(force) {
+      if (refreshInFlight && !force) return;
+      refreshInFlight = true;
+      const booting = !bootDone;
+      try {
+        if (booting) playLoaderAnimation();
+        const data = await fetchSummary(booting ? (isMobile ? 35000 : 25000) : 15000);
+        if (booting) {
+          const remaining = LOADER_DURATION_MS - (Date.now() - loaderStartedAt);
+          if (remaining > 0) await delay(remaining);
+        }
+        safeRender(data);
+        if (booting) {
+          bootDone = true;
+          firstLoad = false;
+          await revealApp();
+        }
+      } catch(e) {
+        if (booting) {
+          const sub = document.querySelector(".loader-sub");
+          if (sub) {
+            sub.textContent = e.name === "AbortError"
+              ? "Slow connection — showing dashboard…"
+              : "Could not reach API — retrying…";
+          }
+          advanceLoader(3);
+          await delay(400);
+          bootDone = true;
+          firstLoad = false;
+          await revealApp();
+          setMobileEmpty(true, "API unreachable — tap Retry");
+          showOffline("API unreachable — tap Retry or check bot is running");
+        } else {
+          showOffline("Offline");
+        }
+      } finally {
+        refreshInFlight = false;
+        ensurePolling();
+      }
+    }
+
+    // Boot setup is fault-isolated so a throw here cannot prevent the loader watchdog
+    // (startLoaderWatchdog) or the first refresh() from arming — which would otherwise
+    // leave the loading screen up forever.
+    try { setupNav(); } catch(e) { console.error("setupNav failed", e); }
+    try { initChartInteractions(); } catch(e) { console.error("initChartInteractions failed", e); }
+    document.getElementById("mobileRetryBtn")?.addEventListener("click", () => refresh(true));
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refresh(true);
+    });
+    startLoaderWatchdog();
     refresh();
-    refreshTimer = setInterval(refresh, refreshMs);
-    window.addEventListener("resize", () => { if (equityCurveRaw) drawChart(equityCurveRaw); });
+    window.addEventListener("resize", () => { if (equityCurveRaw) drawChart(equityCurveRaw, lastData?.live_portfolio); });
   </script>
 </body>
 </html>

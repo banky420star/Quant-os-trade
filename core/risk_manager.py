@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from core.daily_growth import evaluate_daily_growth
+from core.growth_campaign import update_campaign
 from core.exposure import exposure_from_positions, exposure_used_pct
 from core.trade_limits import unlimited_trades
 from core.utils import utc_now_iso
@@ -35,7 +37,19 @@ class RiskManager:
 
         starting = float(balance.get("starting_cash", self.config["execution"]["starting_cash"]))
         equity = float(balance.get("equity", starting))
-        drawdown = max(0.0, (starting - equity) / starting * 100) if starting > 0 else 0.0
+        # USER-AUTHORIZED 2026-06-30 fix: ALWAYS evaluate daily growth so the
+        # max-daily-LOSS pause (a safety backstop) is enforced in EVERY mode —
+        # previously gated on growth_plan_enabled, which blinded the pause in
+        # conservative mode (apply_when=real) and let the bot stack positions
+        # into a news spike with no daily-loss circuit-breaker (-57.6% crash).
+        # daily_growth.enabled reflects growth-plan status; drawdown_base uses
+        # day_start only when enabled (conservative mode keeps the mt5_baseline
+        # drawdown base), but trading_paused/pause_reason now run regardless.
+        daily_growth = evaluate_daily_growth(equity, self.config)
+        drawdown_base = starting
+        if daily_growth and daily_growth.get("enabled"):
+            drawdown_base = float(daily_growth.get("day_start_equity") or starting)
+        drawdown = max(0.0, (drawdown_base - equity) / drawdown_base * 100) if drawdown_base > 0 else 0.0
 
         symbol_exposure, total_exposure = exposure_from_positions(positions)
         max_total = float(risk_cfg["max_total_exposure_usd"])
@@ -71,6 +85,9 @@ class RiskManager:
         if bad_vol:
             risk_events.append({"type": "bad_volatility", "symbols": bad_vol})
 
+        if daily_growth and daily_growth.get("trading_paused") and daily_growth.get("pause_reason"):
+            kill_triggers.append(daily_growth["pause_reason"])
+
         if kill_triggers:
             kill = self._activate_kill_switch(kill, kill_triggers[0])
         elif not risk_cfg.get("kill_switch", False):
@@ -91,6 +108,11 @@ class RiskManager:
             "equity": round(equity, 2),
             "cash": round(float(balance.get("cash", starting)), 2),
         }
+        if daily_growth and daily_growth.get("enabled"):
+            state["daily_growth"] = daily_growth
+            campaign = update_campaign(equity, self.config)
+            if campaign.get("enabled"):
+                state["growth_campaign"] = campaign
 
         self.logger.info(
             "Risk check: exposure=%.2f (%.1f%%) drawdown=%.2f%% positions=%d events=%d kill=%s",

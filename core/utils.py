@@ -58,6 +58,15 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
                 local = yaml.safe_load(handle) or {}
             if isinstance(local, dict):
                 config = _deep_merge(config, local)
+    if isinstance(config, dict):
+        from core.account_mode import performance_gates_active
+        from core.performance_benchmark import sync_performance_gates
+        from core.practice_session import sync_practice_gates
+
+        if config.get("performance"):
+            config = sync_performance_gates(config)
+        if not performance_gates_active(config):
+            config = sync_practice_gates(config)
     return config
 
 

@@ -105,7 +105,14 @@ def check_exposure_limits(
     symbol = signal["symbol"]
 
     ideal_size = calc_risk_based_size(equity, risk_pct, entry, sl, max_size=max_lot)
-    projected_notional = position_notional(entry, ideal_size)
+    capped_size, allowed = cap_size_to_exposure_limits(
+        ideal_size,
+        entry,
+        symbol,
+        positions,
+        config,
+    )
+    projected_notional = position_notional(entry, capped_size)
 
     symbol_exp, total_exp = exposure_from_positions(positions)
     current_symbol = symbol_exp.get(symbol, 0.0)
@@ -113,12 +120,13 @@ def check_exposure_limits(
     symbol_after = current_symbol + projected_notional
     total_after = total_exp + projected_notional
 
-    symbol_ok = symbol_after <= max_symbol
-    total_ok = total_after <= max_total
+    symbol_ok = allowed and symbol_after <= max_symbol + 0.01
+    total_ok = allowed and total_after <= max_total + 0.01
 
     details = {
         "equity": round(equity, 2),
         "ideal_size": ideal_size,
+        "capped_size": capped_size,
         "projected_notional": round(projected_notional, 2),
         "current_symbol_exposure": round(current_symbol, 2),
         "current_total_exposure": round(total_exp, 2),
@@ -128,6 +136,7 @@ def check_exposure_limits(
         "max_total_exposure": max_total,
         "symbol_ok": symbol_ok,
         "total_ok": total_ok,
+        "exposure_allowed": allowed,
     }
 
     return symbol_ok and total_ok, details

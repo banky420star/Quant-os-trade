@@ -14,6 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.equity_tracker import build_equity_curve
+from core.account_mode import runtime_mode_summary
+from core.remote_access import remote_access_info
 from core.utils import load_config, read_json_state, utc_now_iso, write_json_state
 
 STATE_FILES = (
@@ -43,6 +45,38 @@ STATE_FILES = (
     "supervisor.json",
     "replay_job.json",
 )
+
+# Mobile / Tailscale: skip multi-MB blobs on the default dashboard poll.
+LITE_SKIP_STATE = frozenset({
+    "edge_database.json",
+    "memory.json",
+    "equity_history.json",
+    "optimizer_results.json",
+    "paper_orders.json",
+    "replay_results.json",
+    "latest_candles.json",
+})
+
+
+def _slim_state_file(name: str, data: dict) -> dict:
+    """Trim heavy state files for phone-friendly API responses."""
+    if name == "paper_orders.json":
+        orders = data.get("orders") or []
+        return {
+            **{k: v for k, v in data.items() if k != "orders"},
+            "orders": orders[-8:],
+            "order_count": len(orders),
+        }
+    if name == "paper_trades.json":
+        trades = data.get("trades") or []
+        return {**data, "trades": trades[-40:], "trade_count": len(trades)}
+    if name == "features.json":
+        symbols = data.get("symbols") or {}
+        slim_symbols = {}
+        for sym, feat in symbols.items():
+            slim_symbols[sym] = {k: v for k, v in feat.items() if k != "candles"}
+        return {**data, "symbols": slim_symbols}
+    return data
 
 HTML_PATH = Path(__file__).resolve().parent / "index.html"
 LOG_PATH = ROOT / "logs" / "system.log"
@@ -427,6 +461,25 @@ def _tail_log(lines: int = 40) -> list[str]:
         return []
 
 
+def _build_verdict(markdown: str) -> dict:
+    """Summarize VERDICT.md for the dashboard state payload (headline + sections).
+
+    Keeps the audited negative result visible on the dashboard so it cannot be
+    silently dropped from the UI. The full markdown is served via /api/verdict.
+    """
+    if not markdown:
+        return {"present": False, "headline": None, "sections": [], "markdown": ""}
+    lines = markdown.splitlines()
+    headline = next((ln.lstrip("# ").strip() for ln in lines if ln.startswith("# ")), None)
+    sections = [ln.lstrip("# ").strip() for ln in lines if ln.startswith("## ")]
+    return {
+        "present": True,
+        "headline": headline,
+        "sections": sections,
+        "char_count": len(markdown),
+    }
+
+
 def _run_replay_job(symbol: str | None, max_bars: int) -> None:
     try:
         write_json_state("replay_job.json", {
@@ -467,14 +520,40 @@ def _build_trading_status(
     candidates_data: dict,
     approved_data: dict,
     rejected_data: dict,
+    *,
+    live_trading_enabled: bool = False,
 ) -> dict:
-    """Why trades are or aren't opening — surfaced on dashboard."""
+    """Why trades are or aren't opening — surfaced on dashboard.
+
+    `live_trading_enabled` (config execution flag) is the hard guard against real-
+    money orders. When False, can_execute is forced False and a blocker is added,
+    even if kill_switch is off and approved signals exist. This keeps the UI honest
+    about the actual deploy-disable contract (kill_switch alone does not gate it).
+    """
     kill_on = bool(kill_switch.get("kill_switch") or risk_state.get("kill_switch"))
     candidates = candidates_data.get("candidates", [])
     approved = approved_data.get("approved", [])
     rejected = rejected_data.get("rejected", [])
 
     blockers: list[str] = []
+    daily = risk_state.get("daily_growth") or {}
+    if daily.get("enabled"):
+        pnl_pct = daily.get("daily_pnl_pct", 0)
+        target = daily.get("target_pct", 20)
+        blockers.insert(
+            0,
+            f"Daily growth: {pnl_pct:+.2f}% / +{target:.0f}% target "
+            f"(${daily.get('daily_pnl', 0):+.2f} today)",
+        )
+    campaign = risk_state.get("growth_campaign") or {}
+    if campaign.get("status") == "running":
+        blockers.insert(
+            0,
+            f"30-day run: Day {campaign.get('days_elapsed')}/{campaign.get('duration_days')} "
+            f"({campaign.get('campaign_pnl_pct', 0):+.2f}% since ${campaign.get('start_equity')})",
+        )
+        if daily.get("trading_paused") and daily.get("pause_reason"):
+            blockers.insert(0, daily["pause_reason"])
     if kill_on:
         blockers.append(f"Kill switch ON: {kill_switch.get('reason') or 'risk limit'}")
 
@@ -492,14 +571,20 @@ def _build_trading_status(
         else:
             blockers.append("Candidates generated but none approved")
 
-    can_execute = not kill_on and len(approved) > 0
-    status = "blocked" if kill_on else ("ready" if approved else ("scanning" if not candidates else "filtered"))
+    can_execute = not kill_on and len(approved) > 0 and live_trading_enabled
+    if not live_trading_enabled:
+        blockers.append("Live trading DISABLED (live_trading_enabled: false) — paper/research mode only")
+    status = (
+        "blocked" if kill_on or not live_trading_enabled
+        else ("ready" if approved else ("scanning" if not candidates else "filtered"))
+    )
 
     return {
         "status": status,
         "can_execute": can_execute,
         "kill_switch": kill_on,
         "kill_reason": kill_switch.get("reason"),
+        "live_trading_enabled": live_trading_enabled,
         "candidate_count": len(candidates),
         "approved_count": len(approved),
         "rejected_count": len(rejected),
@@ -515,19 +600,31 @@ def _build_trading_status(
     }
 
 
-def aggregate_state() -> dict:
+def aggregate_state(*, lite: bool = False) -> dict:
     config = load_config()
+    runtime_mode = runtime_mode_summary(config)
     payload: dict = {
         "config": {
             "mode": config["execution"].get("mode"),
+            "account_mode": config.get("mt5", {}).get("account_mode", "demo"),
+            "runtime_mode": runtime_mode["label"],
+            "performance_plan_active": runtime_mode["performance_plan_active"],
+            "runtime_detail": runtime_mode["detail"],
             "symbols": config["mt5"]["symbols"],
             "risk": config.get("risk", {}),
             "version": config.get("app", {}).get("version", "1.0"),
             "os_name": config.get("app", {}).get("display_name", "MT5 Quant OS"),
         },
+        "runtime_mode": runtime_mode,
+        "remote_access": remote_access_info(
+            int(config.get("app", {}).get("dashboard", {}).get("port", 8080))
+        ),
     }
     for name in STATE_FILES:
-        payload[name.replace(".json", "")] = read_json_state(name, default={})
+        if lite and name in LITE_SKIP_STATE:
+            continue
+        raw = read_json_state(name, default={})
+        payload[name.replace(".json", "")] = _slim_state_file(name, raw) if lite else raw
 
     candidates = payload.get("candidate_signals", {}).get("candidates", [])
     top_signal = candidates[0] if candidates else None
@@ -585,10 +682,11 @@ def aggregate_state() -> dict:
     )
     payload["ai_decision"] = _build_ai_decision(top_signal, top_explain, payload["edge_insights"])
     payload["equity_curve"] = build_equity_curve(
-        payload.get("paper_orders"),
+        payload.get("paper_orders", {}) if lite else payload.get("paper_orders"),
         payload.get("paper_trades"),
         payload.get("account"),
         payload.get("risk_state"),
+        lite=lite,
     )
     payload["trading_status"] = _build_trading_status(
         payload.get("kill_switch", {}),
@@ -596,12 +694,22 @@ def aggregate_state() -> dict:
         payload.get("candidate_signals", {}),
         payload.get("approved_signals", {}),
         payload.get("rejected_signals", {}),
+        live_trading_enabled=bool(
+            config.get("execution", {}).get("live_trading_enabled", False)
+        ),
     )
     payload["logs"] = _tail_log(50)
+    # Surface the audited verdict (VERDICT.md) so the dashboard cannot hide the
+    # researched negative result. `verdict_summary` = headline + section headings;
+    # the full markdown is available via /api/verdict.
+    verdict_path = ROOT / "VERDICT.md"
+    verdict_markdown = verdict_path.read_text(encoding="utf-8") if verdict_path.exists() else ""
+    payload["verdict"] = _build_verdict(verdict_markdown)
     dash_cfg = config.get("app", {}).get("dashboard", {})
     payload["meta"] = {
         "refresh_seconds": int(dash_cfg.get("refresh_seconds", 2)),
         "replay_default_bars": int(config.get("replay", {}).get("max_bars", 800)),
+        "lite": lite,
     }
     return payload
 
@@ -612,6 +720,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
@@ -620,6 +729,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         body = HTML_PATH.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -645,8 +756,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send_html()
-        elif path == "/api/state":
-            self._send_json(aggregate_state())
+        elif path in ("/api/state", "/api/summary"):
+            query = parse_qs(urlparse(self.path).query)
+            lite = path == "/api/summary" or query.get("lite", ["0"])[0] in ("1", "true", "yes")
+            self._send_json(aggregate_state(lite=lite))
         elif path.startswith("/api/state/"):
             filename = path.split("/api/state/", 1)[-1]
             if not filename.endswith(".json"):
@@ -655,6 +768,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(read_json_state(filename, default={}))
             else:
                 self.send_error(404)
+        elif path == "/api/verdict":
+            verdict_path = ROOT / "VERDICT.md"
+            if verdict_path.exists():
+                self._send_json({
+                    "present": True,
+                    "markdown": verdict_path.read_text(encoding="utf-8"),
+                })
+            else:
+                self._send_json({"present": False, "markdown": ""}, 404)
         else:
             self.send_error(404)
 
@@ -682,11 +804,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return
 
 
-def run(host: str = "127.0.0.1", port: int = 8080) -> None:
+def run(host: str | None = None, port: int | None = None) -> None:
+    # Bind 0.0.0.0 by default so the dashboard is reachable over Tailscale/LAN.
+    # The prior 127.0.0.1-only default meant ONLY localhost-on-the-server could
+    # load it; phones over Tailscale hit the slow in-process bot on 0.0.0.0:8080
+    # instead and hung on the loading screen. Override via DASH_HOST/DASH_PORT
+    # env or --host/--port CLI.
+    import os as _os
+
+    if host is None:
+        host = _os.environ.get("DASH_HOST", "0.0.0.0")
+    if port is None:
+        port = int(_os.environ.get("DASH_PORT", "8082"))
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
     server.serve_forever()
 
 
 if __name__ == "__main__":
-    run()
+    import argparse as _ap
+
+    _p = _ap.ArgumentParser(description="MT5 Quant OS dashboard server (reads state files directly)")
+    _p.add_argument("--host", default=None, help="bind host (default 0.0.0.0, or DASH_HOST)")
+    _p.add_argument("--port", type=int, default=None, help="bind port (default 8082, or DASH_PORT)")
+    _a = _p.parse_args()
+    run(host=_a.host, port=_a.port)

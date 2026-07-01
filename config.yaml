@@ -1,72 +1,85 @@
 app:
   name: mt5_quant_os
   display_name: MT5 Quant OS
-  version: "1.0"
+  version: '1.0'
   loop_interval_seconds: 45
   dashboard:
     enabled: true
-    host: 127.0.0.1
+    host: 0.0.0.0
     port: 8080
-    auto_open_browser: true
+    auto_open_browser: false
     refresh_seconds: 2
   supervisor:
     heartbeat_seconds: 10
     history_interval_seconds: 300
     research_interval_seconds: 1800
     restart_delay_seconds: 5
-
 mt5:
   # Attaches to whatever account is logged into the MT5 terminal.
   use_logged_in_account: true
-  account_mode: real
-  path: "C:\\Users\\Administrator\\MT5Agent\\terminal64.exe"
+  account_mode: demo
+  path: C:\Users\Administrator\MT5Agent\terminal64.exe
   prefer_logged_in_session: true
   timeout_ms: 60000
-  # Fallback only if terminal is open but not logged in:
-  login: 295959027
-  password: ""  # prefer MT5_PASSWORD env var; or set in config.local.yaml (gitignored)
-  server: "Exness-MT5Real27"
+  # Fallback only if terminal is open but not logged in. NOTE: these point at a
+  # REAL server (Exness-MT5Real27) and are used when the terminal session is
+  # logged in to the real account. Do not change these unless the live login
+  # on the terminal changes too.
+  login: 435656990
+  password: ''
+  server: Exness-MT5Trial9
   symbols:
-    - XAUUSDm
-    - USOILm
-    - BTCUSDm
+  - XAUUSDm
+  - USOILm
   timeframes:
     entry: M5
     bias: M15
   candles: 300
   auto_launch_terminal: false
-
 features:
   use_history_lookback: true
   history_lookback_bars: 500
   min_bars_required: 20
-
 history:
   enabled: true
   max_bars: 50000
   chunk_size: 5000
   incremental_bars: 500
   update_mode: incremental
-
 health:
   max_candle_age_minutes: 30
-
 trading:
-  aggressive_mode: true  # relax quality gates for more demo fills
-  allow_pyramiding: false  # one position per symbol — no stacking
-  pyramid_block_same_setup: true  # no duplicate: block same setup on same symbol/side
-  max_open_per_symbol: 1  # max concurrent open positions per symbol
-  max_session_trades_per_symbol: 3  # max closed round-trips per symbol per session
+  aggressive_mode: false
+  allow_pyramiding: true
+  pyramid_block_same_setup: false
+  max_open_per_symbol: 3
+  # USER-AUTHORIZED 2026-06-29: tightened 10->3 after -27% drawdown tripped the
+  # kill switch. Still allows pyramiding up to 3/symbol; exposure cap re-enabled.
+  # Confidence floor: a new position must be >= the strongest open position's
+  # confidence. Don't add a weaker trade on top of stronger ones.
+  confidence_floor_vs_open: true
+  # USER-AUTHORIZED 2026-06-30: regime-flip trade replacement. When M15 trend
+  # AND market_regime bias BOTH flip (bullish<->bearish) vs the prior tick, and a
+  # new approved signal fires with confidence >= regime_flip_min_confidence in
+  # the OPPOSITE direction to an OPEN position that is currently LOSING
+  # (profit<0), the broker closes that losing position and places the new
+  # opposite-direction signal as its replacement. Cuts losers on a confirmed
+  # turn; never cuts a winning runner. Direction state in
+  # state/regime_history.json (written by market_context_loop each tick).
+  regime_flip_replace_enabled: true
+  regime_flip_min_confidence: 75
+  regime_flip_window_sec: 90
+  max_session_trades_per_symbol: 12
   strategy_entries:
     enabled: true
-    use_limit_orders: true
-    entry_buffer_atr: 0.05       # pad above support / below resistance
-    market_if_within_atr: 0.15   # already at level → market fill
-    max_entry_wait_atr: 2.0      # skip limit if ideal entry > this many ATR away
+    use_limit_orders: false
+    entry_buffer_atr: 0.05
+    market_if_within_atr: 99.0
+    max_entry_wait_atr: 2.0
   dynamic_entries:
-    enabled: true
-    require_positive_stack_pnl: false  # allow pyramids even when stack is red
-    require_favorable_price: false  # allow adds without strict price improvement
+    enabled: false
+    require_positive_stack_pnl: true
+    require_favorable_price: true
     min_atr_distance_from_last: 0.08
     scale_lot_factor: 0.9
     per_symbol:
@@ -107,47 +120,55 @@ trading:
       BTCUSDm:
         activation_atr_mult: 0.8
         trail_atr_mult: 0.4
-
 filters:
-  min_volume_ratio: 0  # aggressive demo: do not block on thin volume bars
+  min_volume_ratio: 0.35
   spread_mult: 3.5
   max_spread_points:
     XAUUSDm: 300
     USOILm: 50
     BTCUSDm: 1200
   min_atr_ratio: 0.0002
-  avoid_news: false
-
+  # USER-AUTHORIZED 2026-06-30: news-blackout gate (fixes the -57.6% crash).
+  # The 14:30 UTC (4:30 local) US release spike wiped 4 stacked positions
+  # because avoid_news had NO implementation. Now the verifier blocks NEW
+  # entries within +/- news_blackout_minutes of each scheduled US release slot
+  # (UTC HH:MM). Existing positions are left to exits/give-back guard; only new
+  # entries are gated. Slots: NFP/CPI 12:30, 13:30; FOMC/PPI 14:00, 14:30; 15:00.
+  avoid_news: true
+  news_blackout_minutes: 10
+  news_release_times_utc:
+  - '12:30'
+  - '13:30'
+  - '14:00'
+  - '14:30'
+  - '15:00'
 intelligence:
   evidence_first: true
   confidence_tree: true
   setup_classifier: true
   consensus_gates: true
   risk_veto_threshold: 12
-  regime_veto_enabled: false
-  regime_filter: false
-  trend_structure_veto_enabled: false
+  regime_veto_enabled: true
+  regime_filter: true
+  trend_structure_veto_enabled: true
   setup_confidence_mult: 0.72
   memory_veto_win_rate: 15
   memory_veto_min_trades: 25
-
 replay:
   symbol: XAUUSDm
   max_bars: 800
   bars_per_step: 10
-  # Overnight bulk runs: increase max_bars (e.g. 50000) and bars_per_step (e.g. 5)
-
 session_scoring:
   enabled: true
-  min_trade_score: 80          # strict threshold (London/Overlap setups target this)
-  min_trade_score_aggressive: 62 # used when aggressive_mode is on
+  min_trade_score: 74
+  min_trade_score_aggressive: 74
   weights:
-    strategy_rank: 0.30
-    session: 0.20
-    trend_strength: 0.15
-    volume: 0.15
-    spread_quality: 0.10
-    volatility: 0.10
+    strategy_rank: 0.4
+    session: 0.25
+    trend_strength: 0.2
+    volume: 0.1
+    spread_quality: 0.025
+    volatility: 0.025
   session_scores:
     london_open: 10
     overlap_london_ny: 10
@@ -162,55 +183,189 @@ session_scoring:
       london_open: 2
       overlap_london_ny: 2
       london_mid: 1
-
 quant:
   use_adaptive_weights: true
-  strategy_ranking_enabled: true  # rank setups from edge DB / session memory
-  require_top_ranked_setup: true  # trade only top-ranked setups (see flex rules below)
-  ranking_flex_enabled: true  # allow top-N when leader has thin/weak history
-  ranking_flex_min_win_rate: 55  # below this WR → relax to top-N
-  ranking_flex_min_samples: 10  # fewer trades than this → relax to top-N
-  ranking_flex_top_n: 2  # how many ranks to allow while flex is active
-  ranking_context_align: true  # allow pullback/continuation when live move_type matches ranked setup
+  strategy_ranking_enabled: true
+  require_top_ranked_setup: true
+  ranking_flex_enabled: true
+  ranking_flex_min_win_rate: 52
+  ranking_flex_min_samples: 10
+  ranking_flex_top_n: 2
+  ranking_context_align: true
   min_rank_sample_size: 3
-  min_rank_win_rate: 0
+  min_rank_win_rate: 45
   replay_ingest_edge_db: true
-
+practice:
+  symbols:
+  - XAUUSDm
+  - USOILm
+  min_trade_score: 42
+  min_trade_score_aggressive: 42
+  require_top_ranked_setup: false
+  min_confidence: 58
+  min_risk_reward: 1.0
+  relax_structure_checks: true
+  min_volume_ratio: 0.15
+  relax_volume_check: true
+  max_drawdown_pct: 25
+  max_symbol_exposure_usd: 80
+  max_total_exposure_usd: 80
+  ranking_flex_min_win_rate: 42
+  growth:
+    enabled: true
+    campaign_days: 30
+    daily_target_pct: 6
+    max_daily_loss_pct: 4
+    lock_profit_when_target_hit: false
+    continuous_through_campaign: true
+    risk_percent_per_trade: 2.5
+    max_exposure_fraction: 0.92
+    max_lot: 0.05
+    loop_interval_seconds: 30
+    strategy_ranking_enabled: false
+    session_scoring_enabled: false
+    aggressive_mode: true
+    min_confidence: 52
+    min_trade_score: 28
+    min_risk_reward: 0.95
+    min_volume_ratio: 0.12
+    spread_mult: 4.0
+    max_drawdown_pct: 8
+    max_consecutive_losses: 0
+    max_session_trades_per_symbol: 24
+    dynamic_entries_enabled: true
+    relax_consensus: true
+    risk_veto_threshold: 6
+performance:
+  # Live account posture: keep the performance plan active on the real account.
+  # The growth campaign is still available for demo practice via practice.growth,
+  # but the live bot should run under the conservative performance gate.
+  apply_when: real
+  projection_capital_usd: 1000000
+  target_monthly_pnl_usd: 50000
+  default_risk_percent: 0.45
+  min_confidence: 62
+  min_risk_reward: 1.15
+  min_volume_ratio: 0.35
+  regime_veto_enabled: true
+  trend_structure_veto_enabled: true
+  min_trade_score: 58
+  require_top_ranked_setup: true
+  min_rank_win_rate: 40
+  ranking_flex_min_win_rate: 48
+  max_symbol_exposure_usd: 450000
+  max_total_exposure_usd: 850000
+  replay_max_bars: 2100
+  replay_step: 10
+  min_replay_window_days: 7
+  min_closed_trades: 5
+  max_session_trades_per_symbol: 12
+  strategy_entries_enabled: true
 research:
   min_trades_for_research: 15
   replay_bars: 400
   replay_step: 15
   improvement_threshold_pct: 5
   auto_deploy: false
-
 optimizer:
   max_runs: 9
-  min_confidence_grid: [60, 70, 80]
-  trend_weight_mult_grid: [0.9, 1.0, 1.1]
-
+  min_confidence_grid:
+  - 60
+  - 70
+  - 80
+  trend_weight_mult_grid:
+  - 0.9
+  - 1.0
+  - 1.1
 signals:
-  min_confidence: 52
-  min_risk_reward: 0.9
-  default_risk_percent: 1
-  max_candidates_per_run: 0  # 0 = unlimited (all passing candidates)
-
+  min_confidence: 64
+  min_risk_reward: 1.20
+  default_risk_percent: 0.35
+  max_candidates_per_run: 0
+  regime_overrides:
+    strong_trend:
+      min_confidence: 66
+      min_risk_reward: 1.30
+      bias_aligned: true
+    weak_trend:
+      min_confidence: 62
+      min_risk_reward: 1.20
+      bias_aligned: true
+    compression:
+      min_confidence: 64
+      min_risk_reward: 1.25
+      bias_aligned: true
+    expansion:
+      min_confidence: 64
+      min_risk_reward: 1.25
+      bias_aligned: true
+    range:
+      min_confidence: 66
+      min_risk_reward: 1.10
+    transitional:
+      skip: true
+    volatility_spike:
+      skip: true
 execution:
-  # mode: paper = simulated | mt5 = real orders on MT5 account
   mode: mt5
   mt5_trading_enabled: true
-  allow_live_account: false
-  live_trading_enabled: false
+  allow_live_account: true
+  # USER-AUTHORIZED 2026-06-30: REAL trading enabled. MT5 terminal logged into real
+  # account 295959027 / Exness-MT5Real27 (mode=real). account_mode=real in config.
+  # allow_live_account=true is the documented real-consent switch; the EFFECTIVE guard
+  # on live orders is kill_switch.json + live_trading_enabled (the _validate_account_mode
+  # refusal branch only fires when account_mode==demo, so this flag is consent, not the
+  # live block). Flip back to false to revoke real consent.
+  # RESUMED 2026-06-30 ~14:51 UTC after crash fixes (news-blackout gate + 12% daily-loss
+  # pause de-blinded) + rebaseline to $14.32. Conservative mode (apply_when=real):
+  # 0.45% risk/trade, min_conf 62. News-blackout blocks new entries +/-10min of US releases.
+  # HALTED AGAIN 2026-06-30 ~15:05 UTC: bot opened a XAUUSDm BUY 0.01 that crashed
+  # -$8.30 (balance 14.32 -> 7.63) within ~1 min of resume despite the news-blackout
+  # gate (15:04 UTC is inside the 15:00+/-10min window -> gate should have rejected).
+  # Investigating why a trade was placed through the gate before any further live trading.
+  # ROOT CAUSE: the OLD bot (pid 10360, pre-fix code, NO news gate) placed the trade at
+  # 14:52:42 UTC in the gap between config-unblock (14:51) and process-restart (15:04).
+  # The new gated bot never traded (kill had tripped by the time it started). Fix =
+  # correct restart order (kill old bot FIRST, then unblock). User accepted the
+  # min-lot swing dynamic on $7.63 (0.01 XAU = ~50% of account per trade) and chose
+  # to resume. Rebaselined to $7.63; regime_history reset; new gated bot launched.
+  # HALTED 2026-06-30 ~16:14 UTC: bot pyramided 3 USOIL SELLs (max_open_per_symbol=3),
+  # USOIL rallied against all 3 -> 12% daily-loss pause fired + kill tripped at 38%
+  # drawdown. Flattened all 3 (realized -$10.35). Account 7.63 -> peak 12.68 -> 2.30.
+  # At $2.30 the account is untradeable (0.01 USOIL ~= $10/$1 move -> $0.23 adverse =
+  # wiped). Halted pending user decision (deposit/stop). Both fixes DID fire correctly.
+  # USER-AUTHORIZED 2026-07-01: restarted on DEMO account 435656990 / Exness-MT5Trial9
+  # (trade_mode=0, $5,000 paper). Real account 295959027 was wiped to $0.00 on
+  # 2026-06-30 by the non-latching-kill churn loop; user moved to demo (no real money).
+  # account_mode=demo + apply_when=real -> growth plan active (prop-firm eval mode):
+  # 6%/day target, 4% max daily loss, 8% static-drawdown LATCHING kill, 2.5% risk/trade.
+  # News-blackout gate + daily-loss pause both active. Latching kill is the prop-firm
+  # max-loss rule (8% drawdown -> stop + stay stopped, manual clear only).
+  live_trading_enabled: true
   default_lot: 0.01
-  max_lot: 0.10
+  max_lot: 0.1
   magic_number: 20250625
   deviation: 20
-  starting_cash: 1000
-
+  starting_cash: 100
 risk:
-  unlimited_trades: false  # enforce per-symbol caps, duplicates, and exposure limits
-  max_symbol_exposure_usd: 100
-  max_total_exposure_usd: 300
-  max_drawdown_pct: 5
+  # USER-AUTHORIZED 2026-06-29: set back to false to re-enable the $80 notional
+  # exposure cap (max_symbol/total_exposure_usd). Was true under the aggressive
+  # 10-trades setting that caused the -27% drawdown. max_open_per_symbol=3 now
+  # bounds the count; this bounds the dollar risk.
+  unlimited_trades: false
+  max_symbol_exposure_usd: 80
+  max_total_exposure_usd: 80
+  max_drawdown_pct: 8
   max_order_age_minutes: 30
-  kill_switch: false
-  max_consecutive_losses: 0  # 0 = disabled when unlimited_trades
+  # USER-AUTHORIZED 2026-06-30: LATCH REMOVED (user reversed earlier 'Latch it'
+  # to hands-off). kill_switch:false lets the risk loop auto-clear the
+  # kill-switch when drawdown < max_drawdown_pct and the daily pause lifts. At
+  # UTC midnight daily_growth rebaselines day_start_equity to current equity ->
+  # drawdown -> 0 -> kill auto-clears -> real trading AUTO-STARTS on the $30
+  # real account with no manual step. Set to true to re-latch (manual clear).
+  # USER-AUTHORIZED 2026-07-01: LATCHING KILL ON (kill_switch: true). The non-latching
+  # setting wiped the real account to $0.00 via a trip/clear/trade churn loop. Now
+  # latched so a tripped kill (8% drawdown, prop-firm max-loss rule) stays tripped
+  # until manually cleared. Required manual clear prevents auto-resurrect churn.
+  kill_switch: true
+  max_consecutive_losses: 0

@@ -141,14 +141,15 @@ def pin_strategy_entry(
         entry = anchor - buffer if anchor >= price else anchor
 
     entry = _round_price(entry)
+    entry_mode = resolve_entry_mode(entry, price, atr, config)
+    if entry_mode == "market":
+        entry = _round_price(price)
+
+    # SL/TP must use the final entry (market snap can move entry away from the anchor).
     sl, tp1, tp2 = _levels_from_entry(entry, side, feat, atr)
     sl = _round_price(sl)
     tp1 = _round_price(tp1)
     tp2 = _round_price(tp2)
-
-    entry_mode = resolve_entry_mode(entry, price, atr, config)
-    if entry_mode == "market":
-        entry = _round_price(price)
 
     max_wait = float(cfg.get("max_entry_wait_atr", 2.0)) * atr
     distance_atr = abs(price - entry) / atr if atr > 0 else 0.0

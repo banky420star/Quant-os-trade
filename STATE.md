@@ -1,6 +1,6 @@
 # MT5 Quant Agent — System State
 
-**Last run:** 2026-06-25 16:51:06 UTC
+**Last run:** 2026-06-28 23:12:57 UTC
 **Cycle:** 0
 **Mode:** mt5 (mt5_trading=True)
 
@@ -25,7 +25,7 @@
 ## MT5 / Account
 
 - Connection: alive=True logged_in=True
-- Account: 435656990 @ Exness-MT5Trial9 balance=100.0 USD
+- Account: 435656990 @ Exness-MT5Trial9 balance=93.18 USD
 
 ## Signals
 
@@ -35,9 +35,9 @@
 
 ## Portfolio
 
-- Equity: $100.00
+- Equity: $61.13
 - Open positions: 0
-- Closed trades: 329
+- Closed trades: 343
 
 ## Risk
 
@@ -47,8 +47,8 @@
 
 ## Memory / Edge DB
 
-- Memory records: 329
-- Edge DB records: 700
+- Memory records: 343
+- Edge DB records: 824
   - [sl 61206.50000]: win rate 100.0% (1/1)
   - [sl 61206.50]: win rate 100.0% (1/1)
   - [sl 61104.26]: win rate 100.0% (1/1)

@@ -48,6 +48,30 @@ def test_limit_mode_when_entry_away_from_market(config):
     assert resolve_entry_mode(4039.0, 4040.0, 10.0, config) == "market"
 
 
+def test_market_snap_recalculates_sl_tp_for_valid_rr(config):
+    """When entry snaps to market, SL/TP must be recomputed — not left at anchor levels."""
+    feat = {
+        "price": 69.98,
+        "atr": 0.45,
+        "support": 68.69,
+        "resistance": 70.20,
+        "bb_middle": 69.28,
+        "bb_lower": 68.50,
+        "bb_upper": 70.10,
+        "breakout": "none",
+    }
+    ctx = {"move_type": "pullback", "trend_strength": "strong"}
+    config["trading"]["strategy_entries"]["market_if_within_atr"] = 99.0
+
+    levels = pin_strategy_entry("pullback", "BUY", feat, ctx, config)
+
+    assert levels["entry"] == feat["price"]
+    risk = levels["entry"] - levels["sl"]
+    reward = levels["tp1"] - levels["entry"]
+    assert risk > 0
+    assert reward / risk >= 1.4
+
+
 def test_trend_continuation_sell_pins_above_price(config):
     feat = {
         "price": 4040.0,

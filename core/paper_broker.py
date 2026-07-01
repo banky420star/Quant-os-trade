@@ -8,6 +8,7 @@ from typing import Any
 
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
+from core.entry_narrative import build_exit_narrative
 from core.trade_limits import is_duplicate_position, session_trade_capacity_available
 from core.utils import utc_now_iso
 
@@ -29,7 +30,16 @@ class PaperBroker:
         existing_positions: list[dict] | None = None,
         existing_trades: list[dict] | None = None,
         balance_state: dict[str, Any] | None = None,
+        bar_highlow: dict[str, tuple[float, float]] | None = None,
     ) -> dict[str, Any]:
+        """Simulate fills + manage exits.
+
+        ``bar_highlow`` (optional) maps symbol -> (high, low) over the step since
+        the last call. When supplied, _check_exits uses intrabar high/low for
+        stop/TP and peak/trigger evaluation — the realistic model that captures
+        intrabar stop-runs and trailing whipsaw. When None, it falls back to the
+        legacy close-to-close model (used by callers without intrabar context).
+        """
         """Create paper orders and simulate fills from latest prices."""
         orders = list(existing_orders or [])
         positions = list(existing_positions or [])
@@ -58,7 +68,7 @@ class PaperBroker:
                 continue
 
             symbol = signal["symbol"]
-            feat = {"price": prices.get(symbol, signal.get("entry")), "atr": signal.get("entry", 1) * 0.001}
+            feat = {"price": prices.get(symbol, signal.get("entry")), "atr": float(signal.get("entry") or 1) * 0.001}
             dyn_ok, signal, dyn_reason = evaluate_dynamic_entry(self.config, signal, positions, feat)
             if not dyn_ok:
                 self.logger.info("Paper skip %s — %s", symbol, dyn_reason)
@@ -116,7 +126,7 @@ class PaperBroker:
                 )
 
         balance["equity"] = balance["cash"] + self._unrealized_pnl(positions, prices)
-        closed_positions, new_trades, realized = self._check_exits(positions, prices)
+        closed_positions, new_trades, realized = self._check_exits(positions, prices, bar_highlow)
         positions = [p for p in positions if p["position_id"] not in {c["position_id"] for c in closed_positions}]
         trades.extend(new_trades)
         balance["cash"] += realized
@@ -148,6 +158,7 @@ class PaperBroker:
             "market_context": signal.get("market_context"),
             "reason": signal.get("reason"),
             "strategy_rank": signal.get("strategy_rank"),
+            "entry_narrative": signal.get("entry_narrative"),
         }
 
     def _create_order(self, signal: dict[str, Any], price: float) -> dict[str, Any]:
@@ -215,6 +226,20 @@ class PaperBroker:
             "setup_type": order.get("setup_type"),
             "reason": order.get("reason"),
             "signal_meta": order.get("signal_meta"),
+            # ATR used by break-even / trailing. The decision engine sets SL at
+            # ~1.5xATR, so |entry-sl|/1.5 is a faithful on-position ATR proxy
+            # when the feature ATR isn't carried on the order.
+            "atr": abs(fill_price - order["sl"]) / 1.5 if order["sl"] else 0.0,
+            # Dynamic-exit state (persisted across bars while the position is open)
+            "be_triggered": False,
+            "trail_active": False,
+            "peak": fill_price,  # most favourable price reached (high for BUY, low for SELL)
+            # Set on fill, cleared after the first _check_exits pass. While True,
+            # _check_exits uses close-to-close for this position because the entry
+            # bar's intrabar high/low are FUTURE relative to a close-time fill
+            # (look-ahead); a position opened at the close cannot be stopped/TP'd
+            # on that bar's own range.
+            "just_opened": True,
         }
         return position, None, 0.0
 
@@ -228,39 +253,183 @@ class PaperBroker:
             total += diff * pos["size"]
         return total
 
-    def _check_exits(self, positions: list[dict], prices: dict[str, float]) -> tuple[list, list, float]:
+    def _be_cfg(self, symbol: str) -> dict[str, Any]:
+        be = self.config.get("trading", {}).get("break_even", {}) or {}
+        psym = (be.get("per_symbol") or {}).get(symbol, {}) or {}
+        return {
+            "enabled": bool(be.get("enabled", False)),
+            "trigger": float(psym.get("trigger_atr_mult", be.get("trigger_atr_mult", 0.5))),
+            "lock": float(psym.get("lock_profit_atr_mult", be.get("lock_profit_atr_mult", 0.1))),
+        }
+
+    def _trail_cfg(self, symbol: str) -> dict[str, Any]:
+        tr = self.config.get("trading", {}).get("trailing", {}) or {}
+        psym = (tr.get("per_symbol") or {}).get(symbol, {}) or {}
+        return {
+            "enabled": bool(tr.get("enabled", False)),
+            "activation": float(psym.get("activation_atr_mult", tr.get("activation_atr_mult", 0.75))),
+            "trail": float(psym.get("trail_atr_mult", tr.get("trail_atr_mult", 0.35))),
+        }
+
+    def _check_exits(
+        self,
+        positions: list[dict],
+        prices: dict[str, float],
+        bar_highlow: dict[str, tuple[float, float]] | None = None,
+    ) -> tuple[list, list, float]:
+        """Apply break-even + trailing (per config), then SL/TP1 exit.
+
+        Two exit models:
+
+        * **Intrabar** (``bar_highlow`` supplied): peak, BE/trail triggers, and the
+          SL/TP breach are evaluated against the step's high/low. This captures
+          intrabar stop-runs and trailing-stop whipsaw. Because the step's
+          high/low ORDER is unknown, the exit check is resolved **conservatively
+          (stop-first)**: if the adverse extreme touched the SL as it entered the
+          step, the stop is assumed to have hit first (this step's favourable
+          trigger is ignored) — the honest lower bound. This step's BE/trail move
+          is only credited if the adverse extreme stayed above the pre-step SL.
+
+        * **Close-to-close** (``bar_highlow`` None, legacy): everything evaluated
+          against the single per-bar close. Kept for callers without intrabar
+          context. NOTE: this model overstates dynamic-exit performance (see
+          memory exit-model-bias-found-2026-06-27) — prefer the intrabar path.
+
+        Narratives (be/trail/exit) are stamped from the real moved levels.
+        """
         closed = []
         trades = []
         realized = 0.0
 
         for pos in positions:
-            price = prices.get(pos["symbol"], pos["entry"])
+            symbol = pos["symbol"]
+            price = prices.get(symbol, pos["entry"])
+            side = pos["side"]
+            entry = float(pos["entry"])
+            _sl = pos.get("sl")
+            atr = float(pos.get("atr") or 0.0) or (
+                abs(entry - float(_sl)) / 1.5 if _sl is not None else 0.0
+            )
+            direction = 1.0 if side == "BUY" else -1.0
+
+            # Capture SL + dynamic-exit state AS THEY ENTERED THIS STEP, before
+            # any BE/trail move this step. Used for the conservative stop-first
+            # intrabar check: if the adverse extreme touched the pre-step SL, we
+            # assume the stop hit first (full loss / prior locked level) and ignore
+            # this step's favourable trigger. Only if the adverse extreme stayed
+            # above the pre-step SL do we let this step's trigger lock a win.
+            sl_start = float(pos["sl"])
+            be_start = bool(pos.get("be_triggered"))
+            trail_start = bool(pos.get("trail_active"))
+
+            hl = bar_highlow.get(symbol) if bar_highlow else None
+            if pos.get("just_opened"):
+                # Position was opened THIS step at the close. Its entry bar's
+                # intrabar high/low are future relative to the fill (look-ahead),
+                # so use close-to-close for this one step -- a position opened at
+                # the close cannot be stopped/TP'd on that bar's own range.
+                fav_price = price
+                adv_price = price
+                pos["just_opened"] = False  # one-shot; next step uses intrabar
+            elif hl is not None:
+                hi, lo = float(hl[0]), float(hl[1])
+                fav_price = hi if side == "BUY" else lo
+                adv_price = lo if side == "BUY" else hi
+            else:
+                fav_price = price
+                adv_price = price
+            profit = (fav_price - entry) * direction  # favourable excursion > 0
+
+            # Conservative stop-first test: if the step's adverse extreme touched
+            # the pre-step SL, the stop is assumed to have hit first -- we exit at
+            # sl_start and do NOT credit this step's BE/trail move (honest lower
+            # bound; matches the docstring). Only if the adverse extreme stayed
+            # beyond the pre-step SL do we let this step lock a win. Skipping the
+            # mutation here also keeps the recorded sl/be/trail flags on a
+            # stop-first-exit trade consistent with the pre-step exit state.
+            if side == "BUY":
+                stop_first = adv_price <= sl_start
+            else:
+                stop_first = adv_price >= sl_start
+
+            if not stop_first:
+                # Track most favourable price reached (for trailing).
+                if side == "BUY":
+                    pos["peak"] = max(float(pos.get("peak", entry)), fav_price)
+                else:
+                    pos["peak"] = min(float(pos.get("peak", entry)), fav_price)
+
+                # --- Break-even: move SL to entry + lock_profit_atr once +trigger. ---
+                be = self._be_cfg(symbol)
+                if be["enabled"] and not pos.get("be_triggered") and atr > 0 and profit >= be["trigger"] * atr:
+                    lock_sl = entry + direction * be["lock"] * atr
+                    pos["sl"] = lock_sl
+                    pos["be_triggered"] = True
+                    pos["be_narrative"] = (
+                        f"Break-even: +{profit / atr:.2f}ATR favourable triggered SL move to "
+                        f"{lock_sl:.5f} (locked {be['lock']:.2f}ATR over entry)."
+                    )
+
+                # --- Trailing: once +activation, trail SL to peak - trail_atr (only favourable direction). ---
+                tr = self._trail_cfg(symbol)
+                if tr["enabled"] and atr > 0 and profit >= tr["activation"] * atr:
+                    new_sl = float(pos["peak"]) - direction * tr["trail"] * atr
+                    improved = (side == "BUY" and new_sl > float(pos["sl"])) or (side == "SELL" and new_sl < float(pos["sl"]))
+                    if improved:
+                        pos["sl"] = new_sl
+                        pos["trail_active"] = True
+                        pos["trail_narrative"] = (
+                            f"Trailing: SL trailed to {new_sl:.5f} "
+                            f"({tr['trail']:.2f}ATR behind peak {pos['peak']:.5f})."
+                        )
+
+            # --- Exit against SL / TP1 (conservative stop-first intrabar). ---
+            # When bar_highlow is supplied the adverse/favourable extremes of the
+            # step are known but their ORDER is not. We resolve the ambiguity
+            # pessimistically (the honest lower bound): if the adverse extreme
+            # touched the SL as it entered the step, assume the stop hit first and
+            # exit at that pre-step level — this step's favourable trigger is
+            # ignored. Only if the adverse extreme stayed above the pre-step SL do
+            # we credit this step's BE/trail move and exit at the raised level.
+            # Close-to-close (no bar_highlow) keeps adv==fav==close, so sl_start ==
+            # sl_now and this collapses to the legacy behaviour.
             exit_reason = None
             exit_price = price
-
-            if pos["side"] == "BUY":
-                if price <= pos["sl"]:
-                    exit_reason = "stop_loss"
-                    exit_price = pos["sl"]
-                elif price >= pos["tp1"]:
+            sl_now = float(pos["sl"])
+            tp1 = float(pos["tp1"])
+            if side == "BUY":
+                if adv_price <= sl_start:
+                    # stop-first at the pre-step SL (original / prior BE / prior trail)
+                    exit_reason = ("trailing_stop" if trail_start else ("break_even_stop" if be_start else "stop_loss"))
+                    exit_price = sl_start
+                elif adv_price <= sl_now and (pos.get("be_triggered") or pos.get("trail_active")):
+                    # adverse hit this step's newly-raised SL but not the pre-step SL
+                    exit_reason = "trailing_stop" if pos.get("trail_active") else "break_even_stop"
+                    exit_price = sl_now
+                elif fav_price >= tp1 and not pos.get("be_triggered") and not pos.get("trail_active"):
                     exit_reason = "take_profit"
-                    exit_price = pos["tp1"]
+                    exit_price = tp1
             else:
-                if price >= pos["sl"]:
-                    exit_reason = "stop_loss"
-                    exit_price = pos["sl"]
-                elif price <= pos["tp1"]:
+                if adv_price >= sl_start:
+                    exit_reason = ("trailing_stop" if trail_start else ("break_even_stop" if be_start else "stop_loss"))
+                    exit_price = sl_start
+                elif adv_price >= sl_now and (pos.get("be_triggered") or pos.get("trail_active")):
+                    exit_reason = "trailing_stop" if pos.get("trail_active") else "break_even_stop"
+                    exit_price = sl_now
+                elif fav_price <= tp1 and not pos.get("be_triggered") and not pos.get("trail_active"):
                     exit_reason = "take_profit"
-                    exit_price = pos["tp1"]
+                    exit_price = tp1
 
             if exit_reason:
-                diff = exit_price - pos["entry"]
-                if pos["side"] == "SELL":
+                diff = exit_price - entry
+                if side == "SELL":
                     diff = -diff
                 pnl = diff * pos["size"]
                 realized += pnl
-                closed.append({**pos, "closed_at": utc_now_iso(), "exit_price": exit_price, "exit_reason": exit_reason, "pnl": round(pnl, 2)})
                 meta = pos.get("signal_meta") or {}
+                exit_narrative = build_exit_narrative(side, entry, sl_now, tp1, exit_price, exit_reason, pnl)
+                closed.append({**pos, "closed_at": utc_now_iso(),
+                               "exit_price": exit_price, "exit_reason": exit_reason, "pnl": round(pnl, 2)})
                 trades.append(
                     {
                         "trade_id": str(uuid.uuid4()),
@@ -282,6 +451,12 @@ class PaperBroker:
                         "confidence_tree": meta.get("confidence_tree"),
                         "evidence": meta.get("evidence"),
                         "market_context": meta.get("market_context"),
+                        "entry_narrative": meta.get("entry_narrative"),
+                        "be_narrative": pos.get("be_narrative"),
+                        "trail_narrative": pos.get("trail_narrative"),
+                        "exit_narrative": exit_narrative,
+                        "be_triggered": bool(pos.get("be_triggered")),
+                        "trail_active": bool(pos.get("trail_active")),
                         "closed_at": utc_now_iso(),
                     }
                 )

@@ -19,9 +19,12 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.account_mode import performance_gates_active, runtime_mode_summary
+from core.remote_access import remote_access_info
+from core.practice_session import ensure_practice_session
 from core.pipeline import run_pipeline
 from core.supervisor import ManagedService, Supervisor
-from core.utils import ensure_dirs, load_config, setup_logger
+from core.utils import ensure_dirs, load_config, setup_logger, write_json_state
 
 _shutdown = False
 
@@ -35,10 +38,21 @@ BANNER = r"""
 """
 
 
-def _print_banner(version: str, dashboard_url: str | None) -> None:
+def _print_banner(
+    version: str,
+    dashboard_url: str | None,
+    mode: dict | None = None,
+    remote: dict | None = None,
+) -> None:
     print(BANNER)
     print(f"  MT5 QUANT OS v{version}")
     print("  ─────────────────────────────────────────")
+    if mode:
+        label = mode.get("label", "practice")
+        tag = {"practice": "PRACTICE", "growth": "GROWTH"}.get(label, "LIVE PLAN")
+        print(f"  Mode: {tag} ({mode.get('account_mode', 'demo')} account)")
+        print(f"  {mode.get('detail', '')}")
+        print("  ─────────────────────────────────────────")
     services = [
         ("MT5 Connection", "pending"),
         ("Dashboard", dashboard_url or "starting…"),
@@ -49,6 +63,11 @@ def _print_banner(version: str, dashboard_url: str | None) -> None:
     ]
     for label, status in services:
         print(f"  ✓ {label:<22} {status}")
+    if remote and remote.get("tailscale_connected"):
+        print("  ─────────────────────────────────────────")
+        print("  Phone (Tailscale)")
+        print(f"  Dashboard  {remote['dashboard_url']}")
+        print(f"  MT5 / RDP  {remote['rdp_target']}  (Microsoft Remote Desktop app)")
     print("  ─────────────────────────────────────────")
     print("  Listening…  (Ctrl+C to stop)\n")
 
@@ -65,11 +84,30 @@ def _start_dashboard(config: dict, logger) -> str | None:
 
     host = dash_cfg.get("host", "127.0.0.1")
     port = int(dash_cfg.get("port", 8080))
-    url = f"http://{host}:{port}"
+    bind = "0.0.0.0" if host in ("0.0.0.0", "::") else host
+    url = f"http://127.0.0.1:{port}" if bind == "0.0.0.0" else f"http://{host}:{port}"
 
     def _serve() -> None:
         from dashboard.server import run
-        run(host=host, port=port)
+        run(host=bind, port=port)
+
+    # Guard duplicate launch: if the port is already bound, another start.py /
+    # dashboard is already serving -- log and skip instead of raising OSError
+    # inside the daemon thread (which dies silently and leaves no dashboard).
+    import socket
+    _probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Match HTTPServer.allow_reuse_address=True: without SO_REUSEADDR a stale
+    # TIME_WAIT from a crashed dashboard would make this bind-only probe report
+    # "port in use" even though the real server (which sets allow_reuse_address)
+    # could have bound -- a false negative that silently kills the dashboard.
+    _probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        _probe.bind((bind, port))
+    except OSError:
+        logger.warning("Dashboard port %s already in use -- not launching a second one.", port)
+        return url
+    finally:
+        _probe.close()
 
     threading.Thread(target=_serve, name="dashboard", daemon=True).start()
     time.sleep(0.5)
@@ -96,8 +134,22 @@ def start(once: bool = False) -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
+    mode = runtime_mode_summary(config)
+    write_json_state("runtime_mode.json", mode)
+    logger.info("Runtime mode: %s — %s", mode["label"], mode["detail"])
+    if not performance_gates_active(config):
+        session_report = ensure_practice_session(config, logger, force_rebaseline=True)
+        if session_report.get("kill_switch_cleared") or session_report.get("rebaseline"):
+            logger.info("Practice session ready: %s", session_report)
+
+    dash_port = int(config.get("app", {}).get("dashboard", {}).get("port", 8080))
+    remote = remote_access_info(dash_port)
+    write_json_state("remote_access.json", remote)
+
     dashboard_url = _start_dashboard(config, logger)
-    _print_banner(app_cfg.get("version", "1.0"), dashboard_url)
+    if remote.get("tailscale_connected"):
+        dashboard_url = remote["dashboard_url"]
+    _print_banner(app_cfg.get("version", "1.0"), dashboard_url, mode, remote)
 
     supervisor = Supervisor(config, logger)
 

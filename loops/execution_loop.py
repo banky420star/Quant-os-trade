@@ -72,6 +72,18 @@ def _check_execution_allowed(config: dict, logger) -> bool:
     if risk.get("kill_switch"):
         logger.error("Execution blocked — risk_state kill switch active")
         return False
+    # live_trading_enabled is the hard guard for the MT5 (real-order) path. When
+    # false, MT5 execution is refused outright even on a demo account -- the flag
+    # means what its name says, and the dashboard's "blocked" status must be true.
+    # Paper mode is unaffected (paper is simulated, fine for research).
+    exec_cfg = config.get("execution", {})
+    mode = exec_cfg.get("mode", "paper")
+    if mode == "mt5" and not exec_cfg.get("live_trading_enabled", False):
+        logger.error(
+            "Execution blocked — live_trading_enabled is false (paper/research mode "
+            "only). Set execution.live_trading_enabled: true to allow MT5 orders."
+        )
+        return False
     return True
 
 

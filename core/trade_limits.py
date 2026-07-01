@@ -15,6 +15,32 @@ def unlimited_trades(config: dict[str, Any]) -> bool:
     return bool(config.get("risk", {}).get("unlimited_trades", False))
 
 
+def _max_open_confidence_from_positions(
+    active_positions: list[dict[str, Any]] | None,
+) -> float | None:
+    """Strongest confidence among open positions, read from the broker's
+    state/position_confidence.json sidecar (keyed by MT5 ticket). None when no
+    open position has a recorded confidence."""
+    if not active_positions:
+        return None
+    cmap = read_json_state("position_confidence.json", default={}) or {}
+    best: float | None = None
+    for p in active_positions:
+        t = p.get("ticket")
+        if t is None:
+            continue
+        c = cmap.get(str(t))
+        if c is None:
+            continue
+        try:
+            cf = float(c)
+        except (TypeError, ValueError):
+            continue
+        if best is None or cf > best:
+            best = cf
+    return best
+
+
 def allow_pyramiding(config: dict[str, Any]) -> bool:
     """When true, stack positions from different signals (same symbol/side allowed)."""
     return bool(config.get("trading", {}).get("allow_pyramiding", False))
@@ -225,11 +251,45 @@ def humanize_verifier_failure(
         )
     if check_name == "no_duplicate":
         return f"Duplicate blocked — same {symbol} {signal.get('side')} setup already open"
+    if check_name == "confidence_floor":
+        open_conf = _max_open_confidence_from_positions(active_positions)
+        sig_conf = signal.get("confidence")
+        return (
+            f"Confidence floor — new {symbol} {signal.get('side')} at {sig_conf}% is below "
+            f"an open position at {open_conf}% (need stronger-or-equal confidence)"
+        )
     if check_name == "exposure_limit_exceeded":
         cap = config.get("risk", {}).get("max_symbol_exposure_usd", 100)
         return f"Exposure limit — not enough room for {symbol} on ${cap} cap"
     if check_name == "kill_switch_safe":
         return "Kill switch is ON — trading paused"
+    if check_name == "risk_reward_safe":
+        entry = float(signal.get("entry") or 0)
+        sl = float(signal.get("sl") or 0)
+        tp1 = float(signal.get("tp1") or 0)
+        risk = abs(entry - sl)
+        reward = abs(tp1 - entry)
+        rr = (reward / risk) if risk > 0 else 0.0
+        need = float(config.get("signals", {}).get("min_risk_reward", 1.2))
+        return (
+            f"Risk/reward too low — {rr:.2f}:1 (need {need:.1f}:1). "
+            f"Confidence {signal.get('confidence', '?')}% is fine; widen TP or tighten SL."
+        )
+    if check_name == "regime_allowed":
+        regime = (signal.get("market_context") or {}).get("market_regime") or {}
+        return f"Regime skipped — {regime.get('primary', '?')} is untradeable under this strategy"
+    if check_name == "regime_bias_aligned":
+        regime = (signal.get("market_context") or {}).get("market_regime") or {}
+        return (
+            f"Regime bias mismatch — {regime.get('primary', '?')} is {regime.get('bias', '?')} "
+            f"but signal is {signal.get('side', '?')}; only aligned trades taken in trend regimes"
+        )
+    if check_name == "win_condition_match":
+        return (
+            f"Win-condition gate — {signal.get('setup_type', '?')} @ "
+            f"{(signal.get('market_context') or {}).get('market_regime', {}).get('primary', '?')} "
+            f"did not match any condition cell that historically won for this setup; skipped"
+        )
     return check_name.replace("_", " ")
 
 

@@ -120,9 +120,10 @@ class Supervisor:
         now = utc_now_iso()
         for loop_name, status in results.items():
             prev = self._loop_states.get(loop_name, {})
+            ok = status in ("OK", "complete")
             self._loop_states[loop_name] = {
                 "name": loop_name,
-                "status": "ok" if status == "OK" else "error",
+                "status": "ok" if ok else "error",
                 "last_run": now,
                 "last_result": status,
                 "run_count": prev.get("run_count", 0) + 1,

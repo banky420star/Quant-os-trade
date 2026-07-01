@@ -9,6 +9,7 @@ from typing import Any
 from core.consensus_gates import ConsensusGates
 from core.evidence_engine import EvidenceEngine
 from core.explain_report import build_explain_report
+from core.entry_narrative import build_entry_narrative
 from core.setup_classifier import SetupClassifier
 from core.strategy_ranker import StrategyRanker
 from core.strategy_entry import pin_strategy_entry, strategy_entries_enabled
@@ -197,6 +198,19 @@ class DecisionEngine:
             reasons.append(entry_meta["entry_reason"])
         regime = ctx.get("market_regime", {})
 
+        market_context = {
+            "regime": ctx.get("regime"),
+            "phase": ctx.get("phase"),
+            "move_type": ctx.get("move_type"),
+            "market_intent": ctx.get("market_intent"),
+            "session": ctx.get("session"),
+            "market_regime": regime,
+        }
+        # Plain-English entry reason, composed only from indicators the
+        # FeatureEngine actually computes on this entry bar. Surfaces reason
+        # + (later) profitability per trade, per the user's request.
+        entry_narrative = build_entry_narrative(setup_type, side, feat, market_context)
+
         return {
             "signal_id": str(uuid.uuid4()),
             "symbol": symbol,
@@ -211,19 +225,13 @@ class DecisionEngine:
             "entry_anchor": entry_meta.get("entry_anchor"),
             "entry_anchor_price": entry_meta.get("entry_anchor_price"),
             "entry_reason": entry_meta.get("entry_reason"),
+            "entry_narrative": entry_narrative,
             "market_price": entry_meta.get("market_price", feat.get("price")),
             "distance_atr": entry_meta.get("distance_atr"),
             "confidence": confidence,
             "confidence_tree": votes,
             "evidence": ev,
-            "market_context": {
-                "regime": ctx.get("regime"),
-                "phase": ctx.get("phase"),
-                "move_type": ctx.get("move_type"),
-                "market_intent": ctx.get("market_intent"),
-                "session": ctx.get("session"),
-                "market_regime": regime,
-            },
+            "market_context": market_context,
             "reason": setup["reason"],
             "reasons": reasons,
             "created_at": utc_now_iso(),

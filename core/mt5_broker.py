@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
@@ -67,6 +68,62 @@ class MT5Broker:
                 self.logger.info("Skip %s — signal already executed", sid)
                 continue
 
+            # --- Regime-flip trade replacement (USER-AUTHORIZED 2026-06-30) ---
+            # When M15 trend AND market_regime bias both flipped (bullish<->bearish)
+            # vs the prior tick, and this signal has high confidence (>=
+            # regime_flip_min_confidence) in the OPPOSITE direction to an OPEN
+            # position that is currently LOSING (profit < 0), close that losing
+            # position and let this signal replace it. Cuts losers on a confirmed
+            # turn; never touches a winning runner. See state/regime_history.json.
+            flip_cfg = self.config.get("trading", {}) or {}
+            if bool(flip_cfg.get("regime_flip_replace_enabled", False)):
+                flip = self._detect_regime_flip(signal["symbol"], flip_cfg)
+                if flip is not None:
+                    min_conf = float(flip_cfg.get("regime_flip_min_confidence", 75))
+                    if float(signal.get("confidence", 0) or 0) >= min_conf:
+                        loser = self._find_losing_opposite(
+                            open_positions, signal["symbol"], signal["side"]
+                        )
+                        if loser is not None:
+                            self.logger.info(
+                                "REGIME-FLIP REPLACE: closing losing %s %s #%s "
+                                "profit=%.2f to replace with %s %s conf=%s",
+                                loser["symbol"], loser["side"], loser["ticket"],
+                                float(loser.get("profit", 0) or 0),
+                                signal["symbol"], signal["side"],
+                                signal.get("confidence"),
+                            )
+                            cr = self.close_position(
+                                loser["ticket"], loser["symbol"],
+                                loser["side"], loser["size"],
+                            )
+                            if cr.get("success"):
+                                # Free the slot locally so the skip-chain + sizing
+                                # below see the freed capacity (the MT5 close is
+                                # async; the sync at the end of the loop re-reads).
+                                open_positions = [
+                                    p for p in open_positions
+                                    if p.get("ticket") != loser["ticket"]
+                                ]
+                                self.logger.info(
+                                    "REGIME-FLIP REPLACE: closed #%s -> placing "
+                                    "replacement %s %s",
+                                    loser["ticket"], signal["symbol"], signal["side"],
+                                )
+                            else:
+                                self.logger.error(
+                                    "REGIME-FLIP REPLACE: close #%s failed: %s "
+                                    "-> skip replacement",
+                                    loser["ticket"], cr.get("error"),
+                                )
+                                continue
+                    else:
+                        self.logger.info(
+                            "REGIME-FLIP REPLACE: flip on %s but conf %s < %s -> "
+                            "no replace",
+                            signal["symbol"], signal.get("confidence"), min_conf,
+                        )
+
             if not symbol_capacity_available(self.config, signal["symbol"], open_positions):
                 self.logger.info(
                     "Skip %s — max open positions per symbol reached",
@@ -101,6 +158,7 @@ class MT5Broker:
 
             if result.get("success"):
                 placed.append(order_record)
+                self._record_open_confidence(result.get("ticket"), signal.get("confidence"))
                 self.logger.info(
                     "MT5 order placed: %s %s lot=%s ticket=%s",
                     signal["symbol"],
@@ -118,6 +176,7 @@ class MT5Broker:
                 )
 
         positions = enrich_positions_with_orders(self._sync_positions(), orders)
+        self._prune_open_confidence(positions)
         balance = self._account_balance(account)
         tracker = TradeTracker(self.logger)
         trades, new_closed = tracker.sync_mt5_closed_deals(trades, self.magic)
@@ -309,9 +368,19 @@ class MT5Broker:
             self.config,
             min_size=vmin,
         )
-        if not allowed:
+        if not allowed or capped <= 0:
             return 0.0
-        vol = max(capped, vmin)
+        vol = capped
+        if vol < vmin:
+            from core.exposure import position_notional
+
+            risk_cfg = self.config.get("risk", {})
+            max_symbol = float(risk_cfg.get("max_symbol_exposure_usd", equity))
+            max_total = float(risk_cfg.get("max_total_exposure_usd", equity))
+            vmin_notional = position_notional(entry, vmin)
+            if vmin_notional > max_symbol + 0.01 or vmin_notional > max_total + 0.01:
+                return 0.0
+            vol = vmin
         layer = int(signal.get("pyramid_layer", pyramid_layer_index(signal, open_positions)))
         vol = scale_lot_for_layer(self.config, signal["symbol"], vol, layer)
         return self._normalize_volume(vol, info)
@@ -356,6 +425,120 @@ class MT5Broker:
                 "comment": pos.comment,
             })
         return synced
+
+    def _record_open_confidence(self, ticket: Any, confidence: Any) -> None:
+        """Persist {ticket: confidence} for the confidence-floor verifier gate.
+
+        MT5 positions don't carry a confidence field, so we keep a sidecar map in
+        state/position_confidence.json. On each fill we add the new ticket, then
+        prune to currently-open tickets so closed positions can't inflate the floor.
+        """
+        if ticket is None or confidence is None:
+            return
+        try:
+            cf = float(confidence)
+        except (TypeError, ValueError):
+            return
+        cmap = read_json_state("position_confidence.json", default={}) or {}
+        cmap[str(ticket)] = cf
+        write_json_state("position_confidence.json", cmap)
+
+    def _prune_open_confidence(self, open_positions: list[dict[str, Any]]) -> None:
+        """Drop closed-position tickets from the confidence sidecar."""
+        cmap = read_json_state("position_confidence.json", default={}) or {}
+        if not cmap:
+            return
+        open_tickets = {str(p.get("ticket")) for p in open_positions if p.get("ticket") is not None}
+        pruned = {t: v for t, v in cmap.items() if t in open_tickets}
+        if len(pruned) != len(cmap):
+            write_json_state("position_confidence.json", pruned)
+
+    # --- Regime-flip trade replacement helpers (USER-AUTHORIZED 2026-06-30) ---
+
+    def _detect_regime_flip(self, symbol: str, flip_cfg: dict[str, Any]) -> dict | None:
+        """Return the latest flip record for `symbol` if it is fresh enough to
+        act on, else None. Fresh = flip.at within regime_flip_window_sec.
+        """
+        rh = read_json_state("regime_history.json", default={}) or {}
+        flip = (rh.get("flips") or {}).get(symbol)
+        if not flip or not flip.get("at"):
+            return None
+        at = flip["at"]
+        try:
+            t = datetime.fromisoformat(at.replace("Z", "+00:00")) if at.endswith("Z") \
+                else datetime.fromisoformat(at)
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - t).total_seconds()
+        except (ValueError, TypeError):
+            return None
+        if age < 0:
+            return None
+        window = float(flip_cfg.get("regime_flip_window_sec", 90))
+        return flip if age <= window else None
+
+    @staticmethod
+    def _find_losing_opposite(
+        open_positions: list[dict[str, Any]], symbol: str, side: str
+    ) -> dict[str, Any] | None:
+        """First OPEN position on `symbol` with the OPPOSITE side to `side`
+        that is currently LOSING (unrealized profit < 0)."""
+        opp = "SELL" if side == "BUY" else "BUY"
+        for p in open_positions:
+            if (
+                p.get("symbol") == symbol
+                and p.get("side") == opp
+                and float(p.get("profit", 0) or 0) < 0.0
+            ):
+                return p
+        return None
+
+    def close_position(
+        self, ticket: int, symbol: str, side: str, volume: float,
+        reason: str = "regime_flip_replace",
+    ) -> dict[str, Any]:
+        """Close an open MT5 position via an opposite market deal.
+
+        BUY position -> SELL at bid; SELL position -> BUY at ask. `side` is the
+        position's CURRENT side. Mirrors the entry market-deal request but adds
+        `position`: ticket and uses the opposite order type.
+        """
+        if not mt5.symbol_select(symbol, True):
+            return {"success": False, "error": f"symbol_select failed: {mt5.last_error()}"}
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        if info is None or tick is None:
+            return {"success": False, "error": f"no symbol info: {mt5.last_error()}"}
+        if side == "BUY":
+            order_type = mt5.ORDER_TYPE_SELL
+            price = float(tick.bid)
+        else:
+            order_type = mt5.ORDER_TYPE_BUY
+            price = float(tick.ask)
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(volume),
+            "type": order_type,
+            "position": int(ticket),
+            "price": price,
+            "deviation": self.deviation,
+            "magic": self.magic,
+            "comment": f"qagent_{reason[:20]}",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": self._filling_mode(info),
+        }
+        self.logger.info("Closing position #%s %s %s vol=%s",
+                         ticket, symbol, side, volume)
+        result = mt5.order_send(request)
+        if result is None:
+            return {"success": False, "error": str(mt5.last_error())}
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            return {"success": False,
+                    "error": f"retcode={result.retcode} {result.comment}",
+                    "retcode": result.retcode}
+        return {"success": True, "ticket": result.order, "deal": result.deal,
+                "price": result.price}
 
     def _account_balance(self, account: Any) -> dict[str, float]:
         baseline = read_json_state("mt5_baseline.json", default={})

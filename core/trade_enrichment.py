@@ -74,6 +74,15 @@ def enrich_trade(
             enriched[key] = meta[key]
     if not enriched.get("setup_type") and meta.get("setup_type"):
         enriched["setup_type"] = meta["setup_type"]
+    # Carry the four plain-English narratives (entry/BE/trail/exit) onto the
+    # enriched record so the edge DB / evaluator reports show reason+profit
+    # together. entry_narrative lives on the signal meta; be/trail/exit are
+    # stamped by PaperBroker._check_exits directly on the trade dict.
+    if not enriched.get("entry_narrative") and meta.get("entry_narrative"):
+        enriched["entry_narrative"] = meta["entry_narrative"]
+    for key in ("be_narrative", "trail_narrative", "exit_narrative"):
+        if not enriched.get(key) and trade.get(key):
+            enriched[key] = trade[key]
     return enriched
 
 
