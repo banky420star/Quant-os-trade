@@ -32,7 +32,7 @@ PIPELINE_LOOP_ORDER = [
     "data_loop",
     "feature_loop",
     "market_context_loop",
-    "forward_test_loop",
+    "adaptation_loop",
     "risk_loop",
     "signal_loop",
     "verifier_loop",
@@ -405,7 +405,7 @@ def _culturing_section(ledger, policy) -> str:
     lines = [head]
     syms = pol.get("symbols", {}) if isinstance(pol.get("symbols"), dict) else {}
     if not cells_map and not syms:
-        lines.append(f"  {GREY}no cells yet — forward_test_loop hasn't recorded a cycle{R}")
+        lines.append(f"  {GREY}no cells yet — adaptation_loop hasn't recorded a cycle{R}")
         return "\n".join(lines)
     all_symbols = sorted(set(cells_map.keys()) | set(syms.keys()))
     for sym in all_symbols:

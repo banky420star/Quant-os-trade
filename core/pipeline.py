@@ -17,7 +17,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         data_loop,
         execution_loop,
         feature_loop,
-        forward_test_loop,
+        adaptation_loop,
         health_loop,
         market_context_loop,
         memory_loop,
@@ -31,7 +31,6 @@ def _init_loops() -> list[tuple[str, Any]]:
         ("data_loop", data_loop.run),
         ("feature_loop", feature_loop.run),
         ("market_context_loop", market_context_loop.run),
-        ("forward_test_loop", forward_test_loop.run),
         ("risk_loop", risk_loop.run),
         ("signal_loop", signal_loop.run),
         ("verifier_loop", verifier_loop.run),
@@ -39,6 +38,8 @@ def _init_loops() -> list[tuple[str, Any]]:
         ("blue_guardian_loop", blue_guardian_loop.run),
         ("position_manager_loop", position_manager_loop.run),
         ("memory_loop", memory_loop.run),
+        # Organic adaptation: culturing vetoes, BE/trail, edge shifts after new closes.
+        ("adaptation_loop", adaptation_loop.run),
         # USER feature request 2026-07-01: comprehensive per-trade log
         # (open/close times, win/loss, setup, drawdown, R-multiple, all fields).
         # Throttled -- rebuilds state/trade_log.json only when paper_trades.json
