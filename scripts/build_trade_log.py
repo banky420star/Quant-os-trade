@@ -57,7 +57,15 @@ except ImportError:
 from core.mt5_connection_manager import MT5ConnectionManager  # noqa: E402
 from core.position_sync import _setup_type_from_comment  # noqa: E402
 from core.symbol_manager import broker_symbol, logical_symbol  # noqa: E402
-from core.trade_journal import safe_journal_name, build_organized_index, enrich_trade_record  # noqa: E402
+from core.trade_journal import (  # noqa: E402
+    build_organized_index,
+    build_symbol_journal_payload,
+    enrich_trade_record,
+    group_trades_by_symbol,
+    safe_journal_name,
+    safe_symbol_name,
+    trade_detail_payload,
+)
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state  # noqa: E402
 
 
@@ -484,37 +492,50 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
         session_stats["avg_R"],
     )
 
-    organized = build_organized_index(out_trades)
+    configured_symbols = [
+        str(s) for s in (config.get("mt5", {}).get("symbols") or [])
+        if s
+    ]
+    organized = build_organized_index(out_trades, configured_symbols=configured_symbols)
+    sym_groups = group_trades_by_symbol(out_trades)
+    journal_symbols = 0
     journal_written = 0
-    for rec in out_trades:
-        tid = rec.get("trade_id")
-        if not tid:
-            continue
-        write_json_state(
-            f"trade_journal/{safe_journal_name(str(tid))}.json",
-            {
-                "trade_id": tid,
-                "updated_at": utc_now_iso(),
-                "summary": {k: rec.get(k) for k in (
-                    "symbol", "side", "setup", "result", "pnl", "r_multiple",
-                    "opened_at", "closed_at", "hold_human", "confidence",
-                )},
-                "conditions": rec.get("conditions"),
-                "record": rec,
-            },
-        )
-        journal_written += 1
-    log.info("Trade journal: %d per-trade detail files written", journal_written)
+    now = utc_now_iso()
+    for sym in organized.get("symbols") or sorted(sym_groups.keys()):
+        safe_sym = safe_symbol_name(sym)
+        sym_trades = sym_groups.get(sym, [])
+        sym_payload = build_symbol_journal_payload(sym, sym_trades)
+        sym_payload["updated_at"] = now
+        write_json_state(f"trade_journal/symbols/{safe_sym}.json", sym_payload)
+        journal_symbols += 1
+        for rec in sym_trades:
+            tid = rec.get("trade_id")
+            if not tid:
+                continue
+            body = trade_detail_payload(rec)
+            body["updated_at"] = now
+            safe_tid = safe_journal_name(str(tid))
+            write_json_state(f"trade_journal/symbols/{safe_sym}/{safe_tid}.json", body)
+            # Flat path kept for backward-compatible API lookups.
+            write_json_state(f"trade_journal/{safe_tid}.json", body)
+            journal_written += 1
+    log.info(
+        "Trade journal: %d symbols, %d per-trade detail files",
+        journal_symbols,
+        journal_written,
+    )
 
     return {
         "updated_at": utc_now_iso(),
-        "schema_version": 2,
+        "schema_version": 3,
         **all_stats,
         "opened_at_known": n_open,
         "drawdown_known": n_dd,
         "kelly": _kelly_summary(session_list or out_trades),
         "organized": organized,
         "journal_files": journal_written,
+        "journal_symbols": journal_symbols,
+        "symbols": organized.get("symbols") or [],
         "session": {
             "login": baseline.get("login"),
             "since": baseline.get("set_at"),

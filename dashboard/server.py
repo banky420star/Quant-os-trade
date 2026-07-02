@@ -817,13 +817,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(read_json_state(filename, default={}))
             else:
                 self.send_error(404)
-        elif path.startswith("/api/trade_journal/"):
-            trade_id = path.split("/api/trade_journal/", 1)[-1].strip("/")
-            safe = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in trade_id)
-            if not safe or safe in (".", ".."):
+        elif path.startswith("/api/trade_journal/symbol/"):
+            symbol = path.split("/api/trade_journal/symbol/", 1)[-1].strip("/")
+            safe_sym = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in symbol)
+            if not safe_sym or safe_sym in (".", ".."):
                 self.send_error(404)
                 return
-            data = read_json_state(f"trade_journal/{safe}.json", default={})
+            data = read_json_state(f"trade_journal/symbols/{safe_sym}.json", default={})
+            if not data:
+                self.send_error(404)
+                return
+            self._send_json(data)
+        elif path.startswith("/api/trade_journal/"):
+            rest = path.split("/api/trade_journal/", 1)[-1].strip("/")
+            parts = [p for p in rest.split("/") if p]
+            if len(parts) == 2:
+                safe_sym = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in parts[0])
+                safe_tid = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in parts[1])
+                if not safe_sym or not safe_tid or safe_sym in (".", "..") or safe_tid in (".", ".."):
+                    self.send_error(404)
+                    return
+                data = read_json_state(f"trade_journal/symbols/{safe_sym}/{safe_tid}.json", default={})
+            else:
+                safe_tid = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in parts[0] if parts)
+                if not safe_tid or safe_tid in (".", ".."):
+                    self.send_error(404)
+                    return
+                data = read_json_state(f"trade_journal/{safe_tid}.json", default={})
             if not data:
                 self.send_error(404)
                 return

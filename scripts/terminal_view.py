@@ -496,19 +496,44 @@ def _trade_log_section(tlog) -> str:
             f"{GREY}opened={tl.get('opened_at_known','—')} dd={tl.get('drawdown_known','—')}{R}")
     lines = [head]
     org = tl.get("organized") if isinstance(tl.get("organized"), dict) else {}
+    per_sym = org.get("per_symbol") if isinstance(org.get("per_symbol"), dict) else {}
     by_sym = org.get("by_symbol") if isinstance(org.get("by_symbol"), dict) else {}
-    if by_sym:
-        org_bits = []
-        for sym, st in sorted(by_sym.items(), key=lambda x: (-(x[1].get("n") or 0), x[0]))[:6]:
-            org_bits.append(f"{sym} {st.get('n',0)}t {st.get('win_rate_pct',0)}%")
-        lines.append(f"  {GREY}by symbol:{R} {DIM}{' · '.join(org_bits)}{R}")
     trades = list(tl.get("session_trades") or tl.get("trades") or [])
     trades = [t for t in trades if not t.get("archive_polluted")]
     trades.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
     if not trades:
         return head
-    lines.append(f"  {GREY}recent closed trades (most recent first):{R}")
-    for t in trades[:10]:
+    lines.append(f"  {GREY}per-symbol (each treated individually):{R}")
+    sym_order = list(org.get("symbols") or []) or sorted(per_sym.keys() or by_sym.keys())
+    for sym in sym_order[:13]:
+        ps = per_sym.get(sym) if isinstance(per_sym.get(sym), dict) else {}
+        sm = ps.get("summary") or by_sym.get(sym) or {}
+        n = int(sm.get("n") or 0)
+        if not n:
+            continue
+        wr = sm.get("win_rate_pct", 0)
+        spnl = float(sm.get("total_pnl") or 0)
+        spnl_c = GREEN if spnl >= 0 else RED
+        latest = None
+        for t in trades:
+            if t.get("symbol") == sym:
+                latest = t
+                break
+        lat_s = ""
+        if latest:
+            res = str(latest.get("result") or "—")
+            rc = GREEN if res == "win" else RED
+            lat_s = (
+                f"  {GREY}latest{R} {rc}{res}{R} "
+                f"{spnl_c}${float(latest.get('pnl') or 0):+.2f}{R} "
+                f"{DIM}{str(latest.get('setup') or '—')[:12]}{R}"
+            )
+        lines.append(
+            f"  {B}{str(sym)[:10]:<10}{R} "
+            f"{GREY}{n}t {wr}% ${spnl:+.2f}{R}{lat_s}"
+        )
+    lines.append(f"  {GREY}recent closed (all symbols):{R}")
+    for t in trades[:8]:
         sym = str(t.get("symbol") or "—")[:9]
         side = str(t.get("side") or "—")
         side_col = GREEN if side == "BUY" else RED

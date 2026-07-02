@@ -875,7 +875,12 @@
               <button class="nav-item" id="tlPrev" onclick="tlPage(-1)">◀ Prev</button>
               <span id="tlPageInfo" style="font-size:12px;color:var(--muted)"></span>
               <button class="nav-item" id="tlNext" onclick="tlPage(1)">Next ▶</button>
-              <label style="font-size:12px;color:var(--muted);margin-left:8px">filter
+              <label style="font-size:12px;color:var(--muted);margin-left:8px">symbol
+                <select id="tlSymbol" onchange="tlRender()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:2px 6px">
+                  <option value="">all symbols</option>
+                </select>
+              </label>
+              <label style="font-size:12px;color:var(--muted);margin-left:8px">result
                 <select id="tlFilter" onchange="tlRender()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:2px 6px">
                   <option value="">all</option>
                   <option value="win">wins</option>
@@ -2022,6 +2027,7 @@
         if (el) el.innerHTML = '<tr><td colspan="20"><p class="empty">loading trade log…</p></td></tr>';
         tradeLogData = await fetchJson("/api/state/trade_log.json");
         tlPageIdx = 0;
+        tlPopulateSymbols();
         tlRender();
       } catch (err) {
         const el = document.getElementById("tradeLogBody");
@@ -2031,9 +2037,23 @@
 
     function tlFiltered() {
       const f = (document.getElementById("tlFilter")||{}).value || "";
-      const rows = (tradeLogData && tradeLogData.trades) || [];
-      if (!f) return rows;
-      return rows.filter(t => t.result === f);
+      const sym = (document.getElementById("tlSymbol")||{}).value || "";
+      let rows = (tradeLogData && tradeLogData.trades) || [];
+      if (sym) rows = rows.filter(t => t.symbol === sym);
+      if (f) rows = rows.filter(t => t.result === f);
+      return rows;
+    }
+
+    function tlPopulateSymbols() {
+      const sel = document.getElementById("tlSymbol");
+      if (!sel || !tradeLogData) return;
+      const cur = sel.value;
+      const syms = (tradeLogData.symbols || (tradeLogData.organized && tradeLogData.organized.symbols) || []);
+      const fromTrades = [...new Set((tradeLogData.trades || []).map(t => t.symbol).filter(Boolean))];
+      const all = [...new Set([...syms, ...fromTrades])].sort();
+      sel.innerHTML = '<option value="">all symbols</option>' +
+        all.map(s => `<option value="${s}">${s}</option>`).join("");
+      if (cur && all.includes(cur)) sel.value = cur;
     }
 
     function tlPage(delta) {
@@ -2068,12 +2088,22 @@
         <span>Kelly sized-up <strong style="color:var(--green)">${(s.kelly&&s.kelly.sized_trades)||0}</strong> / fallback <strong style="color:var(--muted)">${(s.kelly&&s.kelly.fallback_trades)||0}</strong></span>
         <span>opened_at known <strong style="color:var(--text)">${s.opened_at_known||0}</strong></span>
         <span>drawdown known <strong style="color:var(--text)">${s.drawdown_known||0}</strong></span>
+        <span>symbols <strong style="color:var(--text)">${(s.journal_symbols||s.symbols||[]).length||(s.organized&&s.organized.symbols||[]).length||0}</strong></span>
         <span>journal files <strong style="color:var(--text)">${s.journal_files||0}</strong></span>`;
       const org = document.getElementById("tradeLogOrganized");
-      if (org && s.organized && s.organized.by_symbol) {
-        const symRows = Object.entries(s.organized.by_symbol).slice(0, 8).map(([k,v]) =>
-          `${k}: ${v.n} trades · ${v.win_rate_pct}% · $${fmt(v.total_pnl,2)}`).join(" · ");
-        org.textContent = "by symbol — " + (symRows || "—");
+      const symSel = (document.getElementById("tlSymbol")||{}).value || "";
+      if (org && s.organized) {
+        if (symSel && s.organized.per_symbol && s.organized.per_symbol[symSel]) {
+          const ps = s.organized.per_symbol[symSel];
+          const sm = ps.summary || {};
+          const setups = Object.entries((ps.organized||{}).by_setup||{}).slice(0,4)
+            .map(([k,v]) => `${k} ${v.n}t`).join(" · ");
+          org.textContent = `${symSel} only — ${sm.n||0} trades · ${sm.win_rate_pct||0}% · $${fmt(sm.total_pnl,2)} · setups: ${setups||"—"}`;
+        } else if (s.organized.by_symbol) {
+          const symRows = Object.entries(s.organized.by_symbol).slice(0, 10).map(([k,v]) =>
+            `${k}: ${v.n}t ${v.win_rate_pct}% $${fmt(v.total_pnl,2)}`).join(" · ");
+          org.textContent = "each symbol individual — " + (symRows || "—");
+        }
       }
       const cols = ["#","opened","closed","hold","symbol","side","setup","regime","bias","session","conf","score","rank","size","entry","exit","SL","TP","result","PnL","R","MAE(R)","MFE(R)","Kelly","exit","detail"];
       const head = document.getElementById("tradeLogHead");
@@ -2132,11 +2162,16 @@
       el.style.display = "block";
       el.textContent = "loading…";
       try {
-        const data = await fetchJson("/api/trade_journal/" + encodeURIComponent(tradeId));
+        const row = ((tradeLogData && tradeLogData.trades) || []).find(t => t.trade_id === tradeId);
+        const sym = row && row.symbol;
+        const url = sym
+          ? ("/api/trade_journal/" + encodeURIComponent(sym) + "/" + encodeURIComponent(tradeId))
+          : ("/api/trade_journal/" + encodeURIComponent(tradeId));
+        const data = await fetchJson(url);
         el.textContent = JSON.stringify(data.conditions || data, null, 2);
       } catch (err) {
-        const row = ((tradeLogData && tradeLogData.trades) || []).find(t => t.trade_id === tradeId);
-        el.textContent = row ? JSON.stringify(row.conditions || row, null, 2) : ("failed: " + (err.message||err));
+        const fallback = ((tradeLogData && tradeLogData.trades) || []).find(t => t.trade_id === tradeId);
+        el.textContent = fallback ? JSON.stringify(fallback.conditions || fallback, null, 2) : ("failed: " + (err.message||err));
       }
     }
 

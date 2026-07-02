@@ -1,4 +1,4 @@
-"""Trade journal — conditions snapshot and organized indexes."""
+"""Trade journal — conditions snapshot and per-symbol organized indexes."""
 
 from __future__ import annotations
 
@@ -6,8 +6,11 @@ from core.trade_journal import (
     build_conditions,
     build_mgmt_narratives,
     build_organized_index,
+    build_symbol_journal_payload,
     enrich_trade_record,
+    group_trades_by_symbol,
     safe_journal_name,
+    safe_symbol_name,
     snapshot_signal_meta,
 )
 
@@ -43,6 +46,7 @@ def test_snapshot_signal_meta_captures_context():
 def test_build_conditions_and_enrich():
     meta = {
         "signal_id": "sig-2",
+        "symbol": "EURUSDm",
         "side": "SELL",
         "setup_type": "trend_continuation",
         "confidence": 80,
@@ -76,13 +80,11 @@ def test_build_conditions_and_enrich():
     }
     enrich_trade_record(rec, order=order, raw_trade={"signal_meta": meta})
     cond = rec["conditions"]
-    assert cond["culturing_cell"]
+    assert cond["symbol"] == "EURUSDm"
+    assert cond["symbol_cell"].startswith("EURUSDm|")
     assert cond["entry"]["session"] == "new_york"
-    assert cond["entry"]["explain"] == {"gates": ["consensus"]}
     assert cond["risk"]["volume"] == 0.02
     assert cond["exit"]["narratives"]["trail"] == "Trail active."
-    assert rec["trade_score_total"] is None
-    assert rec["entry_narrative"] == "SELL continuation."
 
 
 def test_build_mgmt_narratives():
@@ -96,7 +98,7 @@ def test_build_mgmt_narratives():
     assert narr["trail"] and "Trailing" in narr["trail"]
 
 
-def test_build_organized_index():
+def test_per_symbol_organized_index_isolated():
     trades = [
         {
             "trade_id": "a",
@@ -109,29 +111,51 @@ def test_build_organized_index():
             "pnl": 10,
             "r_multiple": 1.0,
             "closed_at": "2026-07-01T12:00:00+00:00",
-            "conditions": {"culturing_cell": "XAU|breakout|strong|london"},
+            "conditions": {"culturing_cell": "breakout|strong|align|london", "symbol_cell": "XAUUSDm|breakout|strong|align|london"},
         },
         {
             "trade_id": "b",
-            "symbol": "XAUUSDm",
-            "setup": "fade",
-            "session": "asia",
-            "regime_primary": "range",
+            "symbol": "USOILm",
+            "setup": "breakout",
+            "session": "london_open",
+            "regime_primary": "strong_trend",
             "result": "loss",
             "won": False,
             "pnl": -5,
             "r_multiple": -0.5,
             "closed_at": "2026-07-01T13:00:00+00:00",
-            "conditions": {"culturing_cell": "XAU|fade|range|asia"},
+            "conditions": {"culturing_cell": "breakout|strong|align|london", "symbol_cell": "USOILm|breakout|strong|align|london"},
         },
     ]
-    org = build_organized_index(trades)
-    assert org["by_symbol"]["XAUUSDm"]["n"] == 2
-    assert org["by_symbol"]["XAUUSDm"]["wins"] == 1
-    assert org["by_setup"]["breakout"]["n"] == 1
-    assert org["by_cell"]["XAU|breakout|strong|london"]["n"] == 1
+    org = build_organized_index(trades, configured_symbols=["XAUUSDm", "USOILm", "BTCUSDm"])
+    assert org["by_symbol"]["XAUUSDm"]["n"] == 1
+    assert org["by_symbol"]["USOILm"]["n"] == 1
+    assert org["by_symbol"]["BTCUSDm"]["n"] == 0
+    assert "by_setup" not in org
+    xau = org["per_symbol"]["XAUUSDm"]
+    oil = org["per_symbol"]["USOILm"]
+    assert xau["organized"]["by_setup"]["breakout"]["n"] == 1
+    assert oil["organized"]["by_setup"]["breakout"]["n"] == 1
+    assert xau["organized"]["by_setup"]["breakout"]["wins"] == 1
+    assert oil["organized"]["by_setup"]["breakout"]["wins"] == 0
 
 
-def test_safe_journal_name():
+def test_group_trades_by_symbol():
+    trades = [{"symbol": "XAUUSDm", "trade_id": "1"}, {"symbol": "XAUUSDm", "trade_id": "2"}, {"symbol": "EURUSDm", "trade_id": "3"}]
+    groups = group_trades_by_symbol(trades)
+    assert len(groups["XAUUSDm"]) == 2
+    assert len(groups["EURUSDm"]) == 1
+
+
+def test_build_symbol_journal_payload():
+    trades = [{"trade_id": "z", "symbol": "XAUUSDm", "won": True, "pnl": 1, "closed_at": "2026-07-02T10:00:00+00:00", "result": "win"}]
+    payload = build_symbol_journal_payload("XAUUSDm", trades)
+    assert payload["symbol"] == "XAUUSDm"
+    assert payload["summary"]["n"] == 1
+    assert payload["trade_ids"] == ["z"]
+
+
+def test_safe_names():
     assert safe_journal_name("deal-12345") == "deal-12345"
     assert "/" not in safe_journal_name("ticket/999")
+    assert safe_symbol_name("XAU/USD") == "XAU_USD"

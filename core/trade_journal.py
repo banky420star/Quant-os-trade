@@ -63,6 +63,12 @@ def safe_journal_name(trade_id: str | None) -> str:
     return re.sub(r"[^\w\-.]", "_", raw)[:120]
 
 
+def safe_symbol_name(symbol: str | None) -> str:
+    """Filesystem-safe symbol for per-symbol journal paths."""
+    raw = str(symbol or "unknown")
+    return re.sub(r"[^\w\-.]", "_", raw)[:40]
+
+
 def build_mgmt_narratives(
     *,
     side: str,
@@ -118,9 +124,13 @@ def build_conditions(
     trail_narr = trade.get("trail_narrative") or meta.get("trail_narrative")
     exit_narr = trade.get("exit_narrative") or meta.get("exit_narrative")
 
+    symbol = trade.get("symbol") or meta.get("symbol")
+
     return {
+        "symbol": symbol,
         "signal_id": meta.get("signal_id") or trade.get("signal_id"),
         "culturing_cell": cell,
+        "symbol_cell": f"{symbol}|{cell}" if symbol else cell,
         "risk": {
             "volume": trade.get("volume"),
             "sl_initial": trade.get("sl_initial") or meta.get("sl"),
@@ -189,10 +199,37 @@ def build_conditions(
     }
 
 
-def build_organized_index(trades: list[dict[str, Any]]) -> dict[str, Any]:
-    """Roll-up stats grouped by symbol, setup, session, regime, culturing cell."""
+def _trade_row(t: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "trade_id": t.get("trade_id"),
+        "pnl": t.get("pnl"),
+        "r_multiple": t.get("r_multiple"),
+        "won": t.get("won"),
+        "closed_at": t.get("closed_at"),
+        "setup": t.get("setup") or t.get("setup_type"),
+        "session": t.get("session"),
+        "regime_primary": t.get("regime_primary"),
+    }
+
+
+def _summarize_rows(items: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(items)
+    wins = sum(1 for i in items if i.get("won"))
+    pnl = sum(float(i.get("pnl") or 0) for i in items)
+    rs = [float(i["r_multiple"]) for i in items if i.get("r_multiple") is not None]
+    return {
+        "n": n,
+        "wins": wins,
+        "losses": n - wins,
+        "win_rate_pct": round(100.0 * wins / max(n, 1), 1),
+        "total_pnl": round(pnl, 2),
+        "avg_R": round(sum(rs) / len(rs), 3) if rs else None,
+    }
+
+
+def _organize_within_symbol(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll-up stats for ONE symbol — setup/session/regime/cell never cross symbols."""
     buckets: dict[str, dict[str, list[dict]]] = {
-        "by_symbol": defaultdict(list),
         "by_setup": defaultdict(list),
         "by_session": defaultdict(list),
         "by_regime": defaultdict(list),
@@ -202,47 +239,93 @@ def build_organized_index(trades: list[dict[str, Any]]) -> dict[str, Any]:
     for t in trades:
         if t.get("archive_polluted"):
             continue
-        sym = str(t.get("symbol") or "unknown")
+        row = _trade_row(t)
         setup = str(t.get("setup") or t.get("setup_type") or "unknown")
         session = str(t.get("session") or "unknown")
         regime = str(t.get("regime_primary") or "unknown")
-        cell = (t.get("conditions") or {}).get("culturing_cell") or "unknown"
+        cell = (t.get("conditions") or {}).get("symbol_cell") or (t.get("conditions") or {}).get("culturing_cell") or "unknown"
         result = str(t.get("result") or "unknown")
-        row = {
-            "trade_id": t.get("trade_id"),
-            "pnl": t.get("pnl"),
-            "r_multiple": t.get("r_multiple"),
-            "won": t.get("won"),
-            "closed_at": t.get("closed_at"),
-        }
-        buckets["by_symbol"][sym].append(row)
         buckets["by_setup"][setup].append(row)
         buckets["by_session"][session].append(row)
         buckets["by_regime"][regime].append(row)
         buckets["by_cell"][cell].append(row)
         buckets["by_result"][result].append(row)
 
-    def _summarize(items: list[dict]) -> dict[str, Any]:
-        n = len(items)
-        wins = sum(1 for i in items if i.get("won"))
-        pnl = sum(float(i.get("pnl") or 0) for i in items)
-        rs = [float(i["r_multiple"]) for i in items if i.get("r_multiple") is not None]
-        return {
-            "n": n,
-            "wins": wins,
-            "losses": n - wins,
-            "win_rate_pct": round(100.0 * wins / max(n, 1), 1),
-            "total_pnl": round(pnl, 2),
-            "avg_R": round(sum(rs) / len(rs), 3) if rs else None,
-        }
-
     out: dict[str, Any] = {}
     for key, groups in buckets.items():
         out[key] = {
-            name: {**_summarize(rows), "trade_ids": [r["trade_id"] for r in rows[:50]]}
+            name: {**_summarize_rows(rows), "trade_ids": [r["trade_id"] for r in rows[:50]]}
             for name, rows in sorted(groups.items(), key=lambda x: (-len(x[1]), x[0]))
         }
     return out
+
+
+def group_trades_by_symbol(trades: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Partition closed trades by symbol (each symbol is its own universe)."""
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for t in trades:
+        if t.get("archive_polluted"):
+            continue
+        groups[str(t.get("symbol") or "unknown")].append(t)
+    return dict(groups)
+
+
+def build_symbol_journal_payload(symbol: str, trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Self-contained journal ledger for one symbol."""
+    clean = [t for t in trades if not t.get("archive_polluted")]
+    clean.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
+    return {
+        "symbol": symbol,
+        "summary": _summarize_rows(clean),
+        "organized": _organize_within_symbol(clean),
+        "trade_ids": [t.get("trade_id") for t in clean if t.get("trade_id")],
+        "recent_trades": clean[:20],
+    }
+
+
+def build_organized_index(
+    trades: list[dict[str, Any]],
+    *,
+    configured_symbols: list[str] | None = None,
+) -> dict[str, Any]:
+    """Per-symbol roll-ups — each symbol has its own setup/session/regime/cell stats.
+
+    Global cross-symbol buckets are intentionally omitted: every symbol is treated
+    as an individual pipeline (same pattern as culturing/<symbol>.json).
+    """
+    groups = group_trades_by_symbol(trades)
+    symbols = sorted(set(configured_symbols or []) | set(groups.keys()))
+    per_symbol: dict[str, Any] = {}
+    by_symbol: dict[str, Any] = {}
+
+    for sym in symbols:
+        sym_trades = groups.get(sym, [])
+        payload = build_symbol_journal_payload(sym, sym_trades)
+        per_symbol[sym] = payload
+        by_symbol[sym] = {
+            **payload["summary"],
+            "trade_ids": payload["trade_ids"][:50],
+        }
+
+    return {
+        "by_symbol": by_symbol,
+        "per_symbol": per_symbol,
+        "symbols": symbols,
+    }
+
+
+def trade_detail_payload(rec: dict[str, Any]) -> dict[str, Any]:
+    """Standard per-trade journal file body."""
+    return {
+        "trade_id": rec.get("trade_id"),
+        "symbol": rec.get("symbol"),
+        "summary": {k: rec.get(k) for k in (
+            "symbol", "side", "setup", "result", "pnl", "r_multiple",
+            "opened_at", "closed_at", "hold_human", "confidence",
+        )},
+        "conditions": rec.get("conditions"),
+        "record": rec,
+    }
 
 
 def enrich_trade_record(
