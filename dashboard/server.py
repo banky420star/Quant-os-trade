@@ -817,6 +817,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(read_json_state(filename, default={}))
             else:
                 self.send_error(404)
+        elif path.startswith("/api/trade_journal/"):
+            trade_id = path.split("/api/trade_journal/", 1)[-1].strip("/")
+            safe = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in trade_id)
+            if not safe or safe in (".", ".."):
+                self.send_error(404)
+                return
+            data = read_json_state(f"trade_journal/{safe}.json", default={})
+            if not data:
+                self.send_error(404)
+                return
+            self._send_json(data)
         elif path.startswith("/api/culturing/"):
             # Per-symbol culturing ledger drill-down (state/culturing/<sym>.json,
             # written by forward_test_loop). Symbol names are alphanumeric but

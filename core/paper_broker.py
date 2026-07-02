@@ -103,7 +103,9 @@ class PaperBroker:
                 orders.append(self._create_rejected_order(signal, price, "exposure_limit_exceeded"))
                 continue
 
-            order = self._create_order(signal, price)
+            from core.utils import read_json_state
+            sym_features = read_json_state("features.json", default={}).get("symbols", {}).get(symbol, {})
+            order = self._create_order(signal, price, features_at_entry=sym_features)
             orders.append(order)
 
             fill_price = float(signal.get("entry", price)) if order.get("type") == "limit" else price
@@ -143,25 +145,17 @@ class PaperBroker:
         }
 
     @staticmethod
-    def _signal_meta(signal: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "signal_id": signal.get("signal_id"),
-            "symbol": signal.get("symbol"),
-            "side": signal.get("side"),
-            "setup_type": signal.get("setup_type"),
-            "entry": signal.get("entry"),
-            "sl": signal.get("sl"),
-            "tp1": signal.get("tp1"),
-            "confidence": signal.get("confidence"),
-            "confidence_tree": signal.get("confidence_tree"),
-            "evidence": signal.get("evidence"),
-            "market_context": signal.get("market_context"),
-            "reason": signal.get("reason"),
-            "strategy_rank": signal.get("strategy_rank"),
-            "entry_narrative": signal.get("entry_narrative"),
-        }
+    def _signal_meta(signal: dict[str, Any], features_at_entry: dict[str, Any] | None = None) -> dict[str, Any]:
+        from core.trade_journal import snapshot_signal_meta
+        return snapshot_signal_meta(signal, features_at_entry=features_at_entry)
 
-    def _create_order(self, signal: dict[str, Any], price: float) -> dict[str, Any]:
+    def _create_order(
+        self,
+        signal: dict[str, Any],
+        price: float,
+        *,
+        features_at_entry: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         order_type = signal.get("order_type", "market")
         return {
             "order_id": str(uuid.uuid4()),
@@ -178,7 +172,7 @@ class PaperBroker:
             "created_at": utc_now_iso(),
             "setup_type": signal.get("setup_type"),
             "reason": signal.get("reason"),
-            "signal_meta": self._signal_meta(signal),
+            "signal_meta": self._signal_meta(signal, features_at_entry=features_at_entry),
         }
 
     def _create_rejected_order(self, signal: dict[str, Any], price: float, reason: str) -> dict[str, Any]:
@@ -254,45 +248,14 @@ class PaperBroker:
         return total
 
     def _be_cfg(self, symbol: str) -> dict[str, Any]:
-        from core.position_manager import _default_broker_point, _points_to_price
-
         be = self.config.get("trading", {}).get("break_even", {}) or {}
         psym = (be.get("per_symbol") or {}).get(symbol, {}) or {}
-        point = _default_broker_point(symbol)
-        trigger_pts = _points_to_price(psym.get("trigger_points", be.get("trigger_points")), point)
-        lock_pts = _points_to_price(psym.get("lock_profit_points", be.get("lock_profit_points")), point)
-        return {
-            "enabled": bool(be.get("enabled", False)),
-            "trigger_dist": lambda atr, _tp=trigger_pts, _ps=psym, _be=be: (
-                _tp if _tp is not None
-                else float(_ps.get("trigger_atr_mult", _be.get("trigger_atr_mult", 0.5))) * atr
-            ),
-            "lock_dist": lambda atr, _lp=lock_pts, _ps=psym, _be=be: (
-                _lp if _lp is not None
-                else float(_ps.get("lock_profit_atr_mult", _be.get("lock_profit_atr_mult", 0.1))) * atr
-            ),
-        }
+        return {"enabled": bool(be.get("enabled", False)), "parent": be, "sym": psym}
 
     def _trail_cfg(self, symbol: str) -> dict[str, Any]:
-        from core.position_manager import _default_broker_point, _trail_distance_price
-
         tr = self.config.get("trading", {}).get("trailing", {}) or {}
         psym = (tr.get("per_symbol") or {}).get(symbol, {}) or {}
-        point = _default_broker_point(symbol)
-        act_pts = None
-        if point:
-            from core.position_manager import _points_to_price
-            act_pts = _points_to_price(psym.get("activation_points", tr.get("activation_points")), point)
-        return {
-            "enabled": bool(tr.get("enabled", False)),
-            "activation_dist": lambda atr, _ap=act_pts, _ps=psym, _tr=tr: (
-                _ap if _ap is not None
-                else float(_ps.get("activation_atr_mult", _tr.get("activation_atr_mult", 0.75))) * atr
-            ),
-            "trail_dist": lambda atr, _ps=psym, _tr=tr, _pt=point: _trail_distance_price(
-                _ps, _tr, atr, _pt
-            ),
-        }
+        return {"enabled": bool(tr.get("enabled", False)), "parent": tr, "sym": psym}
 
     def _check_exits(
         self,
@@ -382,23 +345,82 @@ class PaperBroker:
                 else:
                     pos["peak"] = min(float(pos.get("peak", entry)), fav_price)
 
-                # --- Break-even: move SL to entry + lock_profit_atr once +trigger. ---
-                be = self._be_cfg(symbol)
-                trigger_dist = float(be["trigger_dist"](atr))
-                lock_dist = float(be["lock_dist"](atr))
-                if be["enabled"] and not pos.get("be_triggered") and atr > 0 and profit >= trigger_dist:
-                    lock_sl = entry + direction * lock_dist
-                    pos["sl"] = lock_sl
-                    pos["be_triggered"] = True
-                    pos["be_narrative"] = (
-                        f"Break-even: +{profit:.5f} favourable triggered SL move to "
-                        f"{lock_sl:.5f} (locked {lock_dist:.5f} over entry)."
-                    )
+                from core.position_manager import (
+                    _default_broker_point,
+                    _exit_trigger_met,
+                    _points_to_price,
+                    _trail_distance_price,
+                )
 
-                # --- Trailing: once +activation, trail SL to peak - trail_atr (only favourable direction). ---
+                point = _default_broker_point(symbol)
+                profit_usd = pos.get("profit")
+                try:
+                    profit_usd = float(profit_usd) if profit_usd is not None else None
+                except (TypeError, ValueError):
+                    profit_usd = None
+
+                # --- Break-even: USD OR broker points OR ATR mult (latched). ---
+                be = self._be_cfg(symbol)
+                be_sym, be_parent = be["sym"], be["parent"]
+                if be["enabled"] and atr > 0 and (
+                    pos.get("be_triggered")
+                    or _exit_trigger_met(
+                        profit_usd,
+                        profit,
+                        be_sym,
+                        be_parent,
+                        usd_key="trigger_profit_usd",
+                        points_key="trigger_points",
+                        atr_mult_key="trigger_atr_mult",
+                        atr=atr,
+                        point=point,
+                    )
+                ):
+                    lock_pts = _points_to_price(
+                        be_sym.get("lock_profit_points", be_parent.get("lock_profit_points")), point,
+                    )
+                    usd_trig = be_sym.get("trigger_profit_usd", be_parent.get("trigger_profit_usd"))
+                    usd_lock = be_sym.get("lock_profit_usd", be_parent.get("lock_profit_usd"))
+                    usd_triggered = (
+                        profit_usd is not None
+                        and usd_trig is not None
+                        and profit_usd >= float(usd_trig)
+                    )
+                    if lock_pts is not None:
+                        lock_dist = lock_pts
+                    elif usd_triggered and usd_lock is not None:
+                        lock_dist = max(0.0, float(usd_lock))
+                    else:
+                        lock_dist = atr * float(
+                            be_sym.get("lock_profit_atr_mult", be_parent.get("lock_profit_atr_mult", 0.1))
+                        )
+                    lock_sl = entry + direction * lock_dist
+                    if (side == "BUY" and lock_sl > float(pos["sl"])) or (side == "SELL" and lock_sl < float(pos["sl"])):
+                        pos["sl"] = lock_sl
+                        pos["be_triggered"] = True
+                        pos["be_narrative"] = (
+                            f"Break-even: +{profit:.5f} favourable triggered SL move to "
+                            f"{lock_sl:.5f} (locked {lock_dist:.5f} over entry)."
+                        )
+
+                # --- Trailing: latch once armed; distance = MT5 broker points behind peak. ---
                 tr = self._trail_cfg(symbol)
-                if tr["enabled"] and atr > 0 and profit >= float(tr["activation_dist"](atr)):
-                    trail_dist = float(tr["trail_dist"](atr))
+                tr_sym, tr_parent = tr["sym"], tr["parent"]
+                if tr["enabled"] and atr > 0 and (
+                    pos.get("trail_active")
+                    or _exit_trigger_met(
+                        profit_usd,
+                        profit,
+                        tr_sym,
+                        tr_parent,
+                        usd_key="activation_profit_usd",
+                        points_key="activation_points",
+                        atr_mult_key="activation_atr_mult",
+                        atr=atr,
+                        point=point,
+                    )
+                ):
+                    trail_dist = float(_trail_distance_price(tr_sym, tr_parent, atr, point))
                     new_sl = float(pos["peak"]) - direction * trail_dist
                     improved = (side == "BUY" and new_sl > float(pos["sl"])) or (side == "SELL" and new_sl < float(pos["sl"]))
                     if improved:

@@ -869,6 +869,8 @@
           <div class="card">
             <div class="card-title">Trade Log — every closed trade (open/close, win/loss, setup, drawdown, R)</div>
             <div id="tradeLogSummary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)"></div>
+            <div id="tradeLogOrganized" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
+            <pre id="tradeLogDetail" style="display:none;font-size:10px;max-height:220px;overflow:auto;background:rgba(0,0,0,.25);padding:8px;border-radius:6px;margin-bottom:8px"></pre>
             <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <button class="nav-item" id="tlPrev" onclick="tlPage(-1)">◀ Prev</button>
               <span id="tlPageInfo" style="font-size:12px;color:var(--muted)"></span>
@@ -2065,8 +2067,15 @@
         <span>avg R <strong style="color:${(s.avg_R||0)>=0?"var(--green)":"var(--red)"}">${(s.avg_R==null?"—":((s.avg_R>=0?"+":"")+fmt(s.avg_R,3)+"R"))}</strong></span>
         <span>Kelly sized-up <strong style="color:var(--green)">${(s.kelly&&s.kelly.sized_trades)||0}</strong> / fallback <strong style="color:var(--muted)">${(s.kelly&&s.kelly.fallback_trades)||0}</strong></span>
         <span>opened_at known <strong style="color:var(--text)">${s.opened_at_known||0}</strong></span>
-        <span>drawdown known <strong style="color:var(--text)">${s.drawdown_known||0}</strong></span>`;
-      const cols = ["#","opened","closed","hold","symbol","side","setup","regime","bias","session","conf","size","entry","exit","SL","TP","result","PnL","R","MAE(R)","MFE(R)","Kelly","exit reason"];
+        <span>drawdown known <strong style="color:var(--text)">${s.drawdown_known||0}</strong></span>
+        <span>journal files <strong style="color:var(--text)">${s.journal_files||0}</strong></span>`;
+      const org = document.getElementById("tradeLogOrganized");
+      if (org && s.organized && s.organized.by_symbol) {
+        const symRows = Object.entries(s.organized.by_symbol).slice(0, 8).map(([k,v]) =>
+          `${k}: ${v.n} trades · ${v.win_rate_pct}% · $${fmt(v.total_pnl,2)}`).join(" · ");
+        org.textContent = "by symbol — " + (symRows || "—");
+      }
+      const cols = ["#","opened","closed","hold","symbol","side","setup","regime","bias","session","conf","score","rank","size","entry","exit","SL","TP","result","PnL","R","MAE(R)","MFE(R)","Kelly","exit","detail"];
       const head = document.getElementById("tradeLogHead");
       if (head) head.innerHTML = cols.map(c=>`<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">${c}</th>`).join("");
       const rows = tlFiltered();
@@ -2098,6 +2107,8 @@
           <td style="padding:3px 6px;color:var(--muted)">${t.regime_bias||"—"}</td>
           <td style="padding:3px 6px;color:var(--muted)">${t.session||"—"}</td>
           <td style="padding:3px 6px">${t.confidence||"—"}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${t.trade_score_total==null?"—":fmt(t.trade_score_total,0)}</td>
+          <td style="padding:3px 6px;color:var(--muted);font-size:10px" title="${t.rank_reason||""}">${(t.rank_reason||"—").slice(0,12)}</td>
           <td style="padding:3px 6px">${t.volume||"—"}</td>
           <td style="padding:3px 6px">${_tlCell(t.entry,{p:1})}</td>
           <td style="padding:3px 6px">${_tlCell(t.exit,{p:1})}</td>
@@ -2110,8 +2121,23 @@
           <td style="padding:3px 6px;color:var(--green)">${t.mfe_R==null?"—":fmt(t.mfe_R,2)+"R"}</td>
           <td style="padding:3px 6px;color:${(t.kelly&&!t.kelly.gated)?"var(--green)":"var(--muted)"};font-size:11px" title="${t.kelly?(t.kelly.reason||""):""}">${t.kelly?(t.kelly.fraction==null?"—":fmt(t.kelly.fraction,2)+"%"):"—"}</td>
           <td style="padding:3px 6px;color:var(--muted2);font-size:10px">${t.exit_reason||"—"}</td>
+          <td style="padding:3px 6px"><button class="nav-item" style="font-size:10px;padding:2px 6px" onclick="tlShowDetail('${t.trade_id||""}')">view</button></td>
         </tr>`;
       }).join("");
+    }
+
+    async function tlShowDetail(tradeId) {
+      const el = document.getElementById("tradeLogDetail");
+      if (!el || !tradeId) return;
+      el.style.display = "block";
+      el.textContent = "loading…";
+      try {
+        const data = await fetchJson("/api/trade_journal/" + encodeURIComponent(tradeId));
+        el.textContent = JSON.stringify(data.conditions || data, null, 2);
+      } catch (err) {
+        const row = ((tradeLogData && tradeLogData.trades) || []).find(t => t.trade_id === tradeId);
+        el.textContent = row ? JSON.stringify(row.conditions || row, null, 2) : ("failed: " + (err.message||err));
+      }
     }
 
     function renderExtras(data) {

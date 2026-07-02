@@ -57,6 +57,7 @@ except ImportError:
 from core.mt5_connection_manager import MT5ConnectionManager  # noqa: E402
 from core.position_sync import _setup_type_from_comment  # noqa: E402
 from core.symbol_manager import broker_symbol, logical_symbol  # noqa: E402
+from core.trade_journal import safe_journal_name, build_organized_index, enrich_trade_record  # noqa: E402
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state  # noqa: E402
 
 
@@ -404,6 +405,10 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
         mr = mc.get("market_regime") if isinstance(mc.get("market_regime"), dict) else {}
         hold_s = _hold_seconds(opened_at, closed_at)
 
+        raw_snapshot = dict(t)
+        if isinstance(t.get("signal_meta"), dict):
+            raw_snapshot.update({k: v for k, v in t["signal_meta"].items() if k not in raw_snapshot})
+
         rec = {
             "trade_id": t.get("trade_id"),
             "signal_id": t.get("signal_id"),
@@ -448,7 +453,15 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
             "mfe_R": dd["mfe_R"],
             "drawdown_bars": dd["bars"],
             "kelly": kelly,
+            "be_narrative": t.get("be_narrative"),
+            "trail_narrative": t.get("trail_narrative"),
+            "exit_narrative": t.get("exit_narrative"),
+            "be_triggered": t.get("be_triggered"),
+            "trail_active": t.get("trail_active"),
+            "position_mgmt": t.get("position_mgmt"),
+            "signal_meta": (order or {}).get("signal_meta") or t.get("signal_meta"),
         }
+        enrich_trade_record(rec, order=order, raw_trade=raw_snapshot)
         out_trades.append(rec)
 
     # Most recent first.
@@ -471,12 +484,37 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
         session_stats["avg_R"],
     )
 
+    organized = build_organized_index(out_trades)
+    journal_written = 0
+    for rec in out_trades:
+        tid = rec.get("trade_id")
+        if not tid:
+            continue
+        write_json_state(
+            f"trade_journal/{safe_journal_name(str(tid))}.json",
+            {
+                "trade_id": tid,
+                "updated_at": utc_now_iso(),
+                "summary": {k: rec.get(k) for k in (
+                    "symbol", "side", "setup", "result", "pnl", "r_multiple",
+                    "opened_at", "closed_at", "hold_human", "confidence",
+                )},
+                "conditions": rec.get("conditions"),
+                "record": rec,
+            },
+        )
+        journal_written += 1
+    log.info("Trade journal: %d per-trade detail files written", journal_written)
+
     return {
         "updated_at": utc_now_iso(),
+        "schema_version": 2,
         **all_stats,
         "opened_at_known": n_open,
         "drawdown_known": n_dd,
         "kelly": _kelly_summary(session_list or out_trades),
+        "organized": organized,
+        "journal_files": journal_written,
         "session": {
             "login": baseline.get("login"),
             "since": baseline.get("set_at"),

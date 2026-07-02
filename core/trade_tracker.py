@@ -6,9 +6,11 @@ import logging
 import uuid
 from typing import Any
 
+from core.entry_narrative import build_exit_narrative
 from core.symbol_manager import logical_symbol
-from core.utils import read_json_state, utc_now_iso
 from core.strategy_policy import normalize_setup_type
+from core.trade_journal import build_mgmt_narratives
+from core.utils import read_json_state, utc_now_iso
 
 try:
     import MetaTrader5 as mt5
@@ -80,6 +82,10 @@ class TradeTracker:
                 "confidence_tree": meta.get("confidence_tree"),
                 "evidence": meta.get("evidence"),
                 "market_context": meta.get("market_context"),
+                "be_narrative": pos.get("be_narrative"),
+                "trail_narrative": pos.get("trail_narrative"),
+                "be_triggered": bool(pos.get("be_triggered")),
+                "trail_active": bool(pos.get("trail_active")),
                 "closed_at": utc_now_iso(),
             })
 
@@ -123,6 +129,9 @@ class TradeTracker:
             if tkt and o.get("status") == "filled":
                 ticket_index[str(tkt)] = o
 
+        mgmt_state = read_json_state("position_management.json", default={"positions": {}})
+        mgmt_positions = mgmt_state.get("positions") if isinstance(mgmt_state.get("positions"), dict) else {}
+
         incoming: list[dict[str, Any]] = []
         for deal in deals:
             if deal.magic != magic or deal.entry != mt5.DEAL_ENTRY_OUT:
@@ -140,25 +149,51 @@ class TradeTracker:
             # True entry price = the opening fill price recorded on the order; fall
             # back to the deal price (== exit) when no matching order is found.
             entry_price = float(order.get("fill_price")) if order and order.get("fill_price") else float(deal.price)
+            exit_price = float(deal.price)
+            sl_at_close = meta.get("sl")
             # OUT deals run opposite to the position side (close BUY -> SELL deal).
             if deal.entry == mt5.DEAL_ENTRY_OUT:
                 pos_side = "BUY" if deal.type == mt5.DEAL_TYPE_SELL else "SELL"
             else:
                 pos_side = "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+            side = (order or {}).get("side") or meta.get("side") or pos_side
+            mgmt_row = dict(mgmt_positions.get(str(pos_id), {})) if pos_id else {}
+            be_triggered = bool(mgmt_row.get("break_even"))
+            trail_active = bool(mgmt_row.get("trailing"))
+            narr = build_mgmt_narratives(
+                side=side,
+                entry=entry_price,
+                sl=sl_at_close,
+                mgmt_row=mgmt_row,
+            )
+            exit_reason = "mt5_close"
+            if trail_active:
+                exit_reason = "trailing_stop"
+            elif be_triggered:
+                exit_reason = "break_even_stop"
+            exit_narrative = build_exit_narrative(
+                side,
+                entry_price,
+                float(sl_at_close or entry_price),
+                float(meta.get("tp1") or entry_price),
+                exit_price,
+                exit_reason,
+                float(deal.profit),
+            )
             incoming.append({
                 "trade_id": str(deal.ticket),
                 "mt5_deal": deal.ticket,
                 "mt5_position": int(pos_id) if pos_id else None,
                 "signal_id": (order or {}).get("signal_id") or meta.get("signal_id"),
                 "symbol": logical_symbol(deal.symbol),
-                "side": (order or {}).get("side") or meta.get("side") or pos_side,
+                "side": side,
                 "entry": entry_price,
-                "exit": float(deal.price),
-                "sl": meta.get("sl"),
+                "exit": exit_price,
+                "sl": sl_at_close,
                 "tp1": meta.get("tp1"),
                 "pnl": float(deal.profit),
                 "result": "win" if deal.profit > 0 else "loss",
-                "exit_reason": "mt5_close",
+                "exit_reason": exit_reason,
                 "setup_type": (order or {}).get("setup_type") or meta.get("setup_type") or setup_type or "unknown",
                 "reason": (order or {}).get("reason") or meta.get("reason"),
                 "signal_meta": meta,
@@ -168,6 +203,12 @@ class TradeTracker:
                 "market_context": meta.get("market_context"),
                 "move_type": meta.get("market_context", {}).get("move_type") if isinstance(meta.get("market_context"), dict) else None,
                 "market_intent": meta.get("market_context", {}).get("market_intent") if isinstance(meta.get("market_context"), dict) else None,
+                "be_narrative": narr.get("be"),
+                "trail_narrative": narr.get("trail"),
+                "exit_narrative": exit_narrative,
+                "be_triggered": be_triggered,
+                "trail_active": trail_active,
+                "position_mgmt": mgmt_row,
                 "closed_at": deal_ts,
             })
 

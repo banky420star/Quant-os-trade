@@ -495,6 +495,13 @@ def _trade_log_section(tlog) -> str:
             f"{GREY}kelly{R} {GREEN}sized {ks_sized}{R}/{GREY}fb {ks_fb}{R}  "
             f"{GREY}opened={tl.get('opened_at_known','—')} dd={tl.get('drawdown_known','—')}{R}")
     lines = [head]
+    org = tl.get("organized") if isinstance(tl.get("organized"), dict) else {}
+    by_sym = org.get("by_symbol") if isinstance(org.get("by_symbol"), dict) else {}
+    if by_sym:
+        org_bits = []
+        for sym, st in sorted(by_sym.items(), key=lambda x: (-(x[1].get("n") or 0), x[0]))[:6]:
+            org_bits.append(f"{sym} {st.get('n',0)}t {st.get('win_rate_pct',0)}%")
+        lines.append(f"  {GREY}by symbol:{R} {DIM}{' · '.join(org_bits)}{R}")
     trades = list(tl.get("session_trades") or tl.get("trades") or [])
     trades = [t for t in trades if not t.get("archive_polluted")]
     trades.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
@@ -525,6 +532,10 @@ def _trade_log_section(tlog) -> str:
         mfe_s = "—" if mfe is None else f"{mfe:.2f}R"
         hold = str(t.get("hold_human") or "—")
         conf = t.get("confidence") if t.get("confidence") is not None else "—"
+        score = t.get("trade_score_total")
+        score_s = "—" if score is None else f"{float(score):.0f}"
+        regime = str(t.get("regime_primary") or "—")[:10]
+        sess = str(t.get("session") or "—")[:12]
         when = _trade_time_label(t)
         k = t.get("kelly") if isinstance(t.get("kelly"), dict) else None
         if k:
@@ -536,7 +547,8 @@ def _trade_log_section(tlog) -> str:
             k_s = f"{GREY}—    {R}"
         lines.append(
             f"  {GREY}{when}{R} {side_col}{side:<4}{R} {B}{sym:<9}{R} "
-            f"{DIM}{setup:<14}{R} {GREY}c{conf}{R} "
+            f"{DIM}{setup:<14}{R} {GREY}{regime:<10} {sess:<12}{R} "
+            f"{GREY}c{conf} s{score_s}{R} "
             f"{res_col}{res:<4}{R} {pnl_c}{pnl_s:<8}{R} {r_c}{r_s:<7}{R} "
             f"{RED}dd{mae_s:<7}{R} {GREEN}run{mfe_s:<7}{R} {GREY}{hold:<8}{R} {GREY}k{k_s}"
         )

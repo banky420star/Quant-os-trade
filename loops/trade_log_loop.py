@@ -29,35 +29,48 @@ from core.utils import load_config, read_json_state, setup_logger, write_json_st
 # it works inside the bot process without a fresh connect.
 from scripts.build_trade_log import build_log  # noqa: E402
 
-_PAPER_TRADES = (Path(__file__).resolve().parent.parent / "state" / "paper_trades.json")
+_STATE = Path(__file__).resolve().parent.parent / "state"
+_PAPER_TRADES = _STATE / "paper_trades.json"
+_PAPER_ORDERS = _STATE / "paper_orders.json"
 
 
-def _paper_trades_mtime() -> float:
+def _source_mtime() -> tuple[float, float]:
+    trades_m = orders_m = 0.0
     try:
-        return os.path.getmtime(_PAPER_TRADES)
+        trades_m = os.path.getmtime(_PAPER_TRADES)
     except OSError:
-        return 0.0
+        pass
+    try:
+        orders_m = os.path.getmtime(_PAPER_ORDERS)
+    except OSError:
+        pass
+    return trades_m, orders_m
 
 
 def run() -> dict:
     config = load_config()
     logger = setup_logger("trade_log_loop", "trade_log_loop.log")
 
-    mtime = _paper_trades_mtime()
+    trades_m, orders_m = _source_mtime()
     prev = read_json_state("trade_log.json", default={}) or {}
-    last_mtime = float(prev.get("_paper_trades_mtime", 0.0) or 0.0)
+    last_trades_m = float(prev.get("_paper_trades_mtime", 0.0) or 0.0)
+    last_orders_m = float(prev.get("_paper_orders_mtime", 0.0) or 0.0)
 
-    # Skip rebuild when no closed trade changed since the last build. Closed
-    # trades only appear on position close (rare), so this keeps the loop cheap
-    # on idle cycles. First run (no prev) -> mtime 0 -> builds.
-    if prev and mtime and mtime <= last_mtime:
+    # Rebuild when a trade closed OR a new order filled (richer signal_meta).
+    if prev and trades_m <= last_trades_m and orders_m <= last_orders_m:
         return prev
 
     try:
         payload = build_log(config, days=30, log=logger)
-        payload["_paper_trades_mtime"] = mtime
+        payload["_paper_trades_mtime"] = trades_m
+        payload["_paper_orders_mtime"] = orders_m
         write_json_state("trade_log.json", payload)
-        logger.info("Trade log rebuilt: %d trades (paper_trades mtime %.0f).", payload.get("total", 0), mtime)
+        logger.info(
+            "Trade log rebuilt: %d trades (paper_trades mtime %.0f, orders mtime %.0f).",
+            payload.get("total", 0),
+            trades_m,
+            orders_m,
+        )
         return payload
     except Exception as exc:  # noqa: BLE001 -- fault-isolated from the pipeline
         logger.error("Trade log rebuild failed: %s", exc)

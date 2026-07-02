@@ -27,6 +27,7 @@ from core.trade_limits import (
 from core.strategy_entry import resolve_mt5_pending_type, strategy_entries_enabled
 from core.symbol_manager import broker_symbol, logical_symbol
 from core.trade_tracker import TradeTracker
+from core.trade_journal import snapshot_signal_meta
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
 try:
@@ -85,6 +86,7 @@ class MT5Broker:
         placed: list[dict] = []
         errors: list[dict] = []
         open_positions = enrich_positions_with_orders(self._sync_positions(), orders)
+        features_data = read_json_state("features.json", default={"symbols": {}})
 
         for record in approved:
             signal = record.get("signal", record)
@@ -186,7 +188,8 @@ class MT5Broker:
                 continue
 
             result = self._place_order(signal, account, open_positions)
-            order_record = self._build_order_record(signal, result)
+            sym_feat = features_data.get("symbols", {}).get(signal["symbol"], {})
+            order_record = self._build_order_record(signal, result, features_at_entry=sym_feat)
             orders.append(order_record)
 
             if result.get("success"):
@@ -619,7 +622,13 @@ class MT5Broker:
     def _executed_signal_ids(self, orders: list[dict]) -> set[str]:
         return {o["signal_id"] for o in orders if o.get("status") == "filled" and o.get("signal_id")}
 
-    def _build_order_record(self, signal: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    def _build_order_record(
+        self,
+        signal: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        features_at_entry: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return {
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
@@ -632,22 +641,11 @@ class MT5Broker:
             "tp2": signal.get("tp2"),
             "setup_type": signal.get("setup_type"),
             "reason": signal.get("reason"),
-            "signal_meta": {
-                "signal_id": signal.get("signal_id"),
-                "symbol": signal.get("symbol"),
-                "side": signal.get("side"),
-                "setup_type": signal.get("setup_type"),
-                "entry": signal.get("entry"),
-                "sl": signal.get("sl"),
-                "tp1": signal.get("tp1"),
-                "confidence": signal.get("confidence"),
-                "confidence_tree": signal.get("confidence_tree"),
-                "evidence": signal.get("evidence"),
-                "market_context": signal.get("market_context"),
-                "reason": signal.get("reason"),
-                "strategy_rank": signal.get("strategy_rank"),
-                "kelly": _json_safe_kelly(signal.get("kelly")),
-            },
+            "signal_meta": snapshot_signal_meta(
+                signal,
+                features_at_entry=features_at_entry,
+                kelly=_json_safe_kelly(signal.get("kelly")),
+            ),
             "status": "filled" if result.get("success") else "failed",
             "mt5_ticket": result.get("ticket"),
             "mt5_deal": result.get("deal"),
