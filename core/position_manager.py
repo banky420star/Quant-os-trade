@@ -92,6 +92,35 @@ def _normalize_price(value: float, digits: int) -> float:
     return round(value, digits)
 
 
+def _clamp_sl_to_stops_level(
+    side: str,
+    sl: float,
+    *,
+    reference: float,
+    point: float,
+    stops_level: int,
+    digits: int,
+) -> float:
+    """Enforce MT5 minimum SL distance from current bid/ask (trade_stops_level).
+
+    BUY SL must be at or below ``reference - stops_level * point`` (use bid).
+    SELL SL must be at or above ``reference + stops_level * point`` (use ask).
+    """
+    sl = _normalize_price(sl, digits)
+    if point <= 0 or stops_level <= 0:
+        return sl
+    min_dist = stops_level * point
+    if side == "BUY":
+        cap = reference - min_dist
+        if sl > cap:
+            sl = cap
+    else:
+        floor = reference + min_dist
+        if sl < floor:
+            sl = floor
+    return _normalize_price(sl, digits)
+
+
 # Blue Guardian defaults (used for paper mode when MT5 symbol_info is unavailable).
 _DEFAULT_BROKER_POINTS: dict[str, float] = {
     "EURUSDm": 1e-5,
@@ -120,21 +149,6 @@ def _points_to_price(points: float | int | None, point: float | None) -> float |
     return float(points) * point
 
 
-def _profit_trigger_met(
-    profit_usd: float | None,
-    profit_dist: float,
-    sym_cfg: dict[str, Any],
-    parent_cfg: dict[str, Any],
-    usd_key: str,
-    points_key: str,
-) -> bool | None:
-    """USD when profit is known, else MT5 points; None => caller uses ATR mult."""
-    usd_raw = sym_cfg.get(usd_key, parent_cfg.get(usd_key))
-    if profit_usd is not None and usd_raw is not None:
-        return profit_usd >= float(usd_raw)
-    return None
-
-
 def _distance_trigger_met(
     profit_dist: float,
     sym_cfg: dict[str, Any],
@@ -152,24 +166,46 @@ def _distance_trigger_met(
     return profit_dist >= atr * mult
 
 
+def _exit_trigger_met(
+    profit_usd: float | None,
+    profit_dist: float,
+    sym_cfg: dict[str, Any],
+    parent_cfg: dict[str, Any],
+    *,
+    usd_key: str,
+    points_key: str,
+    atr_mult_key: str,
+    atr: float,
+    point: float | None,
+) -> bool:
+    """True when USD profit OR broker-point distance OR ATR-mult distance is met."""
+    usd_raw = sym_cfg.get(usd_key, parent_cfg.get(usd_key))
+    if profit_usd is not None and usd_raw is not None and profit_usd >= float(usd_raw):
+        return True
+    return _distance_trigger_met(
+        profit_dist, sym_cfg, parent_cfg, points_key, atr_mult_key, atr, point,
+    )
+
+
 def _trail_distance_price(
     trail_sym: dict[str, Any],
     trail_cfg: dict[str, Any],
     atr: float,
     point: float | None = None,
 ) -> float:
-    """Trail offset in price units.
+    """Trail offset in price units behind peak.
 
-    Priority: ``trail_points_atr_mult`` (dynamic) -> ``trail_points`` (MT5 pts)
-    -> legacy ``trail_use_atr`` / ``trail_atr_mult``.
+    Priority:
+      1. ``trail_points_atr_mult`` — dynamic MT5 broker points = round(ATR/point × mult)
+      2. ``trail_points`` — fixed MT5 broker points × ``symbol_info.point``
+      3. ``trail_use_atr`` / ``trail_atr_mult`` — legacy ATR fraction (research only)
     """
     atr_mult = trail_sym.get("trail_points_atr_mult", trail_cfg.get("trail_points_atr_mult"))
     if atr_mult is not None:
+        if point and point > 0 and atr > 0:
+            broker_pts = max(1, int(round((atr / point) * float(atr_mult))))
+            return broker_pts * point
         return float(atr_mult) * atr
-
-    if trail_sym.get("trail_use_atr") or trail_cfg.get("trail_use_atr"):
-        mult = float(trail_sym.get("trail_atr_mult", trail_cfg.get("trail_atr_mult", 0.35)))
-        return atr * mult
 
     raw_pts = trail_sym.get("trail_points", trail_cfg.get("trail_points"))
     if raw_pts is not None:
@@ -177,9 +213,11 @@ def _trail_distance_price(
             raise ValueError("trail_points requires a positive broker point size")
         return float(raw_pts) * point
 
+    if trail_sym.get("trail_use_atr") or trail_cfg.get("trail_use_atr"):
+        mult = float(trail_sym.get("trail_atr_mult", trail_cfg.get("trail_atr_mult", 0.35)))
+        return atr * mult
+
     mult = float(trail_sym.get("trail_atr_mult", trail_cfg.get("trail_atr_mult", 0.35)))
-    if point and point > 0 and mult < 1.0:
-        return mult * 100.0 * point
     return atr * mult
 
 
@@ -257,21 +295,30 @@ def compute_managed_sl(
     new_sl = current_sl
 
     if be_cfg.get("enabled", True):
-        be_usd = _profit_trigger_met(
-            profit_usd, profit_dist, be_sym, be_cfg, "trigger_profit_usd", "trigger_points",
-        )
-        be_hit = be_usd is True or (
-            be_usd is None
-            and _distance_trigger_met(
-                profit_dist, be_sym, be_cfg, "trigger_points", "trigger_atr_mult", atr, point,
-            )
+        be_hit = row.get("break_even", False) or _exit_trigger_met(
+            profit_usd,
+            profit_dist,
+            be_sym,
+            be_cfg,
+            usd_key="trigger_profit_usd",
+            points_key="trigger_points",
+            atr_mult_key="trigger_atr_mult",
+            atr=atr,
+            point=point,
         )
         if be_hit:
             lock_pts = _points_to_price(be_sym.get("lock_profit_points", be_cfg.get("lock_profit_points")), point)
+            usd_lock_raw = be_sym.get("lock_profit_usd", be_cfg.get("lock_profit_usd"))
+            usd_trig_raw = be_sym.get("trigger_profit_usd", be_cfg.get("trigger_profit_usd"))
+            usd_triggered = (
+                profit_usd is not None
+                and usd_trig_raw is not None
+                and profit_usd >= float(usd_trig_raw)
+            )
             if lock_pts is not None:
                 lock = lock_pts
-            elif be_usd is True:
-                lock = 0.0
+            elif usd_triggered and usd_lock_raw is not None:
+                lock = max(0.0, float(usd_lock_raw))
             else:
                 lock = atr * float(be_sym.get("lock_profit_atr_mult", be_cfg.get("lock_profit_atr_mult", 0.1)))
             if side == "BUY":
@@ -288,20 +335,23 @@ def compute_managed_sl(
                     actions.append("break_even")
 
     if trail_cfg.get("enabled", True):
-        trail_usd = _profit_trigger_met(
-            profit_usd, profit_dist, trail_sym, trail_cfg, "activation_profit_usd", "activation_points",
-        )
         trail_dist = _trail_distance_price(trail_sym, trail_cfg, atr, point)
-        trail_hit = trail_usd is True or (
-            trail_usd is None
-            and _distance_trigger_met(
-                profit_dist, trail_sym, trail_cfg, "activation_points", "activation_atr_mult", atr, point,
-            )
+        trail_armed = row.get("trailing", False) or _exit_trigger_met(
+            profit_usd,
+            profit_dist,
+            trail_sym,
+            trail_cfg,
+            usd_key="activation_profit_usd",
+            points_key="activation_points",
+            atr_mult_key="activation_atr_mult",
+            atr=atr,
+            point=point,
         )
-        if trail_hit:
+        if trail_armed:
             row["trailing"] = True
             peak = _update_peak_price(side, entry, current_price, row)
             row["peak_price"] = peak
+            row["trail_distance"] = round(trail_dist, 8)
             if side == "BUY":
                 trail_sl = peak - trail_dist
                 if trail_sl > new_sl:
@@ -310,8 +360,7 @@ def compute_managed_sl(
                 trail_sl = peak + trail_dist
                 if current_sl <= 0 or trail_sl < new_sl:
                     new_sl = trail_sl
-            if row.get("trailing"):
-                actions.append("trail")
+            actions.append("trail")
 
     if abs(new_sl - current_sl) < 1e-9:
         return None, row, actions
@@ -391,7 +440,10 @@ def manage_mt5_positions(
             continue
 
         side = pos["side"]
-        current = float(tick.bid if side == "SELL" else tick.ask)
+        bid = float(tick.bid)
+        ask = float(tick.ask)
+        # Favourable price for peak/trail ratchet (bid for SELL, ask for BUY).
+        current = bid if side == "SELL" else ask
         atr = float(feat.get("atr", current * 0.001) or current * 0.001)
         digits = int(getattr(info, "digits", 5))
         row = dict(mgmt.get("positions", {}).get(str(ticket), {}))
@@ -400,11 +452,27 @@ def manage_mt5_positions(
             continue
 
         point = float(getattr(info, "point", 0) or 0)
+        stops_level = int(getattr(info, "trade_stops_level", 0) or 0)
         new_sl, row, actions = compute_managed_sl(config, pos, current, atr, row, point=point)
         if new_sl is None or not actions:
             continue
 
-        new_sl = _normalize_price(new_sl, digits)
+        # MT5 rejects SL inside trade_stops_level — clamp to bid (BUY) or ask (SELL).
+        sl_ref = bid if side == "BUY" else ask
+        new_sl = _clamp_sl_to_stops_level(
+            side,
+            new_sl,
+            reference=sl_ref,
+            point=point,
+            stops_level=stops_level,
+            digits=digits,
+        )
+        # Re-check ratchet still improved SL after broker clamp.
+        current_sl = float(pos.get("sl", 0))
+        if side == "BUY" and new_sl <= current_sl:
+            continue
+        if side == "SELL" and current_sl > 0 and new_sl >= current_sl:
+            continue
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "position": ticket,

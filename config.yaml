@@ -227,10 +227,10 @@ trading:
         trigger_points: 59
       US30m:
         trigger_profit_usd: 5
-        trigger_points: 35
+        trigger_atr_mult: 0.5
       NAS100m:
         trigger_profit_usd: 5
-        trigger_points: 4060
+        trigger_atr_mult: 0.5
       UK100m:
         trigger_profit_usd: 4
         trigger_points: 52
@@ -239,7 +239,7 @@ trading:
         trigger_points: 144
       BTCUSDm:
         trigger_profit_usd: 7
-        trigger_points: 6915
+        trigger_atr_mult: 0.5
   trailing:
     enabled: true
     activation_profit_usd: 5
@@ -282,24 +282,24 @@ trading:
         trail_points: 258
       US30m:
         activation_profit_usd: 5
-        activation_points: 64
-        trail_points: 27
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.45
       NAS100m:
         activation_profit_usd: 5
-        activation_points: 7615
-        trail_points: 3250
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.45
       UK100m:
         activation_profit_usd: 4
-        activation_points: 88
-        trail_points: 259
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.45
       FR40m:
         activation_profit_usd: 4
-        activation_points: 244
-        trail_points: 280
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.45
       BTCUSDm:
         activation_profit_usd: 7
-        activation_points: 13800
-        trail_points_atr_mult: 0.42
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.45
 filters:
   min_volume_ratio: 0.35
   spread_mult: 3.5
