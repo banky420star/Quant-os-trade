@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.strategy_policy import normalize_setup_type
+
 
 def _signal_from_record(record: dict[str, Any]) -> dict[str, Any]:
     return record.get("signal", record)
@@ -48,6 +50,8 @@ def enrich_trade(
     """Attach signal metadata to a trade for edge DB / memory."""
     enriched = dict(trade)
     meta = enriched.get("signal_meta") or {}
+    if not isinstance(meta, dict):
+        meta = {}
 
     sid = enriched.get("signal_id")
     if sid and sid in signal_index:
@@ -72,8 +76,14 @@ def enrich_trade(
     for key in ("confidence", "confidence_tree", "evidence", "market_context", "sl", "tp1"):
         if key not in enriched and meta.get(key) is not None:
             enriched[key] = meta[key]
-    if not enriched.get("setup_type") and meta.get("setup_type"):
-        enriched["setup_type"] = meta["setup_type"]
+    if meta.get("setup_type"):
+        cleaned = normalize_setup_type(
+            enriched.get("setup_type") or meta.get("setup_type"),
+            meta=meta,
+            market_context=meta.get("market_context") if isinstance(meta.get("market_context"), dict) else {},
+        )
+        if cleaned:
+            enriched["setup_type"] = cleaned
     # Carry the four plain-English narratives (entry/BE/trail/exit) onto the
     # enriched record so the edge DB / evaluator reports show reason+profit
     # together. entry_narrative lives on the signal meta; be/trail/exit are

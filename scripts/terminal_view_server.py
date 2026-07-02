@@ -28,6 +28,7 @@ import argparse
 import base64
 import hashlib
 import html
+import importlib
 import json
 import re
 import select
@@ -43,32 +44,74 @@ import terminal_view as tv  # noqa: E402
 PUSH_INTERVAL = 2  # seconds between websocket pushes
 REFRESH = 2  # kept for the header label / legacy callers
 
-# Disable ANSI color in the imported module so render_frame() yields plain
-# text (matches terminal_view.py --no-color). Setting the module globals to
-# empty strings makes _c() return "" for every color constant.
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+# ANSI color -> HTML span converter (USER request 2026-07-01: "regenerate with
+# colour"). The renderer (terminal_view.py) emits ANSI SGR codes when
+# USE_COLOR=True; instead of stripping them to monochrome, we translate each
+# color/bold/dim run into a <span class="..."> so the served frame keeps its
+# red/green/yellow semantic color in the browser. Text runs are html-escaped
+# so this is XSS-safe; the only markup injected is our own span tags.
+_ANSI_SPLIT = re.compile(r"(\x1b\[[0-9;]*m)")
+_COLOR_MAP = {  # SGR code -> CSS class (Apple-dark palette, matches .ts green)
+    "31": "c-r", "32": "c-g", "33": "c-y", "34": "c-b",
+    "35": "c-m", "36": "c-c", "90": "c-gr",
+}
 
 # RFC 6455 magic GUID for the WebSocket handshake.
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
-def _disable_color() -> None:
-    tv.USE_COLOR = False
-    for name in ("R", "B", "DIM", "RED", "GREEN", "YELLOW", "BLUE",
-                 "MAGENTA", "CYAN", "GREY"):
-        setattr(tv, name, "")
+def _ansi_to_html(s: str) -> str:
+    """Convert ANSI-colored terminal text to colored HTML spans.
 
+    Walks the SGR codes (reset=0, bold=1, dim=2, 31..36/90 colors), keeps the
+    currently-active attributes, and wraps each text run in a span whose
+    classes reflect them. Reset closes everything. Handles combined codes like
+    ``\\x1b[1;31m`` even though terminal_view.py emits them singly."""
+    color = None
+    bold = False
+    dim = False
+    out: list[str] = []
 
-def _strip_ansi(s: str) -> str:
-    # Safety net: drop any residual escape sequences.
-    return _ANSI_RE.sub("", s)
+    def _emit(text: str) -> None:
+        if not text:
+            return
+        cls = []
+        if color:
+            cls.append(color)
+        if bold:
+            cls.append("b")
+        if dim:
+            cls.append("d")
+        esc = html.escape(text)
+        out.append(f'<span class="{" ".join(cls)}">{esc}</span>' if cls else esc)
+
+    for part in _ANSI_SPLIT.split(s):
+        if not part:
+            continue
+        if part[0] == "\x1b":
+            # part looks like "\x1b[1;31m" -> codes "1;31"
+            codes = part[2:-1] if len(part) > 2 else ""
+            for c in codes.split(";"):
+                if c in ("", "0"):
+                    color = None
+                    bold = False
+                    dim = False
+                elif c == "1":
+                    bold = True
+                elif c == "2":
+                    dim = True
+                elif c in _COLOR_MAP:
+                    color = _COLOR_MAP[c]
+        else:
+            _emit(part)
+    return "".join(out)
 
 
 def render_html() -> str:
     # Initial server-rendered frame so the page is non-empty before the
     # WebSocket connects; the socket then overwrites #frame on each push.
-    frame = _strip_ansi(tv.render_frame())
-    body_text = html.escape(frame)
+    frame = _ansi_to_html(tv.render_frame())
+    body_text = frame  # _ansi_to_html already html-escapes text runs
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -76,7 +119,7 @@ def render_html() -> str:
         "<style>"
         "body{background:#07070a;color:#f5f5f7;"
         "font-family:ui-monospace,Menlo,Consolas,monospace;"
-        "white-space:pre;padding:16px;font-size:13px;margin:0}"
+        "padding:16px;font-size:13px;margin:0}"
         ".hdr{color:#8e8e93;font-size:12px;margin-bottom:8px}"
         ".ts{color:#34c759}"
         ".dot{display:inline-block;width:8px;height:8px;border-radius:50%;"
@@ -85,6 +128,11 @@ def render_html() -> str:
         ".dot.warn{background:#ff9f0a;animation:none}"
         "@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}"
         "#frame{white-space:pre;overflow-x:auto}"
+        ".c-r{color:#ff453a}.c-g{color:#34c759}.c-y{color:#ffd60a}"
+        ".c-b{color:#0a84ff}.c-m{color:#bf5af2}.c-c{color:#64d2ff}"
+        ".c-gr{color:#8e8e93}.b{font-weight:bold}.d{opacity:.55}"
+        "@media(max-width:640px){body{font-size:9px;padding:8px}"
+        "#frame{font-size:9px}}"
         "</style></head><body>"
         "<div class='hdr'><span class='dot' id='dot'></span>"
         "<b>MT5 Quant OS — terminal view (Tailscale)</b> · read-only · "
@@ -99,7 +147,7 @@ def render_html() -> str:
         "function reload(){if(!dead){dead=true;setTimeout(function(){location.reload();},2500);}}"
         "ws.onopen=function(){m.textContent='LIVE ws';d.classList.remove('warn');};"
         "ws.onmessage=function(ev){try{var o=JSON.parse(ev.data);"
-        "f.textContent=o.frame;ts.textContent=o.ts;m.textContent='LIVE ws';"
+        "f.innerHTML=o.frame;ts.textContent=o.ts;m.textContent='LIVE ws';"
         "d.classList.remove('warn');}catch(e){f.textContent=ev.data;}};"
         "ws.onclose=function(){m.textContent='reconnecting…';d.classList.add('warn');reload();};"
         "ws.onerror=function(){try{ws.close();}catch(e){}};"
@@ -209,7 +257,8 @@ def _ws_serve(handler) -> None:
                     if not _ws_send(sock, b"", opcode=0xA):
                         break
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            frame = _strip_ansi(tv.render_frame())
+            importlib.reload(tv)
+            frame = _ansi_to_html(tv.render_frame())
             msg = json.dumps({"ts": ts, "frame": frame}).encode("utf-8")
             if not _ws_send(sock, msg):
                 break
@@ -272,7 +321,8 @@ def main() -> None:
     ap.add_argument("--host", default="0.0.0.0")
     args = ap.parse_args()
 
-    _disable_color()
+    # NOTE: do NOT call _disable_color() — we want render_frame() to emit ANSI
+    # codes so _ansi_to_html() can colorize the served frame (USER 2026-07-01).
 
     port = _pick_port(args.port)
     srv = ThreadingHTTPServer((args.host, port), H)

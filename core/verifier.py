@@ -6,9 +6,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from core.blue_guardian import blue_guardian_enabled, entry_gates
 from core.exposure import check_exposure_limits
 from core.account_mode import performance_gates_active
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
+from core.strategy_policy import culturing_cell_key, setup_allowed, symbol_rule, threshold_overrides
 from core.trade_limits import (
     humanize_verifier_failure,
     is_duplicate_position,
@@ -52,6 +54,11 @@ class Verifier:
         self.avoid_news = bool(filters.get("avoid_news", False))
         self.news_blackout_minutes = float(filters.get("news_blackout_minutes", 10))
         self.news_release_times_utc = list(filters.get("news_release_times_utc", []) or [])
+        # Data-driven per-symbol veto (state/symbol_policy_live.json, rewritten
+        # each cycle by the forward_test_loop which runs before this loop).
+        # Loaded here so _verify_one is safe even if called outside verify_batch;
+        # verify_batch refreshes it per run to pick up the latest veto.
+        self._live_veto = read_json_state("symbol_policy_live.json", default={}) or {}
 
     def _max_open_confidence(self, active_signals: list[dict[str, Any]] | None) -> float | None:
         """Strongest confidence among currently-open positions.
@@ -101,6 +108,13 @@ class Verifier:
 
         approved: list[dict[str, Any]] = []
         rejected: list[dict[str, Any]] = []
+
+        # USER-AUTHORIZED 2026-07-01: data-driven per-symbol veto. Loaded once
+        # per verify_batch (the veto state file is rewritten each cycle by the
+        # forward_test_loop, which runs before this loop in the pipeline). A
+        # candidate whose (setup|regime|align|session) cell is in its symbol's
+        # vetoed_cells is hard-rejected. Empty/missing -> permissive.
+        self._live_veto = read_json_state("symbol_policy_live.json", default={}) or {}
 
         for signal in candidates:
             feat = features.get(signal["symbol"], {})
@@ -154,11 +168,19 @@ class Verifier:
         else:
             checks["regime_bias_aligned"] = True
 
+        symbol_rule_data = symbol_rule(self.config, signal.get("symbol", ""))
+        eff_min_confidence, eff_min_rr = threshold_overrides(
+            symbol_rule_data,
+            base_confidence=eff_min_confidence,
+            base_risk_reward=eff_min_rr,
+        )
+
         # --- Win-condition template gate (only trade under conditions that
         # historically won for this setup_type) -------------------------------
         # cell = setup | regime | bias-aligned-with-side. This is the faithful
         # implementation of "save the conditions where it won, only use those".
         setup_type = signal.get("setup_type") or "unknown"
+        checks["symbol_setup_allowed"] = setup_allowed(symbol_rule_data, setup_type)
         bias_aligned_side = (
             (regime_bias in ("bullish", "up") and signal.get("side") == "BUY")
             or (regime_bias in ("bearish", "down") and signal.get("side") == "SELL")
@@ -174,7 +196,30 @@ class Verifier:
         else:
             checks["win_condition_match"] = True
 
+        # --- Data-driven per-symbol veto -------------------------------------
+        # USER-AUTHORIZED 2026-07-01: the forward-test ledger vetoes cells that
+        # clean live data proves lose (n >= min_n AND negative realized
+        # expectancy AND win-rate below floor). Cell key here MUST match the
+        # ledger's culturing_cell_key (setup|regime|align|session) so a vetoed
+        # cell maps 1:1 to this candidate. No verdict for the cell -> allow
+        # (permissive; keep collecting). This is the "narrower over time,
+        # data-driven" narrowing mechanism (manual allowed_setups is off).
+        veto_cell = culturing_cell_key(
+            setup_type,
+            regime_primary,
+            regime_bias,
+            signal.get("side"),
+            mc.get("session"),
+        )
+        sym_veto = (self._live_veto.get("symbols", {}) or {}).get(signal.get("symbol", ""), {}) or {}
+        vetoed_cells = set(sym_veto.get("vetoed_cells", []) or [])
+        checks["data_driven_veto"] = veto_cell not in vetoed_cells
+
         checks["valid_levels"] = self._check_valid_levels(signal)
+        if symbol_rule_data.get("preferred_sessions"):
+            checks["preferred_session"] = mc.get("session") in set(symbol_rule_data["preferred_sessions"])
+        else:
+            checks["preferred_session"] = True
         checks["confidence"] = signal.get("confidence", 0) >= eff_min_confidence
         practice_relaxed = (
             not performance_gates_active(self.config)
@@ -248,13 +293,27 @@ class Verifier:
 
         checks["kill_switch_safe"] = not kill_switch
         checks["news_safe"] = self._check_news_blackout()
+        bg_code = None
+        if blue_guardian_enabled(self.config):
+            bg_ok, bg_code, _bg_details = entry_gates(self.config, active_signals, signal)
+            checks["blue_guardian_entry"] = bg_ok
+        else:
+            checks["blue_guardian_entry"] = True
 
         failure_codes: list[str] = []
         for name, passed in checks.items():
             if passed:
                 continue
-            if name == "exposure_safe":
+            if name == "blue_guardian_entry" and bg_code:
+                failure_codes.append(bg_code)
+            elif name == "exposure_safe":
                 failure_codes.append("exposure_limit_exceeded")
+            elif name == "symbol_setup_allowed":
+                failure_codes.append("symbol_setup_restricted")
+            elif name == "preferred_session":
+                failure_codes.append("session_misaligned")
+            elif name == "data_driven_veto":
+                failure_codes.append("data_driven_veto")
             else:
                 failure_codes.append(name)
 

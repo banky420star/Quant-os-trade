@@ -98,6 +98,11 @@ def run() -> dict | None:
     if not _check_execution_allowed(config, logger):
         return None
 
+    bg = read_json_state("blue_guardian.json", default={})
+    if bg.get("enabled") and bg.get("trading_paused"):
+        logger.error("Execution blocked — Blue Guardian daily pause: %s", bg.get("pause_reason"))
+        return None
+
     if fail_safe_missing("approved_signals.json", logger):
         return None
 

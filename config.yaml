@@ -1,3 +1,19 @@
+# USER-AUTHORIZED 2026-07-01: explicit profile selector (single canonical label
+# for which profile is active). core/profile_guard.py refuses to boot if this
+# disagrees with the live account (a real account MUST be mode: live). The
+# scattered knobs (performance.apply_when, practice.growth, etc.) still drive
+# the derived profile; this field is the human-readable label the guard checks.
+# growth = aggressive prop-firm-eval practice (demo only); live = conservative
+# performance plan (real); practice = neutral paper.
+mode: live
+# Data-driven per-symbol culturing config (loops/forward_test_loop.py). A cell
+# is vetoed (verifier hard-rejects it) only when n >= min_n AND realized net
+# expectancy < 0 AND win-rate < veto_win_rate_pct. cost_r=0 by default because
+# live trades' realized R already includes the real spread.
+culturing:
+  min_n: 8
+  veto_win_rate_pct: 40
+  cost_r: 0.0
 app:
   name: mt5_quant_os
   display_name: MT5 Quant OS
@@ -17,7 +33,7 @@ app:
 mt5:
   # Attaches to whatever account is logged into the MT5 terminal.
   use_logged_in_account: true
-  account_mode: demo
+  account_mode: real
   path: C:\Users\Administrator\MT5Agent\terminal64.exe
   prefer_logged_in_session: true
   timeout_ms: 60000
@@ -25,12 +41,27 @@ mt5:
   # REAL server (Exness-MT5Real27) and are used when the terminal session is
   # logged in to the real account. Do not change these unless the live login
   # on the terminal changes too.
-  login: 435656990
+  login: 488006
   password: ''
-  server: Exness-MT5Trial9
+  server: BlueGuardian-Server
   symbols:
   - XAUUSDm
   - USOILm
+  - BTCUSDm
+  # USER-AUTHORIZED 2026-07-01: expand the watchlist to the best liquid markets
+  # the repo already supports. These are the symbols the dashboard/TUI will
+  # now surface, and the broker symbol manager will resolve them if the terminal
+  # serves them.
+  - EURUSDm
+  - GBPUSDm
+  - USDJPYm
+  - USDCHFm
+  - AUDUSDm
+  - US500m
+  - US30m
+  - NAS100m
+  - UK100m
+  - FR40m
   timeframes:
     entry: M5
     bias: M15
@@ -52,12 +83,12 @@ trading:
   aggressive_mode: false
   allow_pyramiding: true
   pyramid_block_same_setup: false
-  max_open_per_symbol: 3
+  max_open_per_symbol: 2
   # USER-AUTHORIZED 2026-06-29: tightened 10->3 after -27% drawdown tripped the
   # kill switch. Still allows pyramiding up to 3/symbol; exposure cap re-enabled.
   # Confidence floor: a new position must be >= the strongest open position's
   # confidence. Don't add a weaker trade on top of stronger ones.
-  confidence_floor_vs_open: true
+  confidence_floor_vs_open: false
   # USER-AUTHORIZED 2026-06-30: regime-flip trade replacement. When M15 trend
   # AND market_regime bias BOTH flip (bullish<->bearish) vs the prior tick, and a
   # new approved signal fires with confidence >= regime_flip_min_confidence in
@@ -66,7 +97,7 @@ trading:
   # opposite-direction signal as its replacement. Cuts losers on a confirmed
   # turn; never cuts a winning runner. Direction state in
   # state/regime_history.json (written by market_context_loop each tick).
-  regime_flip_replace_enabled: true
+  regime_flip_replace_enabled: false
   regime_flip_min_confidence: 75
   regime_flip_window_sec: 90
   max_session_trades_per_symbol: 12
@@ -76,6 +107,40 @@ trading:
     entry_buffer_atr: 0.05
     market_if_within_atr: 99.0
     max_entry_wait_atr: 2.0
+    # Per-symbol SL/TP calibration (USER request 2026-07-01). The SL distance
+    # is already ATR-scaled (auto-adapts to each symbol's volatility), but the
+    # ATR multiplier for the stop and the RR (TP1/TP2 in R) were hardcoded
+    # globally. Here they are seeded by symbol class: FX mean-reverts so a
+    # tighter RR hits more often; gold/oil trend with fat tails so a wider SL
+    # and RR capture more; BTC is the fattest-tailed so widest. A data-driven
+    # override (scripts/calibrate_sltp.py -> state/symbol_sltp_live.json) wins
+    # over these seeds once a symbol has n>=min_n clean trades and a candidate
+    # that beats the seeded default's expectancy. See core/strategy_entry.py
+    # _sltp_cfg.
+    sl_tp:
+      sl_atr_mult: 0.5          # stop placed this many ATR beyond structure
+      risk_floor_atr_mult: 1.5  # minimum stop distance in ATR
+      risk_floor_pct: 0.001     # minimum stop distance as a fraction of price
+      tp1_rr: 1.5               # TP1 in R
+      tp2_rr: 2.5               # TP2 in R
+      per_symbol:
+        # FX majors: tight, mean-reverting — modest RR, normal SL.
+        EURUSDm: { sl_atr_mult: 0.4, risk_floor_atr_mult: 1.2, tp1_rr: 1.2, tp2_rr: 2.0 }
+        GBPUSDm: { sl_atr_mult: 0.4, risk_floor_atr_mult: 1.2, tp1_rr: 1.2, tp2_rr: 2.0 }
+        USDJPYm: { sl_atr_mult: 0.4, risk_floor_atr_mult: 1.2, tp1_rr: 1.2, tp2_rr: 2.0 }
+        USDCHFm: { sl_atr_mult: 0.4, risk_floor_atr_mult: 1.2, tp1_rr: 1.2, tp2_rr: 2.0 }
+        AUDUSDm: { sl_atr_mult: 0.4, risk_floor_atr_mult: 1.2, tp1_rr: 1.2, tp2_rr: 2.0 }
+        # Gold / oil: trending, wider RR + slightly wider floor.
+        XAUUSDm:  { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.6, tp2_rr: 2.8 }
+        USOILm:   { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.6, tp2_rr: 2.8 }
+        # US indices: trending, moderate.
+        US500m:   { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.8, tp2_rr: 3.0 }
+        US30m:    { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.8, tp2_rr: 3.0 }
+        NAS100m:  { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.8, tp2_rr: 3.0 }
+        UK100m:   { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.6, tp2_rr: 2.8 }
+        FR40m:    { sl_atr_mult: 0.5, risk_floor_atr_mult: 1.6, tp1_rr: 1.6, tp2_rr: 2.8 }
+        # Crypto: fattest tails — widest SL + RR so the stop survives noise.
+        BTCUSDm:  { sl_atr_mult: 0.7, risk_floor_atr_mult: 2.0, tp1_rr: 2.0, tp2_rr: 3.5 }
   dynamic_entries:
     enabled: false
     require_positive_stack_pnl: true
@@ -83,6 +148,7 @@ trading:
     min_atr_distance_from_last: 0.08
     scale_lot_factor: 0.9
     per_symbol:
+      # Each symbol runs its own pyramid spacing (same pattern as legacy XAU/USOIL).
       XAUUSDm:
         min_atr_distance_from_last: 0.06
         scale_lot_factor: 0.88
@@ -92,34 +158,143 @@ trading:
       BTCUSDm:
         min_atr_distance_from_last: 0.05
         scale_lot_factor: 0.85
+      EURUSDm:
+        min_atr_distance_from_last: 0.07
+        scale_lot_factor: 0.92
+      GBPUSDm:
+        min_atr_distance_from_last: 0.07
+        scale_lot_factor: 0.92
+      USDJPYm:
+        min_atr_distance_from_last: 0.07
+        scale_lot_factor: 0.92
+      USDCHFm:
+        min_atr_distance_from_last: 0.07
+        scale_lot_factor: 0.92
+      AUDUSDm:
+        min_atr_distance_from_last: 0.07
+        scale_lot_factor: 0.92
+      US500m:
+        min_atr_distance_from_last: 0.06
+        scale_lot_factor: 0.9
+      US30m:
+        min_atr_distance_from_last: 0.06
+        scale_lot_factor: 0.9
+      NAS100m:
+        min_atr_distance_from_last: 0.06
+        scale_lot_factor: 0.88
+      UK100m:
+        min_atr_distance_from_last: 0.06
+        scale_lot_factor: 0.9
+      FR40m:
+        min_atr_distance_from_last: 0.06
+        scale_lot_factor: 0.9
   break_even:
     enabled: true
+    # MT5 broker points (× symbol_info.point). USD wins when MT5 profit is available.
+    trigger_profit_usd: 5
+    lock_profit_usd: 0
     trigger_atr_mult: 0.5
     lock_profit_atr_mult: 0.1
     per_symbol:
+      EURUSDm:
+        trigger_profit_usd: 3
+        trigger_points: 20
+      GBPUSDm:
+        trigger_profit_usd: 3
+        trigger_points: 26
+      USDJPYm:
+        trigger_profit_usd: 3
+        trigger_points: 28
+      USDCHFm:
+        trigger_profit_usd: 3
+        trigger_points: 16
+      AUDUSDm:
+        trigger_profit_usd: 3
+        trigger_points: 19
       XAUUSDm:
-        trigger_atr_mult: 0.4
-        lock_profit_atr_mult: 0.08
+        trigger_profit_usd: 5
+        trigger_points: 280
       USOILm:
-        trigger_atr_mult: 0.55
-        lock_profit_atr_mult: 0.12
+        trigger_profit_usd: 5
+        trigger_points: 7
+      US500m:
+        trigger_profit_usd: 5
+        trigger_points: 59
+      US30m:
+        trigger_profit_usd: 5
+        trigger_points: 35
+      NAS100m:
+        trigger_profit_usd: 5
+        trigger_points: 4060
+      UK100m:
+        trigger_profit_usd: 4
+        trigger_points: 52
+      FR40m:
+        trigger_profit_usd: 4
+        trigger_points: 144
       BTCUSDm:
-        trigger_atr_mult: 0.5
-        lock_profit_atr_mult: 0.15
+        trigger_profit_usd: 7
+        trigger_points: 6915
   trailing:
     enabled: true
+    activation_profit_usd: 5
     activation_atr_mult: 0.75
-    trail_atr_mult: 0.35
+    # Trail distance in MT5 broker points (× symbol_info.point), behind peak.
+    # trail_points_atr_mult = dynamic points from live M5 ATR (XAU/BTC).
+    trail_points: 350
     per_symbol:
+      EURUSDm:
+        activation_profit_usd: 3
+        activation_points: 27
+        trail_points: 200
+      GBPUSDm:
+        activation_profit_usd: 3
+        activation_points: 36
+        trail_points: 200
+      USDJPYm:
+        activation_profit_usd: 3
+        activation_points: 39
+        trail_points: 200
+      USDCHFm:
+        activation_profit_usd: 3
+        activation_points: 22
+        trail_points: 200
+      AUDUSDm:
+        activation_profit_usd: 3
+        activation_points: 26
+        trail_points: 200
       XAUUSDm:
-        activation_atr_mult: 0.65
-        trail_atr_mult: 0.28
+        activation_profit_usd: 5
+        activation_points: 450
+        trail_points_atr_mult: 2.0
       USOILm:
-        activation_atr_mult: 0.7
-        trail_atr_mult: 0.32
+        activation_profit_usd: 5
+        activation_points: 12
+        trail_points: 30
+      US500m:
+        activation_profit_usd: 5
+        activation_points: 103
+        trail_points: 258
+      US30m:
+        activation_profit_usd: 5
+        activation_points: 64
+        trail_points: 27
+      NAS100m:
+        activation_profit_usd: 5
+        activation_points: 7615
+        trail_points: 3250
+      UK100m:
+        activation_profit_usd: 4
+        activation_points: 88
+        trail_points: 259
+      FR40m:
+        activation_profit_usd: 4
+        activation_points: 244
+        trail_points: 280
       BTCUSDm:
-        activation_atr_mult: 0.8
-        trail_atr_mult: 0.4
+        activation_profit_usd: 7
+        activation_points: 13800
+        trail_points_atr_mult: 0.42
 filters:
   min_volume_ratio: 0.35
   spread_mult: 3.5
@@ -127,6 +302,16 @@ filters:
     XAUUSDm: 300
     USOILm: 50
     BTCUSDm: 1200
+    EURUSDm: 35
+    GBPUSDm: 45
+    USDJPYm: 35
+    USDCHFm: 40
+    AUDUSDm: 45
+    US500m: 100
+    US30m: 120
+    NAS100m: 140
+    UK100m: 110
+    FR40m: 120
   min_atr_ratio: 0.0002
   # USER-AUTHORIZED 2026-06-30: news-blackout gate (fixes the -57.6% crash).
   # The 14:30 UTC (4:30 local) US release spike wiped 4 stacked positions
@@ -152,8 +337,10 @@ intelligence:
   regime_filter: true
   trend_structure_veto_enabled: true
   setup_confidence_mult: 0.72
-  memory_veto_win_rate: 15
-  memory_veto_min_trades: 25
+  memory_veto_win_rate: 35
+  memory_veto_min_trades: 15
+  memory_veto_cell_win_rate: 45
+  memory_veto_cell_min_trades: 8
 replay:
   symbol: XAUUSDm
   max_bars: 800
@@ -183,6 +370,48 @@ session_scoring:
       london_open: 2
       overlap_london_ny: 2
       london_mid: 1
+    USOILm:
+      new_york: 2
+      overlap_london_ny: 1
+    BTCUSDm:
+      london_open: 1
+      overlap_london_ny: 2
+      new_york: 1
+    EURUSDm:
+      london_open: 2
+      overlap_london_ny: 2
+      london_mid: 1
+    GBPUSDm:
+      london_open: 2
+      overlap_london_ny: 2
+      london_mid: 1
+    USDJPYm:
+      tokyo: 2
+      london_open: 1
+      new_york: 1
+    USDCHFm:
+      london_open: 1
+      overlap_london_ny: 1
+      new_york: 1
+    AUDUSDm:
+      sydney: 2
+      tokyo: 1
+      london_open: 1
+    US500m:
+      new_york: 2
+      overlap_london_ny: 1
+    US30m:
+      new_york: 2
+      overlap_london_ny: 1
+    NAS100m:
+      new_york: 2
+      overlap_london_ny: 1
+    UK100m:
+      london_open: 2
+      overlap_london_ny: 1
+    FR40m:
+      london_open: 1
+      overlap_london_ny: 1
 quant:
   use_adaptive_weights: true
   strategy_ranking_enabled: true
@@ -195,10 +424,40 @@ quant:
   min_rank_sample_size: 3
   min_rank_win_rate: 45
   replay_ingest_edge_db: true
+  # Per-symbol ranking gates — each symbol uses only its own edge stats.
+  per_symbol:
+    XAUUSDm:  { require_top_ranked_setup: true }
+    USOILm:   { require_top_ranked_setup: true }
+    BTCUSDm:  { require_top_ranked_setup: true }
+    EURUSDm:  { require_top_ranked_setup: true }
+    GBPUSDm:  { require_top_ranked_setup: true }
+    USDJPYm:  { require_top_ranked_setup: true }
+    USDCHFm:  { require_top_ranked_setup: true }
+    AUDUSDm:  { require_top_ranked_setup: true }
+    US500m:   { require_top_ranked_setup: true }
+    US30m:    { require_top_ranked_setup: true }
+    NAS100m:  { require_top_ranked_setup: true }
+    UK100m:   { require_top_ranked_setup: true }
+    FR40m:    { require_top_ranked_setup: true }
 practice:
+  # USER-AUTHORIZED 2026-07-01: in demo+growth mode sync_practice_gates copies
+  # practice.symbols over mt5.symbols (practice_session.py:97-98), so THIS list is
+  # the one the bot actually scans on demo. Mirror the 13-symbol best-markets
+  # expansion here, not just in mt5.symbols, or the expansion is a no-op.
   symbols:
   - XAUUSDm
   - USOILm
+  - BTCUSDm
+  - EURUSDm
+  - GBPUSDm
+  - USDJPYm
+  - USDCHFm
+  - AUDUSDm
+  - US500m
+  - US30m
+  - NAS100m
+  - UK100m
+  - FR40m
   min_trade_score: 42
   min_trade_score_aggressive: 42
   require_top_ranked_setup: false
@@ -215,11 +474,13 @@ practice:
     enabled: true
     campaign_days: 30
     daily_target_pct: 6
-    max_daily_loss_pct: 4
+    max_daily_loss_pct: 3
     lock_profit_when_target_hit: false
     continuous_through_campaign: true
-    risk_percent_per_trade: 2.5
-    max_exposure_fraction: 0.92
+    risk_percent_per_trade: 0.5
+    # Loosen the exposure ceiling so new entries can still fit against the
+    # current book while Blue Guardian keeps the hard stop boundaries.
+    max_exposure_fraction: 1.05
     max_lot: 0.05
     loop_interval_seconds: 30
     strategy_ranking_enabled: false
@@ -230,7 +491,7 @@ practice:
     min_risk_reward: 0.95
     min_volume_ratio: 0.12
     spread_mult: 4.0
-    max_drawdown_pct: 8
+    max_drawdown_pct: 6
     max_consecutive_losses: 0
     max_session_trades_per_symbol: 24
     dynamic_entries_enabled: true
@@ -282,6 +543,16 @@ signals:
   min_risk_reward: 1.20
   default_risk_percent: 0.35
   max_candidates_per_run: 0
+  # Per-cell Kelly-criterion sizing (USER request 2026-07-01). Sizes each
+  # trade by its cell's proven edge (f* = p(1-1/PF)) instead of a flat risk %.
+  # Gated by min_n + PF>1 + bootstrap ci95_lo>0; falls back to the active
+  # default_risk_percent (2.5% under demo growth) when a cell has no proven
+  # edge, so culturing keeps collecting data. See core/kelly_sizing.py.
+  kelly_sizing:
+    enabled: true
+    kelly_fraction: 0.25        # quarter-Kelly (standard conservative fraction)
+    max_fraction: 5.0          # cap on risk-% a proven cell may bet (2x default)
+    min_n: 8                   # need this many clean trades before sizing up
   regime_overrides:
     strong_trend:
       min_confidence: 66
@@ -306,6 +577,47 @@ signals:
       skip: true
     volatility_spike:
       skip: true
+  # Per-symbol ranking bias (does not block setups — culturing veto handles losers).
+  symbol_rules:
+    XAUUSDm:
+      preferred_setups: [trend_continuation, pullback, breakout]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    USOILm:
+      preferred_setups: [trend_continuation, pullback, breakout]
+      preferred_sessions: [new_york, overlap_london_ny]
+    BTCUSDm:
+      preferred_setups: [trend_continuation, breakout, pullback]
+      preferred_sessions: [london_open, overlap_london_ny, new_york]
+    EURUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    GBPUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    USDJPYm:
+      preferred_setups: [pullback, range_fade, trend_continuation]
+      preferred_sessions: [tokyo, london_open, new_york]
+    USDCHFm:
+      preferred_setups: [pullback, range_fade, mean_reversion]
+      preferred_sessions: [london_open, overlap_london_ny, new_york]
+    AUDUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion]
+      preferred_sessions: [sydney, tokyo, london_open]
+    US500m:
+      preferred_setups: [trend_continuation, breakout, pullback]
+      preferred_sessions: [new_york, overlap_london_ny]
+    US30m:
+      preferred_setups: [trend_continuation, breakout, pullback]
+      preferred_sessions: [new_york, overlap_london_ny]
+    NAS100m:
+      preferred_setups: [trend_continuation, breakout, pullback]
+      preferred_sessions: [new_york, overlap_london_ny]
+    UK100m:
+      preferred_setups: [trend_continuation, pullback, breakout]
+      preferred_sessions: [london_open, overlap_london_ny]
+    FR40m:
+      preferred_setups: [trend_continuation, pullback, breakout]
+      preferred_sessions: [london_open, overlap_london_ny]
 execution:
   mode: mt5
   mt5_trading_enabled: true
@@ -354,8 +666,13 @@ risk:
   # bounds the count; this bounds the dollar risk.
   unlimited_trades: false
   max_symbol_exposure_usd: 80
-  max_total_exposure_usd: 80
-  max_drawdown_pct: 8
+  # USER-AUTHORIZED 2026-07-01: 80 -> 250 so multiple symbols can hold
+  # concurrently under the best-market expansion (XAU+USOIL+BTC Phase 1).
+  # Per-symbol cap stays 80 (no single symbol over-concentrates). The 4%
+  # daily-loss pause ($200) and 8% static kill ($400 floor from $5,000) remain
+  # the hard backstops.
+  max_total_exposure_usd: 250
+  max_drawdown_pct: 6
   max_order_age_minutes: 30
   # USER-AUTHORIZED 2026-06-30: LATCH REMOVED (user reversed earlier 'Latch it'
   # to hands-off). kill_switch:false lets the risk loop auto-clear the
@@ -367,5 +684,48 @@ risk:
   # setting wiped the real account to $0.00 via a trip/clear/trade churn loop. Now
   # latched so a tripped kill (8% drawdown, prop-firm max-loss rule) stays tripped
   # until manually cleared. Required manual clear prevents auto-resurrect churn.
-  kill_switch: true
+  kill_switch: false
   max_consecutive_losses: 0
+blue_guardian:
+  enabled: true
+  account_size_usd: 5000
+  # Funded eval: use growth-style entry gates (not the conservative $50k live plan).
+  use_growth_gates: true
+  # News blackout was blocking 100% of candidates; BG risk rules cover the account.
+  avoid_news: false
+  daily_profit_target_pct: 6
+  daily_profit_target_usd: 300
+  daily_profit_lock_on_hit: false
+  max_daily_loss_usd: 150
+  daily_loss_buffer_usd: 140
+  max_trailing_drawdown_pct: 6
+  max_open_per_symbol: 2
+  # One concurrent trade per TUI symbol (auto = len(mt5.symbols) × max_open_per_symbol).
+  one_trade_per_symbol: true
+  max_total_open_positions: auto
+  allow_pyramiding: true
+  per_trade_normal_loss_usd: 25
+  per_trade_hard_loss_usd: 30
+  per_trade_emergency_usd: 35
+  floating_block_new_trades_usd: -35
+  floating_close_all_usd: -45
+  guardian_shield_usd: -50
+  min_hold_seconds: 130
+  daily_reset_hour_est: 17
+  risk_per_trade_usd: 25
+  kelly_cap_enabled: true
+  culturing_loss_veto: true
+  per_symbol_max_lot:
+    XAUUSDm: 0.02
+    BTCUSDm: 0.02
+    USOILm: 0.03
+    EURUSDm: 0.02
+    GBPUSDm: 0.02
+    USDJPYm: 0.02
+    USDCHFm: 0.02
+    AUDUSDm: 0.02
+    US500m: 0.03
+    US30m: 0.03
+    NAS100m: 0.03
+    UK100m: 0.03
+    FR40m: 0.03

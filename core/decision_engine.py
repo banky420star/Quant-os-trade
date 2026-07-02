@@ -170,7 +170,7 @@ class DecisionEngine:
         setup_type = setup["setup_type"]
 
         if strategy_entries_enabled(self.config):
-            levels = pin_strategy_entry(setup_type, side, feat, ctx, self.config)
+            levels = pin_strategy_entry(setup_type, side, feat, ctx, self.config, symbol)
             entry = levels["entry"]
             sl = levels["sl"]
             tp1 = levels["tp1"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.blue_guardian import blue_guardian_enabled, blue_guardian_settings
 from core.daily_growth import growth_plan_enabled, growth_settings
 from core.performance_projection import TARGET_MONTHLY_PNL_USD
 
@@ -25,7 +26,14 @@ def runtime_mode_summary(config: dict[str, Any]) -> dict[str, Any]:
     account_mode = str(config.get("mt5", {}).get("account_mode", "demo")).lower()
     plan_active = performance_gates_active(config)
     perf = config.get("performance") or {}
-    if plan_active:
+    if blue_guardian_enabled(config) and account_mode == "real":
+        bg = blue_guardian_settings(config)
+        label = "blue_guardian"
+        detail = (
+            f"Blue Guardian Instant ${bg['account_size_usd']:,.0f} eval on {account_mode} account "
+            f"(target +{bg['daily_profit_target_pct']:.0f}%/day, ${bg['daily_profit_target_usd']:.0f})"
+        )
+    elif plan_active:
         label = "live_plan"
         detail = (
             f"$50k performance plan active on {account_mode} account "
@@ -64,4 +72,31 @@ def runtime_mode_summary(config: dict[str, Any]) -> dict[str, Any]:
         "daily_target_pct": float(growth.get("daily_target_pct", 0)) if growth else 0.0,
         "apply_when": perf.get("apply_when", "real"),
         "starting_cash": float(config.get("execution", {}).get("starting_cash", 0)),
+    }
+
+
+def validate_runtime_profile(config: dict[str, Any]) -> dict[str, Any]:
+    """Refuse startup when the live account and active profile disagree."""
+    account_mode = str(config.get("mt5", {}).get("account_mode", "demo")).lower()
+    perf_active = performance_gates_active(config)
+    growth_active = growth_plan_enabled(config)
+    issues: list[str] = []
+
+    bg_eval = blue_guardian_enabled(config) and account_mode == "real"
+
+    if account_mode == "real":
+        if not perf_active and not bg_eval:
+            issues.append("real_account_requires_performance.apply_when=real")
+        if growth_active and not bg_eval:
+            issues.append("real_account_cannot_run_practice_growth")
+    elif account_mode == "demo" and perf_active and growth_active:
+        issues.append("demo_account_conflicts_with_growth_campaign")
+
+    if issues:
+        raise RuntimeError("Runtime profile mismatch: " + "; ".join(issues))
+
+    return {
+        "account_mode": account_mode,
+        "performance_plan_active": perf_active,
+        "growth_plan_active": growth_active,
     }

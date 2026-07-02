@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.utils import read_json_state
+
 
 def strategy_entries_enabled(config: dict[str, Any]) -> bool:
     return bool(config.get("trading", {}).get("strategy_entries", {}).get("enabled", True))
@@ -15,6 +17,49 @@ def _cfg(config: dict[str, Any]) -> dict[str, Any]:
 
 def _round_price(value: float, digits: int = 5) -> float:
     return round(value, digits)
+
+
+# Default SL/TP calibration knobs (global). Overridden per-symbol in config
+# trading.strategy_entries.sl_tp.per_symbol, and at runtime by a data-driven
+# live override in state/symbol_sltp_live.json (written by
+# scripts/calibrate_sltp.py once a symbol has enough clean trades).
+_SLTP_DEFAULTS = {
+    "sl_atr_mult": 0.5,         # ATR beyond structure for the stop
+    "risk_floor_atr_mult": 1.5, # minimum stop distance, in ATR
+    "risk_floor_pct": 0.001,    # minimum stop distance, as a fraction of price
+    "tp1_rr": 1.5,              # TP1 in R (risk = entry - sl)
+    "tp2_rr": 2.5,              # TP2 in R
+}
+
+
+def _sltp_cfg(config: dict[str, Any], symbol: str | None) -> dict[str, Any]:
+    """Resolve SL/TP calibration for a symbol.
+
+    Precedence: data-driven live override (symbol_sltp_live.json, only when
+    ``trusted``) > config per_symbol > config global > hardcoded defaults.
+    """
+    se = _cfg(config)
+    block = se.get("sl_tp") if isinstance(se, dict) else None
+    base = dict(_SLTP_DEFAULTS)
+    if isinstance(block, dict):
+        for k in _SLTP_DEFAULTS:
+            if k in block:
+                base[k] = block[k]
+        per = block.get("per_symbol") if isinstance(block.get("per_symbol"), dict) else {}
+        if symbol and symbol in per and isinstance(per[symbol], dict):
+            base.update({k: per[symbol][k] for k in _SLTP_DEFAULTS if k in per[symbol]})
+
+    # Data-driven live override (calibrate_sltp.py). Only honored when marked
+    # trusted (n >= min_n AND beats the seeded default's expectancy).
+    try:
+        live = read_json_state("symbol_sltp_live.json", default={}) or {}
+        if isinstance(live, dict):
+            sym_live = (live.get("symbols") or {}).get(symbol) if isinstance(live.get("symbols"), dict) else None
+            if isinstance(sym_live, dict) and sym_live.get("trusted"):
+                base.update({k: sym_live[k] for k in _SLTP_DEFAULTS if k in sym_live})
+    except Exception:
+        pass
+    return base
 
 
 def _anchor_for_setup(
@@ -84,21 +129,30 @@ def _levels_from_entry(
     side: str,
     feat: dict[str, Any],
     atr: float,
+    symbol: str | None,
+    config: dict[str, Any],
 ) -> tuple[float, float, float]:
+    c = _sltp_cfg(config, symbol)
+    sl_atr_mult = float(c.get("sl_atr_mult", 0.5))
+    risk_floor_atr_mult = float(c.get("risk_floor_atr_mult", 1.5))
+    risk_floor_pct = float(c.get("risk_floor_pct", 0.001))
+    tp1_rr = float(c.get("tp1_rr", 1.5))
+    tp2_rr = float(c.get("tp2_rr", 2.5))
+
     support = float(feat.get("support", entry - atr))
     resistance = float(feat.get("resistance", entry + atr))
-    risk_floor = max(atr * 1.5, entry * 0.001)
+    risk_floor = max(atr * risk_floor_atr_mult, entry * risk_floor_pct)
 
     if side == "BUY":
-        sl = min(support - 0.5 * atr, entry - risk_floor)
+        sl = min(support - sl_atr_mult * atr, entry - risk_floor)
         risk = max(entry - sl, risk_floor)
-        tp1 = entry + risk * 1.5
-        tp2 = entry + risk * 2.5
+        tp1 = entry + risk * tp1_rr
+        tp2 = entry + risk * tp2_rr
     else:
-        sl = max(resistance + 0.5 * atr, entry + risk_floor)
+        sl = max(resistance + sl_atr_mult * atr, entry + risk_floor)
         risk = max(sl - entry, risk_floor)
-        tp1 = entry - risk * 1.5
-        tp2 = entry - risk * 2.5
+        tp1 = entry - risk * tp1_rr
+        tp2 = entry - risk * tp2_rr
 
     return sl, tp1, tp2
 
@@ -122,11 +176,14 @@ def pin_strategy_entry(
     feat: dict[str, Any],
     ctx: dict[str, Any],
     config: dict[str, Any],
+    symbol: str | None = None,
 ) -> dict[str, Any]:
     """
     Compute strategy-pinned entry, SL, TP and whether to use a limit/stop order.
 
     Entry is anchored to the technical level the setup describes — not the live tick.
+    SL/TP calibration (ATR multiples, RR) is resolved per-symbol via
+    ``_sltp_cfg`` (config per_symbol + live data-driven override).
     """
     price = float(feat.get("price", 0))
     atr = float(feat.get("atr", price * 0.001) or price * 0.001)
@@ -146,7 +203,7 @@ def pin_strategy_entry(
         entry = _round_price(price)
 
     # SL/TP must use the final entry (market snap can move entry away from the anchor).
-    sl, tp1, tp2 = _levels_from_entry(entry, side, feat, atr)
+    sl, tp1, tp2 = _levels_from_entry(entry, side, feat, atr, symbol, config)
     sl = _round_price(sl)
     tp1 = _round_price(tp1)
     tp2 = _round_price(tp2)

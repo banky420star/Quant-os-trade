@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
 from core.equity_tracker import record_snapshot
 from core.risk_manager import RiskManager
 from core.utils import load_config, read_json_state, setup_logger, write_json_state
@@ -43,6 +44,18 @@ def run() -> dict:
 
     manager = RiskManager(config, logger)
     result = manager.evaluate(positions, orders, balance, trades, features, kill_existing)
+
+    if blue_guardian_enabled(config):
+        eq = float(balance.get("equity", 0) or 0)
+        cash = float(balance.get("cash", eq) or eq)
+        bg = evaluate_daily_state(config, balance=cash, equity=eq)
+        result["risk_state"]["blue_guardian"] = bg
+        if bg.get("trading_paused"):
+            result["kill_switch"] = {
+                "kill_switch": True,
+                "reason": bg.get("pause_reason") or "Blue Guardian daily pause",
+                "activated_at": kill_existing.get("activated_at") or result["kill_switch"].get("activated_at"),
+            }
 
     write_json_state("risk_state.json", result["risk_state"])
     write_json_state("kill_switch.json", result["kill_switch"])

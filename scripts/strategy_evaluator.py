@@ -64,7 +64,21 @@ from core.utils import DATA_DIR, load_config, setup_logger  # noqa: E402
 # 2026-06-26. Used for spread-gating; the verifier caps are generous
 # (XAU<=1050, USOIL<=175, BTC<=4200 after spread_mult=3.5) so this mainly
 # matters on wide-spread bars.
-LIVE_SPREAD_POINTS = {"XAUUSDm": 240.0, "USOILm": 20.0, "BTCUSDm": 1000.0}
+LIVE_SPREAD_POINTS = {
+    "XAUUSDm": 240.0,
+    "USOILm": 20.0,
+    "BTCUSDm": 1000.0,
+    "EURUSDm": 25.0,
+    "GBPUSDm": 30.0,
+    "USDJPYm": 25.0,
+    "USDCHFm": 30.0,
+    "AUDUSDm": 30.0,
+    "US500m": 80.0,
+    "US30m": 90.0,
+    "NAS100m": 100.0,
+    "UK100m": 80.0,
+    "FR40m": 80.0,
+}
 
 REAL_HISTORY_DIR = DATA_DIR / "history"
 
@@ -273,7 +287,12 @@ def compute_stats(
     losses = [r for r in rs if r <= 0]
     gross_win = sum(wins)
     gross_loss = -sum(losses)
-    pf = round(gross_win / gross_loss, 3) if gross_loss > 0 else float("inf")
+    # profit_factor is undefined when there are no losses; emit None (JSON null)
+    # instead of float("inf"). Python's json.dumps writes bare `Infinity` tokens
+    # (invalid JSON per RFC 8259) which browsers' JSON.parse reject — that broke
+    # the dashboard (forward_test_ledger cells -> /api/summary -> res.json()
+    # threw -> data never populated). null is spec-compliant and meaningful.
+    pf = round(gross_win / gross_loss, 3) if gross_loss > 0 else None
 
     # Max drawdown over the R-curve (cumulative sum of R).
     peak = 0.0

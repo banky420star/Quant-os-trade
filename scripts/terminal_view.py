@@ -26,6 +26,24 @@ from pathlib import Path
 
 STATE = Path(__file__).resolve().parent.parent / "state"
 
+# Canonical pipeline order (core/pipeline.py) — used to sort supervisor loop rows.
+PIPELINE_LOOP_ORDER = [
+    "pipeline",
+    "data_loop",
+    "feature_loop",
+    "market_context_loop",
+    "forward_test_loop",
+    "risk_loop",
+    "signal_loop",
+    "verifier_loop",
+    "execution_loop",
+    "blue_guardian_loop",
+    "position_manager_loop",
+    "memory_loop",
+    "trade_log_loop",
+    "health_loop",
+]
+
 # ---- ANSI -----------------------------------------------------------------
 USE_COLOR = True
 
@@ -134,12 +152,14 @@ def _bar(pct: float, width: int = 24) -> str:
 
 
 # ---- sections -------------------------------------------------------------
-def _header(acc, sup, rt) -> str:
+def _header(acc, sup, rt, bg=None) -> str:
     login = acc.get("login", "—")
     server = acc.get("server", "—")
     mode = acc.get("account_mode", "—")
     mode_col = GREEN if str(mode).lower() == "demo" else RED + B
     label = rt.get("label", "—") if isinstance(rt, dict) else "—"
+    if isinstance(bg, dict) and bg.get("enabled"):
+        label = f"{label} · {CYAN}blue guardian $5k{R}"
     up = sup.get("uptime_seconds") if isinstance(sup, dict) else None
     up_s = f"{int(up)//3600}h{(int(up)%3600)//60}m" if isinstance(up, (int, float)) else "—"
     now = datetime.now().strftime("%H:%M:%S")
@@ -150,7 +170,7 @@ def _header(acc, sup, rt) -> str:
     return line1 + "\n" + line2 + "\n" + GREY + "─" * 92 + R
 
 
-def _kpi_row(acc, dg, ks, hlt, sup, pos) -> str:
+def _kpi_row(acc, dg, ks, hlt, sup, pos, bg=None) -> str:
     bal = acc.get("balance")
     eq = acc.get("equity")
     try:
@@ -161,7 +181,10 @@ def _kpi_row(acc, dg, ks, hlt, sup, pos) -> str:
     kill = bool(ks.get("kill_switch")) if isinstance(ks, dict) else False
     hstatus = hlt.get("status", "—") if isinstance(hlt, dict) else "—"
     npos = len(pos.get("positions", [])) if isinstance(pos, dict) else 0
-    day_pct = dg.get("daily_pnl_pct") if isinstance(dg, dict) else None
+    if isinstance(bg, dict) and bg.get("enabled"):
+        day_pct = bg.get("daily_pnl_pct")
+    else:
+        day_pct = dg.get("daily_pnl_pct") if isinstance(dg, dict) else None
     day_col = GREEN if (isinstance(day_pct, (int, float)) and day_pct >= 0) else RED
     sysres = sup.get("system", {}) if isinstance(sup, dict) else {}
     cpu = sysres.get("cpu_pct")
@@ -184,7 +207,35 @@ def _kpi_row(acc, dg, ks, hlt, sup, pos) -> str:
     return "  ".join(cells)
 
 
-def _growth_section(dg, baseline) -> str:
+def _blue_guardian_section(bg, pos) -> str:
+    if not isinstance(bg, dict) or not bg.get("enabled"):
+        return ""
+    positions = pos.get("positions", []) if isinstance(pos, dict) else []
+    floating = round(sum(float(p.get("profit", 0) or 0) for p in positions), 2)
+    fcol = GREEN if floating >= -35 else (YELLOW if floating >= -45 else RED)
+    tgt = float(bg.get("daily_profit_target_usd", 300) or 300)
+    day_pnl = float(bg.get("daily_pnl", 0) or 0)
+    dcol = GREEN if day_pnl >= 0 else RED
+    paused = bool(bg.get("trading_paused"))
+    bar_pct = min(100.0, max(0.0, day_pnl / tgt * 100.0)) if tgt else 0.0
+    head = (
+        f"{B}blue guardian{R} {DIM}instant $5k{R}  "
+        f"day {dcol}{_signed(day_pnl)}{R}/{_money(tgt)} ({bg.get('daily_profit_target_pct', 6):.0f}%)  "
+        f"float {fcol}{_signed(floating)}{R}  "
+        f"open {len(positions)}/{bg.get('max_total_open_positions', '—')}"
+    )
+    flags = ""
+    if paused:
+        flags = f"  {RED}{B}PAUSED{R} {bg.get('pause_reason', '')}"
+    shield = float(bg.get("guardian_shield_usd", -50) or -50)
+    shield_dist = round(floating - shield, 2)
+    bar = f"  {dcol}{_bar(bar_pct)}{R} {GREY}{bar_pct:.0f}% of +6% target{R}  shield buffer {_signed(shield_dist)}"
+    return head + flags + "\n" + bar
+
+
+def _growth_section(dg, baseline, bg=None) -> str:
+    if isinstance(bg, dict) and bg.get("enabled"):
+        return ""
     if not isinstance(dg, dict) or not dg.get("enabled"):
         return f"{GREY}growth campaign: disabled{R}"
     tgt = float(dg.get("target_pct", 0) or 0)
@@ -264,10 +315,14 @@ def _signal_flow_section(approved, rejected) -> str:
     a_n = (approved.get("count") if isinstance(approved, dict) else None) or 0
     r_n = (rejected.get("count") if isinstance(rejected, dict) else None) or 0
     rej = rejected.get("rejected", []) if isinstance(rejected, dict) else []
-    head = (f"{B}signal flow (reviewer/filter){R}  "
+    spread_src = approved.get("spread_source") if isinstance(approved, dict) else None
+    spread_age = _age_str(approved.get("timestamp")) if isinstance(approved, dict) else "—"
+    src_col = GREEN if spread_src == "mt5" else (YELLOW if spread_src else GREY)
+    head = (f"{B}signal flow (verifier){R}  "
             f"{GREY}candidates{R} {B}{cand if cand is not None else '—'}{R}  "
             f"{GREEN}approved{R} {B}{a_n}{R}  "
-            f"{RED}rejected{R} {B}{r_n}{R}")
+            f"{RED}rejected{R} {B}{r_n}{R}  "
+            f"{GREY}spreads{R} {src_col}{spread_src or '—'}{R} {GREY}({spread_age} ago){R}")
     lines = [head]
     if rej:
         lines.append(f"  {GREY}latest rejections (which gates fired):{R}")
@@ -290,22 +345,339 @@ def _signal_flow_section(approved, rejected) -> str:
     return "\n".join(lines)
 
 
-def _loops_section(sup) -> str:
-    loops = sup.get("loops", []) if isinstance(sup, dict) else []
+def _rankings_section(rankings) -> str:
+    """Per-symbol strategy rankings (signal_loop -> strategy_rankings.json)."""
+    data = rankings if isinstance(rankings, dict) else {}
+    by_sym = data.get("rankings", {}) if isinstance(data.get("rankings"), dict) else {}
+    if not by_sym:
+        return ""
+    age = _age_str(data.get("timestamp"))
+    head = (f"{B}strategy rankings (per symbol){R}  "
+            f"{GREY}updated {age} ago{R}")
+    lines = [head]
+    for sym in sorted(by_sym.keys()):
+        rows = by_sym.get(sym) or []
+        if not rows:
+            lines.append(f"  {sym:<10} {GREY}no rankings yet{R}")
+            continue
+        top = rows[0] if isinstance(rows[0], dict) else {}
+        setup = str(top.get("setup_type", "—"))
+        wr = top.get("win_rate_pct", top.get("score", 0))
+        total = top.get("total", 0)
+        insuf = top.get("insufficient_data")
+        if insuf or not total:
+            tag = f"{YELLOW}building own history{R}"
+        else:
+            tag = f"{GREEN}{wr:.1f}%{R} {GREY}n={total}{R}"
+        lines.append(f"  {sym:<10} #{1} {setup:<18} {tag}")
+        if len(rows) > 1 and isinstance(rows[1], dict):
+            second = rows[1]
+            s2 = str(second.get("setup_type", ""))
+            wr2 = second.get("win_rate_pct", second.get("score", 0))
+            n2 = second.get("total", 0)
+            if s2:
+                lines.append(f"  {'':10} #{2} {DIM}{s2:<18} {wr2:.1f}% n={n2}{R}")
+    return "\n".join(lines)
+
+
+def _culturing_section(ledger, policy) -> str:
+    """Data-driven per-symbol culturing ledger + veto (forward_test_loop).
+
+    Reads state/forward_test_ledger.json (per-cell stats) + symbol_policy_live.json
+    (vetoed cells). Shows total cells, vetoed count, and per-symbol worst cell +
+    vetoed cell keys. This is the UI mirror of the verifier's data_driven_veto
+    gate so the user can see *which* cells the live forward-test pruned.
+    """
+    led = ledger if isinstance(ledger, dict) else {}
+    pol = policy if isinstance(policy, dict) else {}
+    if not led and not pol:
+        return ""
+    total = led.get("total_cells", 0)
+    vetoed = led.get("total_vetoed", 0)
+    cfg = led.get("config", {}) or {}
+    min_n = cfg.get("min_n", pol.get("min_n", "—"))
+    vwr = cfg.get("veto_win_rate_pct", pol.get("veto_win_rate_pct", "—"))
+    cells_map = led.get("cells", {}) if isinstance(led.get("cells"), dict) else {}
+    head = (f"{B}culturing ledger (data-driven veto){R}  "
+            f"{GREY}cells{R} {B}{total}{R}  "
+            f"{RED}vetoed{R} {B}{vetoed}{R}  "
+            f"{GREY}min_n={min_n} veto_wr<{vwr}%{R}")
+    lines = [head]
+    syms = pol.get("symbols", {}) if isinstance(pol.get("symbols"), dict) else {}
+    if not cells_map and not syms:
+        lines.append(f"  {GREY}no cells yet — forward_test_loop hasn't recorded a cycle{R}")
+        return "\n".join(lines)
+    all_symbols = sorted(set(cells_map.keys()) | set(syms.keys()))
+    for sym in all_symbols:
+        cells = cells_map.get(sym, {})
+        sym_v = set((syms.get(sym, {}) or {}).get("vetoed_cells", []) or [])
+        # worst cell by realized net expectancy
+        worst = None
+        for cell, st in cells.items():
+            if not isinstance(st, dict):
+                continue
+            try:
+                net = float(st.get("expectancy_net_r", 0))
+            except (TypeError, ValueError):
+                continue
+            if worst is None or net < worst[1]:
+                worst = (cell, net, st)
+        n_cells = len(cells)
+        v_n = len(sym_v)
+        tag = f"{RED}vetoed {v_n}{R}" if v_n else f"{GREEN}vetoed 0{R}"
+        line = f"  {sym:<10} {GREY}cells={n_cells}{R} {tag}"
+        if worst:
+            wcell, wnet, wst = worst
+            wc = wcell if len(wcell) <= 40 else wcell[:37] + "..."
+            n = wst.get("n", 0)
+            try:
+                wr = float(wst.get("win_rate_pct", 0))
+            except (TypeError, ValueError):
+                wr = 0.0
+            vlabel = str(wst.get("verdict", ""))
+            vcol = RED if vlabel == "vetoed" else GREY
+            avg_l = wst.get("avg_loss_usd")
+            max_l = wst.get("max_loss_usd")
+            br25 = wst.get("breach_25_count", 0)
+            loss_s = ""
+            if avg_l is not None:
+                loss_s = f" avgL={_money(avg_l)} maxL={_money(max_l)} br25={br25}"
+            line += (f"  {GREY}worst{R} {DIM}{wc}{R} "
+                     f"{GREY}n={n} wr={wr:.0f}% netR={_signed(wnet)}{loss_s} {vcol}{vlabel}{R}")
+        lines.append(line)
+        for c in sorted(sym_v)[:3]:
+            cc = c if len(c) <= 52 else c[:49] + "..."
+            lines.append(f"      {RED}{cc}{R}")
+    return "\n".join(lines)
+
+
+def _trade_time_label(trade: dict) -> str:
+    raw = trade.get("closed_at") or trade.get("opened_at") or ""
+    if not raw:
+        return "—         "
+    return str(raw)[5:16].replace("T", " ")
+
+
+def _trade_log_section(tlog) -> str:
+    """Comprehensive per-trade log (state/trade_log.json).
+
+    Session stats (since mt5_baseline) drive the summary; recent rows exclude
+    archive-polluted records and sort by closed_at descending.
+    """
+    tl = tlog if isinstance(tlog, dict) else {}
+    if not tl:
+        return ""
+    session = tl.get("session") if isinstance(tl.get("session"), dict) else {}
+    use_session = bool(session.get("total"))
+    stats = session if use_session else tl
+    total = int(stats.get("total", 0) or 0)
+    if not total:
+        return f"{B}trade log{R}  {GREY}no closed trades yet{R}"
+    wins = stats.get("wins", 0)
+    losses = stats.get("losses", 0)
+    wr = stats.get("win_rate_pct", 0)
+    pnl = stats.get("total_pnl", 0)
+    avg_r = stats.get("avg_R")
+    pnl_col = GREEN if (pnl or 0) >= 0 else RED
+    r_col = GREEN if (avg_r or 0) >= 0 else RED
+    r_str = "—" if avg_r is None else f"{_signed(avg_r)}R"
+    ks = tl.get("kelly") or {}
+    ks_sized = int(ks.get("sized_trades", 0) or 0)
+    ks_fb = int(ks.get("fallback_trades", 0) or 0)
+    scope = f"{GREY}session acct {session.get('login', '—')}{R}" if use_session else f"{GREY}all-time{R}"
+    head = (f"{B}trade log{R} {scope}  "
+            f"{GREY}trades{R} {B}{total}{R}  "
+            f"{GREEN}wins{R} {B}{wins}{R}  "
+            f"{RED}losses{R} {B}{losses}{R}  "
+            f"{GREY}win%{R} {B}{wr}{R}  "
+            f"{GREY}netPnL{R} {pnl_col}{B}${float(pnl):.2f}{R}  "
+            f"{GREY}avgR{R} {r_col}{B}{r_str}{R}  "
+            f"{GREY}kelly{R} {GREEN}sized {ks_sized}{R}/{GREY}fb {ks_fb}{R}  "
+            f"{GREY}opened={tl.get('opened_at_known','—')} dd={tl.get('drawdown_known','—')}{R}")
+    lines = [head]
+    trades = list(tl.get("session_trades") or tl.get("trades") or [])
+    trades = [t for t in trades if not t.get("archive_polluted")]
+    trades.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
+    if not trades:
+        return head
+    lines.append(f"  {GREY}recent closed trades (most recent first):{R}")
+    for t in trades[:10]:
+        sym = str(t.get("symbol") or "—")[:9]
+        side = str(t.get("side") or "—")
+        side_col = GREEN if side == "BUY" else RED
+        setup = str(t.get("setup") or "—")[:14]
+        res = str(t.get("result") or "—")
+        res_col = GREEN if res == "win" else RED
+        pnl_v = t.get("pnl")
+        try:
+            pnl_f = float(pnl_v)
+            pnl_s = f"{pnl_f:+.2f}$"
+            pnl_c = GREEN if pnl_f >= 0 else RED
+        except (TypeError, ValueError):
+            pnl_s = "—"
+            pnl_c = GREY
+        r = t.get("r_multiple")
+        r_s = "—" if r is None else f"{_signed(r)}R"
+        r_c = GREEN if (r or 0) >= 0 else RED
+        mae = t.get("mae_R")
+        mae_s = "—" if mae is None else f"{mae:.2f}R"
+        mfe = t.get("mfe_R")
+        mfe_s = "—" if mfe is None else f"{mfe:.2f}R"
+        hold = str(t.get("hold_human") or "—")
+        conf = t.get("confidence") if t.get("confidence") is not None else "—"
+        when = _trade_time_label(t)
+        k = t.get("kelly") if isinstance(t.get("kelly"), dict) else None
+        if k:
+            kfrac = k.get("fraction")
+            kfrac_s = "—" if kfrac is None else f"{float(kfrac):.1f}%"
+            k_col = GREEN if not k.get("gated") else GREY
+            k_s = f"{k_col}{kfrac_s:<5}{R}"
+        else:
+            k_s = f"{GREY}—    {R}"
+        lines.append(
+            f"  {GREY}{when}{R} {side_col}{side:<4}{R} {B}{sym:<9}{R} "
+            f"{DIM}{setup:<14}{R} {GREY}c{conf}{R} "
+            f"{res_col}{res:<4}{R} {pnl_c}{pnl_s:<8}{R} {r_c}{r_s:<7}{R} "
+            f"{RED}dd{mae_s:<7}{R} {GREEN}run{mfe_s:<7}{R} {GREY}{hold:<8}{R} {GREY}k{k_s}"
+        )
+    return "\n".join(lines)
+
+
+def _fresh(iso_ts, max_age: float = 120.0) -> bool:
+    age = _age_seconds(iso_ts)
+    return age is not None and age <= max_age
+
+
+def _live_loop_override(
+    name: str,
+    *,
+    approved: dict | None,
+    broker: dict | None,
+    candles: dict | None,
+    acc: dict | None,
+    features: dict | None = None,
+    health: dict | None = None,
+    tlog: dict | None = None,
+    mctx: dict | None = None,
+    rejected: dict | None = None,
+) -> tuple[str, str] | None:
+    """Correct stale supervisor errors using fresher state files."""
+    if name == "data_loop" and isinstance(broker, dict) and isinstance(candles, dict):
+        resolved = broker.get("resolved") or {}
+        if len(resolved) >= 10 and _fresh(candles.get("timestamp"), 600):
+            return ("ok", f"OK {len(resolved)} syms")
+    if name == "feature_loop" and isinstance(features, dict) and _fresh(features.get("timestamp"), 180):
+        n = len(features.get("symbols") or {})
+        return ("ok", f"OK {n} features")
+    if name == "market_context_loop" and isinstance(mctx, dict) and _fresh(mctx.get("timestamp"), 180):
+        return ("ok", "OK context")
+    if name == "verifier_loop" and isinstance(approved, dict) and _fresh(approved.get("timestamp"), 180):
+        src = approved.get("spread_source", "mt5")
+        spreads = approved.get("spread_data") or {}
+        n = sum(1 for v in spreads.values() if float(v or 0) > 0)
+        appr = int(approved.get("count", 0) or 0)
+        rej = int((rejected or {}).get("count", 0) or 0) if isinstance(rejected, dict) else 0
+        return ("ok", f"OK {appr}a/{rej}r ({n} spreads)")
+    if name == "health_loop" and isinstance(health, dict) and _fresh(health.get("timestamp"), 180):
+        status = str(health.get("status") or "healthy")
+        return ("ok" if status == "healthy" else "warn", status)
+    if name == "trade_log_loop" and isinstance(tlog, dict) and _fresh(tlog.get("updated_at"), 600):
+        return ("ok", f"OK {tlog.get('total', 0)} trades")
+    return None
+
+
+def _short_loop_result(res: str, width: int = 28) -> str:
+    text = str(res or "")
+    if text.upper().startswith("FAILED:"):
+        text = text[7:].strip()
+    if len(text) > width:
+        return text[: width - 3] + "..."
+    return text
+
+
+def _loops_section(
+    sup,
+    *,
+    approved: dict | None = None,
+    broker: dict | None = None,
+    candles: dict | None = None,
+    acc: dict | None = None,
+    features: dict | None = None,
+    health: dict | None = None,
+    tlog: dict | None = None,
+    mctx: dict | None = None,
+    rejected: dict | None = None,
+) -> str:
+    raw_loops = sup.get("loops", []) if isinstance(sup, dict) else []
+    loops = []
+    if isinstance(raw_loops, list):
+        loops = [lp for lp in raw_loops if isinstance(lp, dict)]
+    elif isinstance(raw_loops, dict):
+        for name, lp in raw_loops.items():
+            if isinstance(lp, dict):
+                item = dict(lp)
+                item.setdefault("name", name)
+                loops.append(item)
     if not loops:
-        return f"{B}supervisor loops{R}\n  {GREY}no loop data{R}"
-    lines = [f"{B}supervisor loops{R} {GREY}({len(loops)} loops, run_count {loops[0].get('run_count','—')}){R}"]
-    # pack 2 per line
-    for i in range(0, len(loops), 2):
+        return f"{B}supervisor loops{R}\n  {GREY}no loop data — waiting for first cycle{R}"
+    order_idx = {n: i for i, n in enumerate(PIPELINE_LOOP_ORDER)}
+    loops = sorted(loops, key=lambda lp: order_idx.get(str(lp.get("name", "")), 999))
+
+    resolved_rows: list[tuple[str, str, str, str]] = []
+    ok_n = err_n = 0
+    raw_errors: list[str] = []
+    for lp in loops:
+        name = str(lp.get("name", ""))
+        st = str(lp.get("status", ""))
+        res = str(lp.get("last_result", ""))
+        if res.upper().startswith("FAILED:"):
+            raw_errors.append(res[7:].strip())
+        override = _live_loop_override(
+            name,
+            approved=approved,
+            broker=broker,
+            candles=candles,
+            acc=acc,
+            features=features,
+            health=health,
+            tlog=tlog,
+            mctx=mctx,
+            rejected=rejected,
+        )
+        if override:
+            st, res = override
+        if st.lower() in ("ok", "warn"):
+            ok_n += 1
+        else:
+            err_n += 1
+        age = _age_str(lp.get("last_run"))
+        resolved_rows.append((name, st, _short_loop_result(res), age))
+
+    run_count = loops[0].get("run_count", "—")
+    live_ok = sum(1 for _, st, _, _ in resolved_rows if st.lower() == "ok")
+    summary_col = GREEN if err_n == 0 else (YELLOW if live_ok >= len(resolved_rows) // 2 else RED)
+    lines = [
+        f"{B}supervisor loops{R} {summary_col}{live_ok}/{len(resolved_rows)} OK{R}"
+        f"{GREY} · run #{run_count}{R}",
+    ]
+    unique_errors = sorted(set(raw_errors))
+    if unique_errors and len(unique_errors) == 1 and err_n >= 3:
+        lines.append(f"  {RED}root cause{R} {unique_errors[0]}"
+                     f"{GREY} — restart start.py after config/code fix{R}")
+    elif err_n:
+        bad = [n for n, st, _, _ in resolved_rows if st.lower() not in ("ok", "warn")]
+        if bad:
+            lines.append(f"  {YELLOW}supervisor flagged: {', '.join(bad[:6])}"
+                         f"{'…' if len(bad) > 6 else ''}{R}")
+    for i in range(0, len(resolved_rows), 2):
         pair = []
-        for lp in loops[i:i + 2]:
-            name = str(lp.get("name", ""))
-            st = str(lp.get("status", ""))
-            res = str(lp.get("last_result", ""))
-            age = _age_str(lp.get("last_run"))
-            stcol = GREEN if st.lower() == "ok" else RED
-            rescol = GREEN if res.lower() in ("ok", "complete") else (YELLOW if res and res.lower() not in ("ok", "complete") else GREY)
-            pair.append(f"  {name:<22}{stcol}{st:<4}{R} {rescol}{res:<9}{R} {GREY}{age:>6}{R}")
+        for name, st, res, age in resolved_rows[i:i + 2]:
+            st_l = st.lower()
+            stcol = GREEN if st_l == "ok" else (YELLOW if st_l == "warn" else RED)
+            rescol = GREEN if res.upper().startswith("OK") else (
+                YELLOW if st_l == "warn" else GREY
+            )
+            pair.append(f"  {name:<22}{stcol}{st:<4}{R} {rescol}{res:<28}{R} {GREY}{age:>6}{R}")
         lines.append(" ".join(pair))
     return "\n".join(lines)
 
@@ -318,7 +690,13 @@ def _services_section(sup) -> str:
     for s in services:
         name = str(s.get("label") or s.get("name", ""))
         st = str(s.get("status", ""))
-        stcol = GREEN if st.lower() == "ok" else RED
+        st_l = st.lower()
+        if st_l in ("ok", "healthy", "complete"):
+            stcol = GREEN
+        elif st_l in ("running", "pending"):
+            stcol = YELLOW
+        else:
+            stcol = RED
         rc = s.get("run_count", "—")
         err = s.get("error_count", 0)
         errcol = GREEN if not err else RED
@@ -384,6 +762,7 @@ def render_frame() -> str:
     hlt = _load("health.json") or {}
     ks = _load("kill_switch.json") or {}
     dg = _load("daily_growth.json") or {}
+    bg = _load("blue_guardian.json") or {}
     rt = _load("runtime_mode.json") or {}
     baseline = _load("mt5_baseline.json") or {}
     pos = _load("paper_positions.json") or {}
@@ -392,31 +771,58 @@ def render_frame() -> str:
     mctx = _load("market_context.json") or {}
     approved = _load("approved_signals.json") or {}
     rejected = _load("rejected_signals.json") or {}
+    broker = _load("broker_symbols.json") or {}
+    candles = _load("latest_candles.json") or {}
+    cult = _load("forward_test_ledger.json") or {}
+    veto = _load("symbol_policy_live.json") or {}
+    rankings = _load("strategy_rankings.json") or {}
+    tlog = _load("trade_log.json") or {}
+    features = _load("features.json") or {}
 
-    parts = [
-        _header(acc, sup, rt),
-        _kpi_row(acc, dg, ks, hlt, sup, pos),
-        "",
-        _growth_section(dg, baseline),
-        "",
+    # Visual dividers between every section so the whole TUI reads as separated
+    # blocks (USER request 2026-07-01: "tui needs to be in split in a divider
+    # to make it viisable as a whole"). Empty sections are dropped so we never
+    # emit a dangling rule; the header + KPI row are joined as one title block
+    # (no rule between them) so the title stays a coherent unit.
+    _DIV = GREY + "─" * 92 + R
+    title_bits = [_header(acc, sup, rt, bg), _kpi_row(acc, dg, ks, hlt, sup, pos, bg)]
+    title = "\n".join(b for b in title_bits if b and b.strip())
+    body = [
+        _blue_guardian_section(bg, pos),
+        _growth_section(dg, baseline, bg),
         _positions_section(pos, pmgr, conf),
-        "",
         _signal_flow_section(approved, rejected),
-        "",
-        _loops_section(sup),
-        "",
+        _rankings_section(rankings),
+        _culturing_section(cult, veto),
+        _trade_log_section(tlog),
+        _loops_section(
+            sup,
+            approved=approved,
+            broker=broker,
+            candles=candles,
+            acc=acc,
+            features=features,
+            health=hlt,
+            tlog=tlog,
+            mctx=mctx,
+            rejected=rejected,
+        ),
         _services_section(sup),
-        "",
         _market_section(mctx),
-        "",
         _mt5_section(hlt),
-        "",
-        GREY + "─" * 92 + R,
         f"{GREY}read-only · reads state/*.json every refresh · bot untouched · "
         f"Ctrl+C to quit{R}",
     ]
-    # drop empty sections
-    return "\n".join(p for p in parts if p != "" or True)
+    blocks = [title] + [s for s in body if s and s.strip()]
+    blocks = [b for b in blocks if b and b.strip()]
+    if not blocks:
+        return ""
+    out = [blocks[0]]
+    for cur in blocks[1:]:
+        out.append(_DIV)
+        out.append(cur)
+    out.append(_DIV)
+    return "\n".join(out)
 
 
 def main() -> None:

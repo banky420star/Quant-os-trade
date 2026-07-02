@@ -23,6 +23,8 @@ class ConsensusGates:
         self.trend_structure_veto_enabled = bool(intel.get("trend_structure_veto_enabled", not aggressive))
         self.memory_veto_wr = float(intel.get("memory_veto_win_rate", 40))
         self.memory_min_trades = int(intel.get("memory_veto_min_trades", 10))
+        self.memory_cell_wr = float(intel.get("memory_veto_cell_win_rate", max(35.0, self.memory_veto_wr)))
+        self.memory_cell_min_trades = int(intel.get("memory_veto_cell_min_trades", max(8, self.memory_min_trades // 2)))
 
     def evaluate(
         self,
@@ -53,13 +55,30 @@ class ConsensusGates:
             vetoes.append(f"regime_veto:{setup}_in_{primary}")
 
         stats = edge_scores.get("setup_stats", {})
-        sym_stats = stats.get("by_symbol", {}).get(symbol, {}).get(setup)
+        session = signal.get("market_context", {}).get("session") or market_regime.get("session") or "unknown"
+        cell_key = f"{symbol}|{setup}|{primary or 'unknown'}|{session}"
+        cell_stats = stats.get("by_cell", {}).get(cell_key, {}).get(setup, {})
+        sym_stats = stats.get("by_symbol", {}).get(symbol, {}).get(setup, {})
         global_stats = stats.get("global", {}).get(setup, {})
-        s = sym_stats if sym_stats and sym_stats.get("total", 0) >= self.memory_min_trades else global_stats
-        if s.get("total", 0) >= self.memory_min_trades:
+
+        s: dict[str, Any] = {}
+        threshold = self.memory_veto_wr
+        veto_label = "memory_veto"
+        min_trades = self.memory_min_trades
+        if cell_stats and cell_stats.get("total", 0) >= self.memory_cell_min_trades:
+            s = cell_stats
+            threshold = self.memory_cell_wr
+            veto_label = "cell_memory_veto"
+            min_trades = self.memory_cell_min_trades
+        elif sym_stats and sym_stats.get("total", 0) >= self.memory_min_trades:
+            s = sym_stats
+        elif global_stats and global_stats.get("total", 0) >= self.memory_min_trades:
+            s = global_stats
+
+        if s and s.get("total", 0) >= min_trades:
             wr = s.get("win_rate_pct", 50)
-            if wr < self.memory_veto_wr:
-                vetoes.append(f"memory_veto:win_rate_{wr}%")
+            if wr < threshold:
+                vetoes.append(f"{veto_label}:win_rate_{wr}%")
 
         if vetoes:
             self.logger.info(

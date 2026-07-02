@@ -261,6 +261,21 @@ def humanize_verifier_failure(
     if check_name == "exposure_limit_exceeded":
         cap = config.get("risk", {}).get("max_symbol_exposure_usd", 100)
         return f"Exposure limit — not enough room for {symbol} on ${cap} cap"
+    if check_name == "blue_guardian_max_total":
+        from core.blue_guardian import blue_guardian_settings
+
+        max_total = blue_guardian_settings(config)["max_total_open_positions"]
+        return (
+            f"Blue Guardian cap — {open_status['used']}/{max_total} "
+            f"total open positions (close one before a new entry)"
+        )
+    if check_name == "blue_guardian_symbol_full":
+        return f"Blue Guardian cap — {symbol} already has an open position (max 1 per symbol)"
+    if check_name == "blue_guardian_floating_block":
+        return "Blue Guardian floating loss — combined unrealized worse than -$35, new entries blocked"
+    if check_name == "blue_guardian_daily_pause":
+        bg = read_json_state("blue_guardian.json", default={}) or {}
+        return f"Blue Guardian daily pause — {bg.get('pause_reason') or 'limit hit'}"
     if check_name == "kill_switch_safe":
         return "Kill switch is ON — trading paused"
     if check_name == "risk_reward_safe":
@@ -289,6 +304,14 @@ def humanize_verifier_failure(
             f"Win-condition gate — {signal.get('setup_type', '?')} @ "
             f"{(signal.get('market_context') or {}).get('market_regime', {}).get('primary', '?')} "
             f"did not match any condition cell that historically won for this setup; skipped"
+        )
+    if check_name == "data_driven_veto":
+        mc = signal.get("market_context") or {}
+        reg = mc.get("market_regime") or {}
+        return (
+            f"Data-driven veto — {signal.get('setup_type', '?')} on {symbol} @ "
+            f"{reg.get('primary', '?')}/{mc.get('session', '?')} loses on clean live data; "
+            f"pruned by the forward-test ledger"
         )
     return check_name.replace("_", " ")
 

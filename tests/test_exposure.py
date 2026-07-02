@@ -20,7 +20,7 @@ from core.exposure import (
 from core.paper_broker import PaperBroker
 from core.risk_manager import RiskManager
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
-from core.position_manager import compute_managed_sl
+from core.position_manager import _trail_distance_price, compute_managed_sl
 from core.trade_limits import is_duplicate_position
 from core.verifier import Verifier
 
@@ -218,13 +218,80 @@ def test_break_even_moves_sl_on_buy(config):
     new_sl, row, actions = compute_managed_sl(
         config,
         pos,
-        current_price=101.0,
+        current_price=103.0,  # +3.0 > trigger_points 280 × 0.01
         atr=2.0,
         mgmt_row={},
+        point=0.01,
     )
     assert new_sl is not None
     assert new_sl > 95.0
     assert "break_even" in actions
+
+
+def test_break_even_triggers_at_five_dollars_profit(config):
+    config["trading"]["break_even"]["trigger_profit_usd"] = 5
+    config["trading"]["break_even"]["lock_profit_usd"] = 0
+    config["trading"]["trailing"]["activation_profit_usd"] = 5
+    pos = {"symbol": "US500m", "side": "BUY", "entry": 7500.0, "sl": 7480.0, "profit": 5.2, "size": 0.05}
+    new_sl, row, actions = compute_managed_sl(
+        config,
+        pos,
+        current_price=7502.0,
+        atr=10.0,
+        mgmt_row={},
+    )
+    assert new_sl == 7500.0
+    assert "break_even" in actions
+    assert "trail" in actions
+
+
+def test_per_symbol_fx_trail_needs_three_dollars(config):
+    config["trading"]["break_even"]["per_symbol"]["EURUSDm"]["trigger_profit_usd"] = 3
+    config["trading"]["trailing"]["per_symbol"]["EURUSDm"]["activation_profit_usd"] = 3
+    pos = {"symbol": "EURUSDm", "side": "BUY", "entry": 1.08, "sl": 1.07, "profit": 2.5, "size": 0.1}
+    _sl, _row, actions_low = compute_managed_sl(config, pos, 1.081, 0.001, {})
+    assert "break_even" not in actions_low
+    pos["profit"] = 3.1
+    _sl, _row, actions_hi = compute_managed_sl(config, pos, 1.082, 0.001, {})
+    assert "break_even" in actions_hi
+    assert "trail" in actions_hi
+
+
+def test_trail_distance_uses_broker_points_not_atr_mult(config):
+    trail_cfg = config["trading"]["trailing"]
+    trail_sym = trail_cfg["per_symbol"]["US500m"]
+    dist = _trail_distance_price(trail_sym, trail_cfg, atr=16.0, point=0.1)
+    assert dist == pytest.approx(25.8)
+    fx_sym = trail_cfg["per_symbol"]["EURUSDm"]
+    fx_dist = _trail_distance_price(fx_sym, trail_cfg, atr=0.0005, point=1e-5)
+    assert fx_dist == pytest.approx(0.002)
+
+
+def test_trail_sl_ratcheted_from_peak(config):
+    pos = {
+        "symbol": "US500m",
+        "side": "BUY",
+        "entry": 7500.0,
+        "sl": 7480.0,
+        "profit": 6.0,
+    }
+    row = {"peak_price": 7530.0}
+    new_sl, row, actions = compute_managed_sl(
+        config, pos, current_price=7502.0, atr=10.0, mgmt_row=row, point=0.1,
+    )
+    assert "trail" in actions
+    assert new_sl == pytest.approx(7504.2)  # peak 7530 - 25.8 trail_points (258 pts)
+
+
+def test_btc_trail_needs_seven_dollars(config):
+    config["trading"]["break_even"]["per_symbol"]["BTCUSDm"]["trigger_profit_usd"] = 7
+    config["trading"]["trailing"]["per_symbol"]["BTCUSDm"]["activation_profit_usd"] = 7
+    pos = {"symbol": "BTCUSDm", "side": "SELL", "entry": 60000.0, "sl": 61000.0, "profit": 6.0, "size": 0.01}
+    _sl, _row, actions = compute_managed_sl(config, pos, 59900.0, 200.0, {})
+    assert "trail" not in actions
+    pos["profit"] = 7.5
+    _sl, _row, actions = compute_managed_sl(config, pos, 59800.0, 200.0, {})
+    assert "trail" in actions
 
 
 def test_pyramiding_allows_different_signals_same_side(config):

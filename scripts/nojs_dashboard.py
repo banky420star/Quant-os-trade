@@ -78,8 +78,14 @@ def render():
     rt = _load("runtime_mode.json") or {}
     rem = _load("remote_access.json") or {}
     dg = _load("daily_growth.json") or {}
+    bg = _load("blue_guardian.json") or {}
     sup = _load("supervisor.json") or {}
     rstate = _load("risk_state.json") or {}
+    cult = _load("forward_test_ledger.json") or {}
+    veto = _load("symbol_policy_live.json") or {}
+    tlog = _load("trade_log.json") or {}
+    sltp = _load("symbol_sltp_live.json") or {}
+    betr = _load("symbol_be_trail_live.json") or {}
 
     bal = acc.get("balance")
     eq = acc.get("equity")
@@ -121,12 +127,27 @@ def render():
     # supervisor loop timestamps
     sup_lines = []
     if isinstance(sup, dict):
-        loops = sup.get("loops", {}) if isinstance(sup.get("loops"), dict) else {}
-        for name in ("execution", "research", "health", "data"):
-            lp = loops.get(name) or {}
+        raw_loops = sup.get("loops", [])
+        loops = []
+        if isinstance(raw_loops, list):
+            loops = [lp for lp in raw_loops if isinstance(lp, dict)]
+        elif isinstance(raw_loops, dict):
+            for name, lp in raw_loops.items():
+                if isinstance(lp, dict):
+                    item = dict(lp)
+                    item.setdefault("name", name)
+                    loops.append(item)
+        for lp in loops:
+            name = str(lp.get("name", "")).strip() or "loop"
             ts = lp.get("last_run") or lp.get("last_complete") or lp.get("timestamp")
-            if ts:
-                sup_lines.append(f"<span class='chip'><b>{name}</b> {html.escape(str(ts))}</span>")
+            status = str(lp.get("status", "")).strip()
+            if ts or status:
+                bits = [f"<b>{html.escape(name)}</b>"]
+                if status:
+                    bits.append(html.escape(status))
+                if ts:
+                    bits.append(html.escape(str(ts)))
+                sup_lines.append(f"<span class='chip'>{' '.join(bits)}</span>")
 
     tipscale = rem.get("tailscale_ip") if isinstance(rem, dict) else None
 
@@ -161,6 +182,9 @@ th{{background:#1c1c1e;color:#8e8e93;text-transform:uppercase;font-size:11px;let
 .bar{{height:6px;background:#2c2c2e;border-radius:3px;overflow:hidden;margin-top:4px}}
 .bar>i{{display:block;height:100%;background:#0a84ff}}
 .note{{background:#1c1c1e;border-left:3px solid #0a84ff;padding:8px 12px;border-radius:6px;margin-top:12px;font-size:12px;color:#aeaeb2}}
+.swipe{{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}}
+.swipe>table{{min-width:100%}}
+@media(max-width:640px){{body{{font-size:12px;margin:10px}}td,th{{font-size:11px;padding:4px 5px}}.k{{min-width:90px}}.k span{{font-size:16px}}}}
 </style></head><body>"""
 
     body = f"""
@@ -175,15 +199,18 @@ th{{background:#1c1c1e;color:#8e8e93;text-transform:uppercase;font-size:11px;let
 {K('Kill switch', 'ON' if kill else 'OFF', 'bad' if kill else 'ok')}
 {K('Health', html.escape(str(hstatus)), 'ok' if hstatus=='healthy' else 'bad')}
 {K('Open positions', str(len(positions)))}
+{K('BG day P/L', _money(bg.get('daily_pnl')) if isinstance(bg, dict) and bg.get('enabled') else '—', _cls_pos(bg.get('daily_pnl')) if isinstance(bg, dict) else '')}
+{K('BG target', '+6% ($300)' if isinstance(bg, dict) and bg.get('enabled') else '—')}
+{K('BG paused', 'YES' if isinstance(bg, dict) and bg.get('trading_paused') else 'no', 'bad' if isinstance(bg, dict) and bg.get('trading_paused') else 'ok')}
 {K('Approved signals', str(ap_n))}
 {K('Rejected signals', str(rej_n))}
 </div>
 
 <div class='section'>
 <h3 style='margin:0 0 4px'>Open positions ({len(positions)})</h3>
-<table><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Size</th><th>P/L</th><th>SL</th><th>TP</th><th>Setup</th><th>Ticket</th></tr>
+<div class='swipe'><table><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Size</th><th>P/L</th><th>SL</th><th>TP</th><th>Setup</th><th>Ticket</th></tr>
 {''.join(rows)}
-</table>
+</table></div>
 </div>
 
 <div class='section'>
@@ -192,6 +219,14 @@ th{{background:#1c1c1e;color:#8e8e93;text-transform:uppercase;font-size:11px;let
 </div>
 
 {(_growth_card(dg) )}
+
+{(_culturing_card(cult, veto) )}
+
+{(_sltp_card(sltp) )}
+
+{(_betrail_card(betr) )}
+
+{(_trade_log_card(tlog) )}
 
 <div class='note'>
 <b>This is the reliable no-JS mirror.</b> It reads the bot's state files directly and refreshes every {REFRESH}s.
@@ -216,6 +251,216 @@ def _growth_card(dg):
 <h3 style='margin:0 0 6px'>Growth campaign</h3>
 <div class='muted'>target {tgt:.1f}%/day · start ${start:.2f} · now ${cur:.2f} · session {_pct(pct)} of day-target</div>
 <div class='bar'><i style='width:{bar:.1f}%'></i></div>
+</div>"""
+    except Exception:
+        return ""
+
+
+def _culturing_card(ledger, policy):
+    """No-JS mirror of the culturing ledger + data-driven veto (forward_test_loop)."""
+    if not isinstance(ledger, dict) or not ledger:
+        return ""
+    try:
+        cells = ledger.get("cells", {}) if isinstance(ledger.get("cells"), dict) else {}
+        symbols = policy.get("symbols", {}) if isinstance(policy, dict) and isinstance(policy.get("symbols"), dict) else {}
+        total = int(ledger.get("total_cells", 0) or 0)
+        vetoed = int(ledger.get("total_vetoed", 0) or 0)
+        cfg = ledger.get("config", {}) or {}
+        min_n = cfg.get("min_n", "—")
+        vwr = cfg.get("veto_win_rate_pct", "—")
+        if not cells:
+            return (f"<div class='section'><h3 style='margin:0 0 6px'>Culturing ledger — data-driven veto</h3>"
+                    f"<div class='muted'>no cells yet (min_n={min_n}, veto when wr&lt;{vwr}% &amp; netR&lt;0)</div></div>")
+        rows = []
+        for sym, sym_cells in cells.items():
+            v_cells = (symbols.get(sym, {}) or {}).get("vetoed_cells", []) or []
+            v_set = set(v_cells)
+            entries = []
+            for cell, st in sym_cells.items():
+                if not isinstance(st, dict):
+                    continue
+                try:
+                    entries.append((float(st.get("expectancy_net_r", 0)), cell, st))
+                except (TypeError, ValueError):
+                    continue
+            entries.sort(key=lambda r: r[0])
+            worst = entries[0] if entries else None
+            n_cells = len(sym_cells)
+            v_n = len(v_set)
+            wc = "-"
+            if worst:
+                wnet, wcell, wst = worst
+                wc = html.escape(wcell if len(wcell) <= 44 else wcell[:41] + "...")
+                wc += (f" · n={wst.get('n',0)} wr={int(float(wst.get('win_rate_pct',0) or 0))}% "
+                       f"netR={_pct(wnet*100)} avgL={_money(wst.get('avg_loss_usd'))} "
+                       f"maxL={_money(wst.get('max_loss_usd'))} br25={wst.get('breach_25_count',0)} "
+                       f"[{wst.get('verdict','')}]")
+            vlist = "".join(f"<li class='bad'>✕ {html.escape(c if len(c)<=60 else c[:57]+'...')}</li>" for c in sorted(v_set)[:5])
+            rows.append(
+                f"<tr><td><b>{html.escape(str(sym))}</b><br><span class='muted'>cells={n_cells} vetoed={v_n}</span></td>"
+                f"<td class='muted'>{wc}</td>"
+                f"<td><ul style='margin:0;padding-left:18px'>{vlist}</ul></td></tr>"
+            )
+        return f"""<div class='section'>
+<h3 style='margin:0 0 6px'>Culturing ledger — data-driven veto</h3>
+<div class='muted'>cells <b>{total}</b> · vetoed <b style='color:#ff453a'>{vetoed}</b> · min_n={min_n} · veto when wr&lt;{vwr}% &amp; netR&lt;0</div>
+<table><tr><th>Symbol</th><th>Worst cell (by net R)</th><th>Vetoed cells</th></tr>
+{''.join(rows)}
+</table></div>"""
+    except Exception:
+        return ""
+
+
+def _sltp_card(sltp):
+    """No-JS mirror of the per-symbol SL/TP calibration (state/symbol_sltp_live.json).
+
+    Shows the data-driven auto-tune status per symbol: the in-sample best
+    (k_sl, RR, expectancy) and whether it is APPLIED (trusted) or just
+    recorded (thin data / ci95<=0 -> seeded values stay active).
+    """
+    if not isinstance(sltp, dict) or not sltp.get("symbols"):
+        return ("<div class='section'><h3 style='margin:0 0 6px'>SL/TP calibration — per symbol</h3>"
+                "<div class='muted'>no data-driven calibration yet (seeds from config active; "
+                "run scripts/calibrate_sltp.py)</div></div>")
+    try:
+        rows = []
+        for sym, s in sltp.get("symbols", {}).items():
+            if not isinstance(s, dict):
+                continue
+            trusted = bool(s.get("trusted"))
+            n = s.get("n", "—")
+            exp = s.get("expectancy_r")
+            seed_exp = s.get("seed_expectancy_r")
+            ci = s.get("ci95") or [None, None]
+            exp_s = "—" if exp is None else f"{float(exp):+.3f}R"
+            seed_s = "—" if seed_exp is None else f"{float(seed_exp):+.3f}R"
+            ci_s = "—" if ci[0] is None else f"[{float(ci[0]):+.3f},{float(ci[1]):+.3f}]"
+            applied = "<b class='ok'>APPLIED</b>" if trusted else f"<span class='muted'>recorded ({html.escape(str(s.get('reason','')))})</span>"
+            rows.append(
+                f"<tr><td><b>{html.escape(str(sym))}</b></td><td class='muted'>{n}</td>"
+                f"<td>{s.get('sl_atr_mult','—')}</td><td>{s.get('tp1_rr','—')}/{s.get('tp2_rr','—')}</td>"
+                f"<td>{exp_s}</td><td class='muted'>seed {seed_s}</td>"
+                f"<td class='muted'>{ci_s}</td><td>{applied}</td></tr>"
+            )
+        return f"""<div class='section'>
+<h3 style='margin:0 0 6px'>SL/TP calibration — per symbol (data-driven auto-tune)</h3>
+<div class='muted'>seeded values from config active unless a row is <b class='ok'>APPLIED</b>; auto-tune only applies when n&gt;=50 AND beats seed AND ci95 lo&gt;0</div>
+<div class='swipe'><table style='font-size:11px'><tr><th>Symbol</th><th>n</th><th>sl_atr</th><th>tp1/tp2 RR</th><th>best exp</th><th>seed exp</th><th>ci95</th><th>status</th></tr>
+{''.join(rows)}
+</table></div></div>"""
+    except Exception:
+        return ""
+
+
+def _betrail_card(betr):
+    """No-JS mirror of the per-symbol break-even/trailing calibration."""
+    if not isinstance(betr, dict) or not betr.get("symbols"):
+        return ("<div class='section'><h3 style='margin:0 0 6px'>Break-even / trailing calibration — per symbol</h3>"
+                "<div class='muted'>no data-driven calibration yet (seeds from config active; "
+                "run scripts/calibrate_be_trail.py)</div></div>")
+    try:
+        rows = []
+        for sym, s in betr.get("symbols", {}).items():
+            if not isinstance(s, dict):
+                continue
+            trusted = bool(s.get("trusted"))
+            be = s.get("break_even") or {}
+            tr = s.get("trailing") or {}
+            exp = s.get("expectancy_r"); seed_exp = s.get("seed_expectancy_r")
+            ci = s.get("ci95") or [None, None]
+            exp_s = "—" if exp is None else f"{float(exp):+.3f}R"
+            seed_s = "—" if seed_exp is None else f"{float(seed_exp):+.3f}R"
+            ci_s = "—" if ci[0] is None else f"[{float(ci[0]):+.3f},{float(ci[1]):+.3f}]"
+            applied = "<b class='ok'>APPLIED</b>" if trusted else f"<span class='muted'>recorded ({html.escape(str(s.get('reason','')))})</span>"
+            rows.append(
+                f"<tr><td><b>{html.escape(str(sym))}</b></td><td class='muted'>{s.get('n','—')}</td>"
+                f"<td>{be.get('trigger_atr_mult','—')}/{be.get('lock_profit_atr_mult','—')}</td>"
+                f"<td>{tr.get('activation_atr_mult','—')}/{tr.get('trail_atr_mult','—')}</td>"
+                f"<td>{exp_s}</td><td class='muted'>seed {seed_s}</td>"
+                f"<td class='muted'>{ci_s}</td><td>{applied}</td></tr>"
+            )
+        return f"""<div class='section'>
+<h3 style='margin:0 0 6px'>Break-even / trailing calibration — per symbol</h3>
+<div class='muted'>seeds active unless <b class='ok'>APPLIED</b>; auto-tune applies only when n&gt;=50 AND beats seed AND ci95 lo&gt;0 (path-unknown model -> conservative)</div>
+<div class='swipe'><table style='font-size:11px'><tr><th>Symbol</th><th>n</th><th>BE trig/lock</th><th>trail act/dist</th><th>best exp</th><th>seed exp</th><th>ci95</th><th>status</th></tr>
+{''.join(rows)}
+</table></div></div>"""
+    except Exception:
+        return ""
+
+
+def _trade_log_card(tlog):
+    """No-JS mirror of the comprehensive per-trade log (state/trade_log.json).
+
+    The user's "whole works" record: open/close times, win/loss, setup,
+    drawdown (MAE), run-up (MFE), R-multiple, regime/session/bias. Shows the
+    summary + the most recent 25 closed trades.
+    """
+    if not isinstance(tlog, dict) or not tlog:
+        return ""
+    try:
+        total = int(tlog.get("total", 0) or 0)
+        if not total:
+            return "<div class='section'><h3 style='margin:0 0 6px'>Trade log</h3><div class='muted'>no closed trades yet</div></div>"
+        wins = int(tlog.get("wins", 0) or 0)
+        losses = int(tlog.get("losses", 0) or 0)
+        wr = tlog.get("win_rate_pct", "—")
+        pnl = tlog.get("total_pnl", 0)
+        avg_r = tlog.get("avg_R")
+        r_s = "—" if avg_r is None else f"{float(avg_r):+.3f}R"
+        ks = tlog.get("kelly") or {}
+        ks_sized = int(ks.get("sized_trades", 0) or 0)
+        ks_fb = int(ks.get("fallback_trades", 0) or 0)
+        trades = tlog.get("trades", []) if isinstance(tlog.get("trades"), list) else []
+        rows = []
+        for t in trades[:25]:
+            sym = html.escape(str(t.get("symbol") or "—"))
+            side = html.escape(str(t.get("side") or "—"))
+            setup = html.escape(str(t.get("setup") or "—"))
+            res = str(t.get("result") or "—")
+            res_cls = "ok" if res == "win" else "bad"
+            pnl_v = t.get("pnl")
+            try:
+                pnl_s = f"${float(pnl_v):+.2f}"
+            except Exception:
+                pnl_s = "—"
+            r = t.get("r_multiple")
+            r_s2 = "—" if r is None else f"{float(r):+.2f}R"
+            mae = t.get("mae_R")
+            mae_s = "—" if mae is None else f"{float(mae):.2f}R"
+            mfe = t.get("mfe_R")
+            mfe_s = "—" if mfe is None else f"{float(mfe):.2f}R"
+            opened = html.escape(str(t.get("opened_at") or "—")[5:16].replace("T", " "))
+            closed = html.escape(str(t.get("closed_at") or "—")[5:16].replace("T", " "))
+            hold = html.escape(str(t.get("hold_human") or "—"))
+            conf = t.get("confidence") or "—"
+            # Kelly verdict for this trade's cell: fraction (risk-%) + reason.
+            k = t.get("kelly") if isinstance(t.get("kelly"), dict) else None
+            if k:
+                kcls = "ok" if not k.get("gated") else "muted"
+                kfrac = k.get("fraction")
+                kfrac_s = "—" if kfrac is None else f"{float(kfrac):.2f}%"
+                kreason = html.escape(str(k.get("reason") or ""))
+                k_s = f"<span class='{kcls}'>{kfrac_s}</span><br><span class='muted' style='font-size:10px'>{kreason}</span>"
+            else:
+                k_s = "<span class='muted'>—</span>"
+            rows.append(
+                f"<tr><td class='muted'>{opened}</td><td class='muted'>{closed}</td>"
+                f"<td>{hold}</td><td><b>{sym}</b></td><td>{side}</td><td>{setup}</td>"
+                f"<td class='muted'>{html.escape(str(t.get('regime_primary') or '—'))}</td>"
+                f"<td class='muted'>{html.escape(str(t.get('session') or '—'))}</td>"
+                f"<td>{conf}</td><td class='{res_cls}'>{res}</td>"
+                f"<td class='{_cls_pos(pnl_v)}'>{pnl_s}</td><td class='{_cls_pos(r)}'>{r_s2}</td>"
+                f"<td class='bad'>{mae_s}</td><td class='ok'>{mfe_s}</td>"
+                f"<td>{k_s}</td></tr>"
+            )
+        return f"""<div class='section'>
+<h3 style='margin:0 0 6px'>Trade log — every closed trade (open/close, win/loss, setup, drawdown, R, Kelly)</h3>
+<div class='muted'>trades <b>{total}</b> · wins <b class='ok'>{wins}</b> · losses <b class='bad'>{losses}</b> · win% <b>{wr}</b> · net PnL <b class='{_cls_pos(pnl)}'>${float(pnl):+.2f}</b> · avg R <b class='{_cls_pos(avg_r)}'>{r_s}</b> · Kelly sized-up <b class='ok'>{ks_sized}</b> / fallback <b class='muted'>{ks_fb}</b> · opened_at known {tlog.get('opened_at_known','—')} · drawdown known {tlog.get('drawdown_known','—')}</div>
+<div class='swipe'><table style='font-size:11px'><tr><th>Opened</th><th>Closed</th><th>Hold</th><th>Symbol</th><th>Side</th><th>Setup</th><th>Regime</th><th>Session</th><th>Conf</th><th>Result</th><th>PnL</th><th>R</th><th>MAE(R)</th><th>MFE(R)</th><th>Kelly</th></tr>
+{''.join(rows)}
+</table></div>
+<div class='muted' style='margin-top:4px'>showing most recent 25 of {total} trades · full log with all fields (entry/exit/SL/TP/size/tags/exit_reason) on the SPA Trade Log tab</div>
 </div>"""
     except Exception:
         return ""

@@ -515,7 +515,7 @@
       .equity-headline-kpi.primary .val { font-size: 26px; }
       #equityChart { height: 200px; }
       #equityChartFull { height: 280px; min-height: 0; }
-      .chart-range-btn { padding: 8px 10px; min-height: 36px; }
+      .chart-range-btn { padding: 10px 12px; min-height: 40px; }
       .chart-legend { gap: 8px; font-size: 10px; }
       .kpi-row { grid-template-columns: 1fr 1fr; gap: 8px; }
       .kpi-tile { padding: 12px; }
@@ -544,7 +544,10 @@
         background: var(--surface2);
         color: var(--muted);
         border-radius: 99px;
-        padding: 8px 14px;
+        padding: 10px 16px;
+        min-height: 40px;
+        display: inline-flex;
+        align-items: center;
         font-size: 12px;
         font-weight: 600;
         font-family: inherit;
@@ -590,13 +593,18 @@
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
         z-index: 100;
+        overflow-x: auto; white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
       }
+      .mobile-tab-bar::-webkit-scrollbar { display: none; }
       .mobile-tab {
-        flex: 1;
+        flex: 0 0 auto;
+        min-width: 58px;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         gap: 3px; border: none; background: none; color: var(--muted2);
         font-size: 10px; font-weight: 600; font-family: inherit;
-        padding: 6px 4px; cursor: pointer;
+        padding: 6px 8px; cursor: pointer;
       }
       .mobile-tab .ico { font-size: 18px; line-height: 1; }
       .mobile-tab.active { color: var(--blue); }
@@ -644,7 +652,7 @@
             var b = document.createElement("div");
             b.id = "bootFailsafeBanner";
             b.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#1c1c1e;color:#f5f5f7;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 14px;font:13px system-ui,sans-serif;";
-            b.innerHTML = "Dashboard load issue (main script did not finish). Open the no-JS mirror at <a style='color:#0a84ff' href='http://localhost:8081/'>localhost:8081</a>, or press <b>F12 → Console</b> and send the red error.";
+            b.innerHTML = "Dashboard load issue (main script did not finish). Open the no-JS mirror at <a style='color:#0a84ff' href='" + (location.protocol + '//' + location.hostname + ':8081/') + "'>:8081</a>, or press <b>F12 → Console</b> and send the red error.";
             document.body.appendChild(b);
           }
         } catch (e) { /* swallow */ }
@@ -673,6 +681,7 @@
       <button class="nav-item" data-view="research">⚗ Research</button>
       <button class="nav-item" data-view="memory">🧠 Memory</button>
       <button class="nav-item" data-view="replay">▶ Replay</button>
+      <button class="nav-item" data-view="trades">🗒 Trade Log</button>
       <button class="nav-item" data-view="logs">≡ Logs</button>
       <button class="nav-item" data-view="settings">⚙ Settings</button>
     </aside>
@@ -684,7 +693,7 @@
         <div class="view active" id="view-dashboard">
           <div class="mobile-empty" id="mobileEmpty">
             <div>Connecting to bot…</div>
-            <div style="font-size:11px;color:var(--muted2);margin-top:6px">Pull down or tap retry if this stays empty</div>
+            <div style="font-size:11px;color:var(--muted2);margin-top:6px">Tap Retry if this stays empty</div>
             <button type="button" class="retry-btn" id="mobileRetryBtn">Retry now</button>
           </div>
           <div class="mobile-summary" id="mobileSummary"></div>
@@ -750,6 +759,10 @@
           <div class="grid-2">
             <div class="card" id="signalsCard"><div class="card-title">Recent Signals</div><div id="signalsTable"></div></div>
             <div class="card" id="tradesCard"><div class="card-title">Closed Trades</div><div id="tradesTable"></div></div>
+          </div>
+          <div class="card" id="culturingCard">
+            <div class="card-title">Culturing Ledger — Data-Driven Veto</div>
+            <div id="culturingPanel"><p class="empty">Waiting for forward_test_loop…</p></div>
           </div>
         </div>
 
@@ -851,6 +864,33 @@
           </div>
         </div>
 
+        <!-- TRADE LOG VIEW — the user's "whole works" per-trade record -->
+        <div class="view" id="view-trades">
+          <div class="card">
+            <div class="card-title">Trade Log — every closed trade (open/close, win/loss, setup, drawdown, R)</div>
+            <div id="tradeLogSummary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)"></div>
+            <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button class="nav-item" id="tlPrev" onclick="tlPage(-1)">◀ Prev</button>
+              <span id="tlPageInfo" style="font-size:12px;color:var(--muted)"></span>
+              <button class="nav-item" id="tlNext" onclick="tlPage(1)">Next ▶</button>
+              <label style="font-size:12px;color:var(--muted);margin-left:8px">filter
+                <select id="tlFilter" onchange="tlRender()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:2px 6px">
+                  <option value="">all</option>
+                  <option value="win">wins</option>
+                  <option value="loss">losses</option>
+                </select>
+              </label>
+              <span style="font-size:11px;color:var(--muted2)">drawdown (MAE) + run-up (MFE) replayed from M5 candles over each trade's window; R is pnl / initial dollar risk</span>
+            </div>
+            <div style="overflow-x:auto;max-height:calc(100vh - 260px);overflow-y:auto">
+              <table id="tradeLogTable" style="font-size:11px;white-space:nowrap;min-width:100%">
+                <thead><tr id="tradeLogHead"></tr></thead>
+                <tbody id="tradeLogBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- SETTINGS VIEW -->
         <div class="view" id="view-settings">
           <div class="card">
@@ -884,7 +924,11 @@
   <nav class="mobile-tab-bar" id="mobileTabBar" aria-label="Main navigation">
     <button type="button" class="mobile-tab active" data-view="dashboard"><span class="ico">⌂</span>Home</button>
     <button type="button" class="mobile-tab" data-view="equity"><span class="ico">📈</span>Chart</button>
+    <button type="button" class="mobile-tab" data-view="trades"><span class="ico">🗒</span>Trades</button>
+    <button type="button" class="mobile-tab" data-view="research"><span class="ico">⚗</span>Research</button>
+    <button type="button" class="mobile-tab" data-view="replay"><span class="ico">▶</span>Replay</button>
     <button type="button" class="mobile-tab" data-view="memory"><span class="ico">🧠</span>Memory</button>
+    <button type="button" class="mobile-tab" data-view="logs"><span class="ico">≡</span>Logs</button>
     <button type="button" class="mobile-tab" data-view="settings"><span class="ico">⚙</span>System</button>
   </nav>
 
@@ -967,6 +1011,9 @@
         requestAnimationFrame(() => {
           if (equityCurveRaw) drawChart(equityCurveRaw, lastData?.live_portfolio);
         });
+      }
+      if (view === "trades") {
+        loadTradeLog();
       }
     }
 
@@ -1540,7 +1587,7 @@
       const positions = live?.open_positions || [];
       if (!positions.length) { card.style.display = "none"; return; }
       card.style.display = "block";
-      document.getElementById("openPositionsLive").innerHTML = `<table>
+      document.getElementById("openPositionsLive").innerHTML = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table style="white-space:nowrap;min-width:100%">
         <thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Live</th><th>Size</th><th>PnL</th><th>Setup</th></tr></thead>
         <tbody>${positions.map(p => {
           const pnlColor = (p.profit||0) >= 0 ? "var(--green)" : "var(--red)";
@@ -1553,7 +1600,7 @@
             <td style="color:${pnlColor};font-weight:700">$${fmt(p.profit)}</td>
             <td>${(p.setup_type||"—").replace(/_/g," ")}</td>
           </tr>`;
-        }).join("")}</tbody></table>`;
+        }).join("")}</tbody></table></div>`;
     }
 
     function getActiveSignal(data) {
@@ -1717,7 +1764,15 @@
           <div class="ms-lbl">Risk</div>
           <div class="ms-val" style="font-size:16px">${fmt(risk.drawdown, 2)}%</div>
           <div class="ms-sub">DD · ${fmt(risk.exposure_used_pct, 1)}% exposure</div>
-        </div>`;
+        </div>
+        ${(() => {
+          const bg = data.blue_guardian || risk.blue_guardian || {};
+          if (!bg.enabled) return "";
+          const fp = (data.paper_positions?.positions || []).reduce((s,p)=>s+(p.profit||0),0);
+          return `<div class="ms-tile wide"><div class="ms-lbl">Blue Guardian</div>
+            <div class="ms-val" style="font-size:18px;color:${(bg.daily_pnl||0)>=0?'var(--green)':'var(--red)'}">$${fmt(bg.daily_pnl)} / $${fmt(bg.daily_profit_target_usd||300)}</div>
+            <div class="ms-sub">+${bg.daily_profit_target_pct||6}% target · float $${fmt(fp)} · ${bg.trading_paused?'PAUSED':'active'}</div></div>`;
+        })()}`;
     }
 
     function setMobileEmpty(show, msg) {
@@ -1805,7 +1860,15 @@
         <div class="bottom-metric"><div class="label">Exposure</div><div class="val sm">${fmt(risk.exposure_used_pct, 1)}%</div></div>
         <div class="bottom-metric"><div class="label">Drawdown</div><div class="val sm">${fmt(risk.drawdown, 2)}%</div></div>
         <div class="bottom-metric"><div class="label">Win Rate</div><div class="val sm">${wr}%</div></div>
-        <div class="bottom-metric"><div class="label">Positions</div><div class="val sm">${live?.position_count || 0}</div></div>`;
+        <div class="bottom-metric"><div class="label">Positions</div><div class="val sm">${live?.position_count || 0}/4</div></div>
+        ${(() => {
+          const bg = data.blue_guardian || {};
+          if (!bg.enabled) return "";
+          const fp = (data.paper_positions?.positions || []).reduce((s,p)=>s+(p.profit||0),0);
+          const fcol = fp > -35 ? "var(--green)" : fp > -45 ? "var(--orange)" : "var(--red)";
+          return `<div class="bottom-metric"><div class="label">BG Day</div><div class="val sm" style="color:${(bg.daily_pnl||0)>=0?'var(--green)':'var(--red)'}">$${fmt(bg.daily_pnl)} / $${fmt(bg.daily_profit_target_usd||300)}</div></div>
+          <div class="bottom-metric"><div class="label">Floating</div><div class="val sm" style="color:${fcol}">$${fmt(fp)}</div></div>`;
+        })()}`;
     }
 
     function renderCore(data) {
@@ -1862,6 +1925,193 @@
       document.getElementById("tradesTable").innerHTML = trades.length ? `<table><thead><tr><th>Symbol</th><th>Result</th><th>PnL</th></tr></thead><tbody>
         ${trades.slice(-6).reverse().map(t=>`<tr><td>${t.symbol}</td><td><span class="badge ${t.result==="win"?"ok":"bad"}">${t.result}</span></td><td>$${fmt(t.pnl)}</td></tr>`).join("")}
         </tbody></table>` : '<p class="empty">No trades</p>';
+
+      renderCulturing(data);
+    }
+
+    function renderCulturing(data) {
+      const el = document.getElementById("culturingPanel");
+      if (!el) return;
+      const led = data.forward_test_ledger||{};
+      const pol = data.symbol_policy_live||{};
+      const cells = led.cells||{};
+      const symbols = pol.symbols||{};
+      const total = led.total_cells||0;
+      const vetoed = led.total_vetoed||0;
+      const cfg = led.config||{};
+      const minN = cfg.min_n||pol.min_n||"—";
+      const vwr = cfg.veto_win_rate_pct||pol.veto_win_rate_pct||"—";
+      const keys = Object.keys(cells);
+      if (!keys.length) {
+        el.innerHTML = `<p class="empty">No cells yet — forward_test_loop hasn't recorded a cycle (min_n=${minN}, veto&lt;${vwr}% wr).</p>`;
+        return;
+      }
+      const head = `<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)">
+        <span>cells <strong style="color:var(--text)">${total}</strong></span>
+        <span>vetoed <strong style="color:var(--red)">${vetoed}</strong></span>
+        <span>min_n=<strong style="color:var(--text)">${minN}</strong></span>
+        <span>veto when wr&lt;<strong style="color:var(--text)">${vwr}%</strong> &amp; netR&lt;0</span>
+      </div>`;
+      const rows = keys.map(sym=>{
+        const symCells = cells[sym]||{};
+        const vCells = (symbols[sym]||{}).vetoed_cells||[];
+        const vSet = new Set(vCells);
+        const safeId = sym.replace(/[^A-Za-z0-9_-]/g,"_");
+        const entries = Object.entries(symCells).map(([cell,st])=>({cell,st}));
+        entries.sort((a,b)=>(a.st.expectancy_net_r||0)-(b.st.expectancy_net_r||0));
+        const worst = entries.slice(0,3).map(e=>{
+          const v = e.st.verdict==="vetoed";
+          const col = v?"var(--red)":"var(--muted)";
+          const c = e.cell.length>42?e.cell.slice(0,39)+"…":e.cell;
+          const loss = (e.st.avg_loss_usd!=null) ? ` avgL=$${fmt(e.st.avg_loss_usd)} maxL=$${fmt(e.st.max_loss_usd)} br25=${e.st.breach_25_count||0}` : "";
+          return `<div style="font-size:11px;color:${col};padding:2px 0">worst ${c} n=${e.st.n||0} wr=${Math.round(e.st.win_rate_pct||0)}% netR=${fmt(e.st.expectancy_net_r,3)}${loss} ${e.st.verdict||""}</div>`;
+        }).join("");
+        const vlist = vCells.slice(0,4).map(c=>{
+          const cc = c.length>50?c.slice(0,47)+"…":c;
+          return `<div style="font-size:11px;color:var(--red);padding:1px 0 1px 12px">✕ ${cc}</div>`;
+        }).join("");
+        return `<div style="border-top:1px solid rgba(255,255,255,.06);padding:8px 0">
+          <div style="font-weight:600;cursor:pointer;user-select:none" onclick="loadCulturingSymbol('${sym}','${safeId}',this)">${sym} <span style="color:var(--muted);font-weight:400">cells=${Object.keys(symCells).length} vetoed=${vCells.length}</span> <span style="color:var(--muted);font-size:11px">▸ click for all cells</span></div>
+          ${worst}${vlist||""}
+          <div id="culturingDetail_${safeId}" style="display:none;margin-top:6px;padding-left:10px;border-left:2px solid rgba(255,255,255,.1)"></div>
+          </div>`;
+      }).join("");
+      el.innerHTML = head + rows;
+    }
+
+    async function loadCulturingSymbol(sym, safeId, headerEl) {
+      const detail = document.getElementById("culturingDetail_" + safeId);
+      if (!detail) return;
+      const open = detail.style.display !== "none";
+      if (open) {
+        detail.style.display = "none";
+        detail.innerHTML = "";
+        return;
+      }
+      detail.style.display = "block";
+      detail.innerHTML = '<p class="empty" style="font-size:11px">loading…</p>';
+      try {
+        const data = await fetchJson("/api/culturing/" + encodeURIComponent(sym));
+        const cells = data.cells || {};
+        const entries = Object.entries(cells).map(([cell,st])=>({cell,st}));
+        entries.sort((a,b)=>(a.st.expectancy_net_r||0)-(b.st.expectancy_net_r||0));
+        if (!entries.length) {
+          detail.innerHTML = '<p class="empty" style="font-size:11px">no cells</p>';
+          return;
+        }
+        detail.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">all ${entries.length} cells for ${sym} (sorted by net R) — ${data.total_vetoed||0} vetoed</div>
+          <table style="font-size:11px"><thead><tr><th>cell</th><th>n</th><th>win%</th><th>netR</th><th>PF</th><th>avgL</th><th>maxL</th><th>br25</th><th>verdict</th></tr></thead><tbody>
+          ${entries.map(e=>{const v=e.st.verdict==="vetoed";const col=v?"var(--red)":"var(--text)";return `<tr><td style="color:${col}">${e.cell}</td><td>${e.st.n||0}</td><td>${Math.round(e.st.win_rate_pct||0)}</td><td>${fmt(e.st.expectancy_net_r,3)}</td><td>${fmt(e.st.profit_factor,2)}</td><td>$${fmt(e.st.avg_loss_usd||0)}</td><td>$${fmt(e.st.max_loss_usd||0)}</td><td>${e.st.breach_25_count||0}</td><td style="color:${col}">${e.st.verdict||""}</td></tr>`}).join("")}
+          </tbody></table>`;
+      } catch (err) {
+        detail.innerHTML = '<p class="empty" style="font-size:11px;color:var(--red)">failed to load: ' + (err.message||err) + '</p>';
+      }
+    }
+
+    // ---- Trade Log view (the user's "whole works" per-trade record) ----
+    let tradeLogData = null;
+    let tlPageIdx = 0;
+    const TL_PAGE = 25;
+
+    async function loadTradeLog(force) {
+      if (tradeLogData && !force) { tlRender(); return; }
+      try {
+        const el = document.getElementById("tradeLogBody");
+        if (el) el.innerHTML = '<tr><td colspan="20"><p class="empty">loading trade log…</p></td></tr>';
+        tradeLogData = await fetchJson("/api/state/trade_log.json");
+        tlPageIdx = 0;
+        tlRender();
+      } catch (err) {
+        const el = document.getElementById("tradeLogBody");
+        if (el) el.innerHTML = '<tr><td colspan="20"><p class="empty" style="color:var(--red)">failed to load trade log: ' + (err.message||err) + '</p></td></tr>';
+      }
+    }
+
+    function tlFiltered() {
+      const f = (document.getElementById("tlFilter")||{}).value || "";
+      const rows = (tradeLogData && tradeLogData.trades) || [];
+      if (!f) return rows;
+      return rows.filter(t => t.result === f);
+    }
+
+    function tlPage(delta) {
+      const n = tlFiltered().length;
+      const pages = Math.max(1, Math.ceil(n / TL_PAGE));
+      tlPageIdx = Math.min(Math.max(0, tlPageIdx + delta), pages - 1);
+      tlRender();
+    }
+
+    function _tlCell(v, opts) {
+      opts = opts || {};
+      if (v == null || v === "") return "—";
+      if (opts.money) return "$" + fmt(v, 2);
+      if (opts.r) { const s = fmt(v, 2); return (v >= 0 ? "+" : "") + s + "R"; }
+      if (opts.pct) return fmt(v, 1) + "%";
+      if (opts.p) return fmt(v, 5);
+      if (opts.sec) return v; // hold_human already humanized
+      return v;
+    }
+
+    function tlRender() {
+      if (!tradeLogData) return;
+      const s = tradeLogData;
+      const sum = document.getElementById("tradeLogSummary");
+      if (sum) sum.innerHTML = `
+        <span>trades <strong style="color:var(--text)">${s.total||0}</strong></span>
+        <span>wins <strong style="color:var(--green)">${s.wins||0}</strong></span>
+        <span>losses <strong style="color:var(--red)">${s.losses||0}</strong></span>
+        <span>win% <strong style="color:var(--text)">${fmt(s.win_rate_pct,1)}%</strong></span>
+        <span>net PnL <strong style="color:${(s.total_pnl||0)>=0?"var(--green)":"var(--red)"}">$${fmt(s.total_pnl,2)}</strong></span>
+        <span>avg R <strong style="color:${(s.avg_R||0)>=0?"var(--green)":"var(--red)"}">${(s.avg_R==null?"—":((s.avg_R>=0?"+":"")+fmt(s.avg_R,3)+"R"))}</strong></span>
+        <span>Kelly sized-up <strong style="color:var(--green)">${(s.kelly&&s.kelly.sized_trades)||0}</strong> / fallback <strong style="color:var(--muted)">${(s.kelly&&s.kelly.fallback_trades)||0}</strong></span>
+        <span>opened_at known <strong style="color:var(--text)">${s.opened_at_known||0}</strong></span>
+        <span>drawdown known <strong style="color:var(--text)">${s.drawdown_known||0}</strong></span>`;
+      const cols = ["#","opened","closed","hold","symbol","side","setup","regime","bias","session","conf","size","entry","exit","SL","TP","result","PnL","R","MAE(R)","MFE(R)","Kelly","exit reason"];
+      const head = document.getElementById("tradeLogHead");
+      if (head) head.innerHTML = cols.map(c=>`<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">${c}</th>`).join("");
+      const rows = tlFiltered();
+      const pages = Math.max(1, Math.ceil(rows.length / TL_PAGE));
+      tlPageIdx = Math.min(tlPageIdx, pages - 1);
+      const info = document.getElementById("tlPageInfo");
+      if (info) info.textContent = `page ${tlPageIdx+1}/${pages} · ${rows.length} trades`;
+      const slice = rows.slice(tlPageIdx * TL_PAGE, tlPageIdx * TL_PAGE + TL_PAGE);
+      const body = document.getElementById("tradeLogBody");
+      if (!body) return;
+      if (!slice.length) { body.innerHTML = '<tr><td colspan="23"><p class="empty">no trades</p></td></tr>'; return; }
+      body.innerHTML = slice.map((t,i) => {
+        const num = tlPageIdx * TL_PAGE + i + 1;
+        const win = t.result === "win";
+        const resCol = win ? "var(--green)" : "var(--red)";
+        const pnlCol = (t.pnl||0) >= 0 ? "var(--green)" : "var(--red)";
+        const rCol = (t.r_multiple||0) >= 0 ? "var(--green)" : "var(--red)";
+        const opened = t.opened_at ? t.opened_at.slice(5,16).replace("T"," ") : "—";
+        const closed = t.closed_at ? t.closed_at.slice(5,16).replace("T"," ") : "—";
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+          <td style="color:var(--muted2);padding:3px 6px">${num}</td>
+          <td style="padding:3px 6px">${opened}</td>
+          <td style="padding:3px 6px">${closed}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${t.hold_human||"—"}</td>
+          <td style="padding:3px 6px;font-weight:600">${t.symbol||"—"}</td>
+          <td style="padding:3px 6px;color:${t.side==="BUY"?"var(--green)":"var(--red)"}">${t.side||"—"}</td>
+          <td style="padding:3px 6px">${t.setup||"—"}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${t.regime_primary||"—"}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${t.regime_bias||"—"}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${t.session||"—"}</td>
+          <td style="padding:3px 6px">${t.confidence||"—"}</td>
+          <td style="padding:3px 6px">${t.volume||"—"}</td>
+          <td style="padding:3px 6px">${_tlCell(t.entry,{p:1})}</td>
+          <td style="padding:3px 6px">${_tlCell(t.exit,{p:1})}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${_tlCell(t.sl_initial||t.sl,{p:1})}</td>
+          <td style="padding:3px 6px;color:var(--muted)">${_tlCell(t.tp1,{p:1})}</td>
+          <td style="padding:3px 6px;color:${resCol};font-weight:600">${t.result||"—"}</td>
+          <td style="padding:3px 6px;color:${pnlCol}">${_tlCell(t.pnl,{money:1})}</td>
+          <td style="padding:3px 6px;color:${rCol}">${t.r_multiple==null?"—":((t.r_multiple>=0?"+":"")+fmt(t.r_multiple,2)+"R")}</td>
+          <td style="padding:3px 6px;color:var(--red)">${t.mae_R==null?"—":fmt(t.mae_R,2)+"R"}</td>
+          <td style="padding:3px 6px;color:var(--green)">${t.mfe_R==null?"—":fmt(t.mfe_R,2)+"R"}</td>
+          <td style="padding:3px 6px;color:${(t.kelly&&!t.kelly.gated)?"var(--green)":"var(--muted)"};font-size:11px" title="${t.kelly?(t.kelly.reason||""):""}">${t.kelly?(t.kelly.fraction==null?"—":fmt(t.kelly.fraction,2)+"%"):"—"}</td>
+          <td style="padding:3px 6px;color:var(--muted2);font-size:10px">${t.exit_reason||"—"}</td>
+        </tr>`;
+      }).join("");
     }
 
     function renderExtras(data) {

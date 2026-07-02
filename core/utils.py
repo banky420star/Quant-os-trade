@@ -60,13 +60,21 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
                 config = _deep_merge(config, local)
     if isinstance(config, dict):
         from core.account_mode import performance_gates_active
+        from core.blue_guardian import (
+            apply_config_overrides,
+            blue_guardian_enabled,
+            prepare_blue_guardian_profile,
+        )
         from core.performance_benchmark import sync_performance_gates
         from core.practice_session import sync_practice_gates
 
+        if blue_guardian_enabled(config):
+            config = prepare_blue_guardian_profile(config)
         if config.get("performance"):
             config = sync_performance_gates(config)
         if not performance_gates_active(config):
             config = sync_practice_gates(config)
+        config = apply_config_overrides(config)
     return config
 
 
@@ -109,9 +117,17 @@ def read_json_state(filename: str, default: Any = None) -> Any:
 
 
 def write_json_state(filename: str, data: Any) -> Path:
-    """Write JSON state file atomically with per-file locking and Windows-safe retries."""
+    """Write JSON state file atomically with per-file locking and Windows-safe retries.
+
+    Supports nested relative paths (e.g. ``culturing/XAUUSDm.json``) by creating
+    parent directories under STATE_DIR. Top-level filenames are unaffected (their
+    parent is STATE_DIR, which already exists).
+    """
     ensure_dirs()
     path = STATE_DIR / filename
+    # Create nested parent dirs (no-op for top-level files). Done before the
+    # write loop so a missing parent is a one-shot setup, not a per-retry error.
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     payload = json.dumps(data, indent=2, default=str)
 

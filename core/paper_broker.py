@@ -254,21 +254,44 @@ class PaperBroker:
         return total
 
     def _be_cfg(self, symbol: str) -> dict[str, Any]:
+        from core.position_manager import _default_broker_point, _points_to_price
+
         be = self.config.get("trading", {}).get("break_even", {}) or {}
         psym = (be.get("per_symbol") or {}).get(symbol, {}) or {}
+        point = _default_broker_point(symbol)
+        trigger_pts = _points_to_price(psym.get("trigger_points", be.get("trigger_points")), point)
+        lock_pts = _points_to_price(psym.get("lock_profit_points", be.get("lock_profit_points")), point)
         return {
             "enabled": bool(be.get("enabled", False)),
-            "trigger": float(psym.get("trigger_atr_mult", be.get("trigger_atr_mult", 0.5))),
-            "lock": float(psym.get("lock_profit_atr_mult", be.get("lock_profit_atr_mult", 0.1))),
+            "trigger_dist": lambda atr, _tp=trigger_pts, _ps=psym, _be=be: (
+                _tp if _tp is not None
+                else float(_ps.get("trigger_atr_mult", _be.get("trigger_atr_mult", 0.5))) * atr
+            ),
+            "lock_dist": lambda atr, _lp=lock_pts, _ps=psym, _be=be: (
+                _lp if _lp is not None
+                else float(_ps.get("lock_profit_atr_mult", _be.get("lock_profit_atr_mult", 0.1))) * atr
+            ),
         }
 
     def _trail_cfg(self, symbol: str) -> dict[str, Any]:
+        from core.position_manager import _default_broker_point, _trail_distance_price
+
         tr = self.config.get("trading", {}).get("trailing", {}) or {}
         psym = (tr.get("per_symbol") or {}).get(symbol, {}) or {}
+        point = _default_broker_point(symbol)
+        act_pts = None
+        if point:
+            from core.position_manager import _points_to_price
+            act_pts = _points_to_price(psym.get("activation_points", tr.get("activation_points")), point)
         return {
             "enabled": bool(tr.get("enabled", False)),
-            "activation": float(psym.get("activation_atr_mult", tr.get("activation_atr_mult", 0.75))),
-            "trail": float(psym.get("trail_atr_mult", tr.get("trail_atr_mult", 0.35))),
+            "activation_dist": lambda atr, _ap=act_pts, _ps=psym, _tr=tr: (
+                _ap if _ap is not None
+                else float(_ps.get("activation_atr_mult", _tr.get("activation_atr_mult", 0.75))) * atr
+            ),
+            "trail_dist": lambda atr, _ps=psym, _tr=tr, _pt=point: _trail_distance_price(
+                _ps, _tr, atr, _pt
+            ),
         }
 
     def _check_exits(
@@ -361,26 +384,29 @@ class PaperBroker:
 
                 # --- Break-even: move SL to entry + lock_profit_atr once +trigger. ---
                 be = self._be_cfg(symbol)
-                if be["enabled"] and not pos.get("be_triggered") and atr > 0 and profit >= be["trigger"] * atr:
-                    lock_sl = entry + direction * be["lock"] * atr
+                trigger_dist = float(be["trigger_dist"](atr))
+                lock_dist = float(be["lock_dist"](atr))
+                if be["enabled"] and not pos.get("be_triggered") and atr > 0 and profit >= trigger_dist:
+                    lock_sl = entry + direction * lock_dist
                     pos["sl"] = lock_sl
                     pos["be_triggered"] = True
                     pos["be_narrative"] = (
-                        f"Break-even: +{profit / atr:.2f}ATR favourable triggered SL move to "
-                        f"{lock_sl:.5f} (locked {be['lock']:.2f}ATR over entry)."
+                        f"Break-even: +{profit:.5f} favourable triggered SL move to "
+                        f"{lock_sl:.5f} (locked {lock_dist:.5f} over entry)."
                     )
 
                 # --- Trailing: once +activation, trail SL to peak - trail_atr (only favourable direction). ---
                 tr = self._trail_cfg(symbol)
-                if tr["enabled"] and atr > 0 and profit >= tr["activation"] * atr:
-                    new_sl = float(pos["peak"]) - direction * tr["trail"] * atr
+                if tr["enabled"] and atr > 0 and profit >= float(tr["activation_dist"](atr)):
+                    trail_dist = float(tr["trail_dist"](atr))
+                    new_sl = float(pos["peak"]) - direction * trail_dist
                     improved = (side == "BUY" and new_sl > float(pos["sl"])) or (side == "SELL" and new_sl < float(pos["sl"]))
                     if improved:
                         pos["sl"] = new_sl
                         pos["trail_active"] = True
                         pos["trail_narrative"] = (
                             f"Trailing: SL trailed to {new_sl:.5f} "
-                            f"({tr['trail']:.2f}ATR behind peak {pos['peak']:.5f})."
+                            f"({trail_dist:.5f} behind peak {pos['peak']:.5f})."
                         )
 
             # --- Exit against SL / TP1 (conservative stop-first intrabar). ---

@@ -30,7 +30,9 @@ def run() -> dict:
 
     trades = trades_data.get("trades", [])
     market_ctx = read_json_state("market_context.json", default={})
-    context_data = market_ctx.get("market_context", market_ctx)
+    context_data = market_ctx.get("market_context", market_ctx) if isinstance(market_ctx, dict) else {}
+    if not isinstance(context_data, dict):
+        context_data = {}
 
     engine = MemoryEngine(logger)
     result = engine.process(trades, features, context_data, memory, edge_scores)

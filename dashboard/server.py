@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -44,6 +45,11 @@ STATE_FILES = (
     "adaptive_weights.json",
     "supervisor.json",
     "replay_job.json",
+    "forward_test_ledger.json",
+    "symbol_policy_live.json",
+    "trade_log.json",
+    "blue_guardian.json",
+    "blue_guardian_actions.json",
 )
 
 # Mobile / Tailscale: skip multi-MB blobs on the default dashboard poll.
@@ -55,6 +61,7 @@ LITE_SKIP_STATE = frozenset({
     "paper_orders.json",
     "replay_results.json",
     "latest_candles.json",
+    "trade_log.json",
 })
 
 
@@ -572,6 +579,16 @@ def _build_trading_status(
             blockers.append("Candidates generated but none approved")
 
     can_execute = not kill_on and len(approved) > 0 and live_trading_enabled
+    bg = read_json_state("blue_guardian.json", default={}) or {}
+    if bg.get("enabled"):
+        blockers.insert(
+            0,
+            f"Blue Guardian: day {bg.get('daily_pnl', 0):+.2f} / +${bg.get('daily_profit_target_usd', 300):.0f} "
+            f"({bg.get('daily_profit_target_pct', 6):.0f}%) · floating check -$35/-$45",
+        )
+        if bg.get("trading_paused") and bg.get("pause_reason"):
+            blockers.insert(0, bg["pause_reason"])
+
     if not live_trading_enabled:
         blockers.append("Live trading DISABLED (live_trading_enabled: false) — paper/research mode only")
     status = (
@@ -612,6 +629,7 @@ def aggregate_state(*, lite: bool = False) -> dict:
             "runtime_detail": runtime_mode["detail"],
             "symbols": config["mt5"]["symbols"],
             "risk": config.get("risk", {}),
+            "blue_guardian": config.get("blue_guardian", {}),
             "version": config.get("app", {}).get("version", "1.0"),
             "os_name": config.get("app", {}).get("display_name", "MT5 Quant OS"),
         },
@@ -699,6 +717,17 @@ def aggregate_state(*, lite: bool = False) -> dict:
         ),
     )
     payload["logs"] = _tail_log(50)
+    # Surface the bot's MT5 connection state as a top-level `connection` field
+    # so the SPA's "MT5 Connected/Offline" pill reflects reality. health.json
+    # (written by the bot's health loop) carries the authoritative
+    # {alive, logged_in, latency_ms, ping:{...}} block; without this mapping the
+    # SPA reads conn.logged_in=None and always shows "MT5 Offline" even when the
+    # bot is connected at ~2ms. Falls back to account.json's connected flag.
+    health_conn = (payload.get("health") or {}).get("connection") or {}
+    if not health_conn.get("logged_in"):
+        acc = payload.get("account") or {}
+        health_conn = {**health_conn, "logged_in": bool(acc.get("connected"))}
+    payload["connection"] = health_conn
     # Surface the audited verdict (VERDICT.md) so the dashboard cannot hide the
     # researched negative result. `verdict_summary` = headline + section headings;
     # the full markdown is available via /api/verdict.
@@ -714,9 +743,29 @@ def aggregate_state(*, lite: bool = False) -> dict:
     return payload
 
 
+def _sanitize_json(obj):
+    """Replace non-finite floats (inf, -inf, nan) with None so the response is
+    spec-compliant JSON. Python's json.dumps emits bare `Infinity`/`-Infinity`/
+    `NaN` tokens by default (allow_nan=True); browsers' JSON.parse REJECT those
+    tokens (SyntaxError). That broke the SPA dashboard for ~hours: every
+    /api/summary fetch returned 200 but res.json() threw because the culturing
+    ledger cells carry profit_factor=Infinity, so safeRender never received
+    data and the page stayed "unpopulated". Sanitizing at serialization fixes
+    every API response in one place. Recursive over dict/list/float."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    return obj
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data: dict, status: int = 200) -> None:
-        body = json.dumps(data, default=str).encode("utf-8")
+        body = json.dumps(_sanitize_json(data), default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -768,6 +817,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(read_json_state(filename, default={}))
             else:
                 self.send_error(404)
+        elif path.startswith("/api/culturing/"):
+            # Per-symbol culturing ledger drill-down (state/culturing/<sym>.json,
+            # written by forward_test_loop). Symbol names are alphanumeric but
+            # sanitize to block path traversal.
+            symbol = path.split("/api/culturing/", 1)[-1].strip("/")
+            safe = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "" for ch in symbol)
+            if not safe or safe in (".", ".."):
+                self.send_error(404)
+                return
+            data = read_json_state(f"culturing/{safe}.json", default={})
+            if not data:
+                self.send_error(404)
+                return
+            self._send_json(data)
         elif path == "/api/verdict":
             verdict_path = ROOT / "VERDICT.md"
             if verdict_path.exists():
@@ -801,7 +864,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def log_message(self, format: str, *args) -> None:
-        return
+        # Temporarily enabled (2026-07-02) to diagnose "phone page loads, data
+        # not populated": capture each request the phone makes so we can see
+        # the path/status/size it actually receives. Append-only, one line.
+        try:
+            import time as _t
+            line = "%s %s\n" % (_t.strftime("%H:%M:%S"), (format % args))
+            with (ROOT / "state" / "dashboard_access.log").open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+        except Exception:
+            pass
 
 
 def run(host: str | None = None, port: int | None = None) -> None:

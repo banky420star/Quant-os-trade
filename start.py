@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.account_mode import performance_gates_active, runtime_mode_summary
+from core.account_mode import performance_gates_active, runtime_mode_summary, validate_runtime_profile
+from core.profile_guard import assert_profile
 from core.remote_access import remote_access_info
 from core.practice_session import ensure_practice_session
 from core.pipeline import run_pipeline
@@ -135,6 +136,11 @@ def start(once: bool = False) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     mode = runtime_mode_summary(config)
+    validate_runtime_profile(config)
+    # USER-AUTHORIZED 2026-07-01: refuse to boot on the dangerous real+growth+
+    # live-trading combination (the 2026-06-30 wipe scenario) and enforce the
+    # explicit config.mode label. See core/profile_guard.py.
+    assert_profile(config)
     write_json_state("runtime_mode.json", mode)
     logger.info("Runtime mode: %s — %s", mode["label"], mode["detail"])
     if not performance_gates_active(config):

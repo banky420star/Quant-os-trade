@@ -7,7 +7,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from core.blue_guardian import (
+    blue_guardian_enabled,
+    can_close_position,
+    entry_gates,
+    max_lot_for_symbol,
+    record_position_open,
+    risk_per_trade_cap,
+)
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
+from core.kelly_sizing import kelly_for_signal
 from core.position_sync import _setup_type_from_comment
 from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer, symbol_capacity_available
 from core.trade_limits import (
@@ -16,6 +25,7 @@ from core.trade_limits import (
     session_trade_capacity_available,
 )
 from core.strategy_entry import resolve_mt5_pending_type, strategy_entries_enabled
+from core.symbol_manager import broker_symbol, logical_symbol
 from core.trade_tracker import TradeTracker
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
@@ -23,6 +33,21 @@ try:
     import MetaTrader5 as mt5
 except ImportError:
     mt5 = None  # type: ignore
+
+
+def _json_safe_kelly(kelly: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Make a Kelly verdict dict JSON-safe (math.inf -> None) for state files."""
+    if not isinstance(kelly, dict):
+        return None
+    safe: dict[str, Any] = {}
+    for k, v in kelly.items():
+        if isinstance(v, float) and v != v:  # NaN
+            safe[k] = None
+        elif isinstance(v, float) and v in (float("inf"), float("-inf")):
+            safe[k] = None
+        else:
+            safe[k] = v
+    return safe
 
 
 class MT5Broker:
@@ -124,6 +149,14 @@ class MT5Broker:
                             signal["symbol"], signal.get("confidence"), min_conf,
                         )
 
+            bg_ok, _bg_code, _bg = entry_gates(self.config, open_positions, signal)
+            if not bg_ok:
+                self.logger.info(
+                    "Skip %s — Blue Guardian entry gate",
+                    signal["symbol"],
+                )
+                continue
+
             if not symbol_capacity_available(self.config, signal["symbol"], open_positions):
                 self.logger.info(
                     "Skip %s — max open positions per symbol reached",
@@ -158,7 +191,12 @@ class MT5Broker:
 
             if result.get("success"):
                 placed.append(order_record)
+                ticket = result.get("ticket")
+                if ticket is not None:
+                    record_position_open(ticket)
                 self._record_open_confidence(result.get("ticket"), signal.get("confidence"))
+                # Re-sync so Blue Guardian max-total gate applies within this batch.
+                open_positions = enrich_positions_with_orders(self._sync_positions(), orders)
                 self.logger.info(
                     "MT5 order placed: %s %s lot=%s ticket=%s",
                     signal["symbol"],
@@ -232,7 +270,8 @@ class MT5Broker:
         account: Any,
         open_positions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        symbol = signal["symbol"]
+        logical_sym = signal["symbol"]
+        symbol = broker_symbol(logical_sym)
         side = signal["side"]
 
         if not mt5.symbol_select(symbol, True):
@@ -334,7 +373,17 @@ class MT5Broker:
         info: Any,
         open_positions: list[dict[str, Any]],
     ) -> float:
-        risk_pct = float(self.config["signals"].get("default_risk_percent", 1))
+        default_risk_pct = float(self.config["signals"].get("default_risk_percent", 1))
+        # Per-cell Kelly sizing (USER request 2026-07-01): size by each cell's
+        # own proven edge (f* = p(1-1/PF)) instead of a flat risk %. Gated by
+        # min_n + PF>1 + bootstrap ci95_lo>0; falls back to default_risk_pct
+        # when disabled or the cell has no proven edge, so culturing keeps
+        # collecting data. See core/kelly_sizing.py.
+        kelly = kelly_for_signal(signal, self.config, default_risk_pct)
+        risk_pct = float(kelly.get("fraction", default_risk_pct))
+        # Stamp on the signal so the executed-order record carries the Kelly
+        # verdict (cell, f*, pf, gated) for the trade log / UI.
+        signal["kelly"] = kelly
         max_lot = float(self.exec_cfg.get("max_lot", 0.1))
         default_lot = float(self.exec_cfg.get("default_lot", 0.01))
         equity = float(account.equity)
@@ -347,6 +396,9 @@ class MT5Broker:
             ideal = default_lot
         else:
             risk_money = equity * (risk_pct / 100.0)
+            cap_usd = risk_per_trade_cap(self.config)
+            if cap_usd is not None:
+                risk_money = min(risk_money, cap_usd)
             tick_value = float(getattr(info, "trade_tick_value", 0) or 0)
             tick_size = float(getattr(info, "trade_tick_size", 0) or info.point or 0)
             if tick_value > 0 and tick_size > 0:
@@ -356,7 +408,7 @@ class MT5Broker:
                 ideal = calc_risk_based_size(equity, risk_pct, entry, sl, max_size=max_lot)
 
         vmin = float(info.volume_min or 0.01)
-        ideal = min(ideal, max_lot)
+        ideal = min(ideal, max_lot_for_symbol(self.config, signal["symbol"], max_lot))
         # Micro accounts: tick-based risk sizing can fall below broker minimum lot.
         if ideal < vmin:
             ideal = min(max(default_lot, vmin), max_lot)
@@ -412,14 +464,15 @@ class MT5Broker:
             synced.append({
                 "position_id": str(pos.ticket),
                 "ticket": pos.ticket,
-                "symbol": pos.symbol,
+                "symbol": logical_symbol(pos.symbol),
+                "broker_symbol": pos.symbol,
                 "side": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
                 "entry": float(pos.price_open),
                 "sl": float(pos.sl),
                 "tp1": float(pos.tp),
                 "size": float(pos.volume),
                 "profit": float(pos.profit),
-                "opened_at": utc_now_iso(),
+                "opened_at": datetime.fromtimestamp(int(pos.time), tz=timezone.utc).isoformat(),
                 "setup_type": _setup_type_from_comment(pos.comment),
                 "magic": pos.magic,
                 "comment": pos.comment,
@@ -497,16 +550,17 @@ class MT5Broker:
         self, ticket: int, symbol: str, side: str, volume: float,
         reason: str = "regime_flip_replace",
     ) -> dict[str, Any]:
-        """Close an open MT5 position via an opposite market deal.
-
-        BUY position -> SELL at bid; SELL position -> BUY at ask. `side` is the
-        position's CURRENT side. Mirrors the entry market-deal request but adds
-        `position`: ticket and uses the opposite order type.
-        """
-        if not mt5.symbol_select(symbol, True):
+        """Close an open MT5 position via an opposite market deal."""
+        if blue_guardian_enabled(self.config):
+            pos_stub = {"ticket": ticket, "opened_at": None}
+            ok, hold_reason = can_close_position(self.config, pos_stub, reason=reason)
+            if not ok:
+                return {"success": False, "error": hold_reason or "min_hold_active"}
+        broker_sym = broker_symbol(symbol)
+        if not mt5.symbol_select(broker_sym, True):
             return {"success": False, "error": f"symbol_select failed: {mt5.last_error()}"}
-        info = mt5.symbol_info(symbol)
-        tick = mt5.symbol_info_tick(symbol)
+        info = mt5.symbol_info(broker_sym)
+        tick = mt5.symbol_info_tick(broker_sym)
         if info is None or tick is None:
             return {"success": False, "error": f"no symbol info: {mt5.last_error()}"}
         if side == "BUY":
@@ -517,7 +571,7 @@ class MT5Broker:
             price = float(tick.ask)
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
+            "symbol": broker_sym,
             "volume": float(volume),
             "type": order_type,
             "position": int(ticket),
@@ -592,6 +646,7 @@ class MT5Broker:
                 "market_context": signal.get("market_context"),
                 "reason": signal.get("reason"),
                 "strategy_rank": signal.get("strategy_rank"),
+                "kelly": _json_safe_kelly(signal.get("kelly")),
             },
             "status": "filled" if result.get("success") else "failed",
             "mt5_ticket": result.get("ticket"),

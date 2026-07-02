@@ -6,11 +6,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
 from core.daily_growth import evaluate_daily_growth
 from core.growth_campaign import update_campaign
 from core.exposure import exposure_from_positions, exposure_used_pct
 from core.trade_limits import unlimited_trades
-from core.utils import utc_now_iso
+from core.utils import read_json_state, utc_now_iso
 
 
 class RiskManager:
@@ -46,9 +47,18 @@ class RiskManager:
         # day_start only when enabled (conservative mode keeps the mt5_baseline
         # drawdown base), but trading_paused/pause_reason now run regardless.
         daily_growth = evaluate_daily_growth(equity, self.config)
-        drawdown_base = starting
-        if daily_growth and daily_growth.get("enabled"):
-            drawdown_base = float(daily_growth.get("day_start_equity") or starting)
+        # USER-AUTHORIZED 2026-07-01 fix: the 8% STATIC kill (prop-firm
+        # Max/Static Drawdown) is measured from the INITIAL account baseline
+        # (mt5_baseline.json starting_cash = $5,000), NOT from
+        # daily_growth.day_start_equity. day_start resets every UTC midnight,
+        # so across losing days the 8% floor drifted downward and the kill no
+        # longer matched the prop-firm "8% static from the $5,000 start" rule.
+        # The 4% DAILY-LOSS pause is a separate, daily concept and STILL uses
+        # day_start_equity (computed inside daily_growth.evaluate_daily_growth
+        # -> trading_paused), so that behaviour is unchanged. Only the static
+        # kill's drawdown base moved to the fixed rebaseline anchor.
+        baseline_state = read_json_state("mt5_baseline.json", default={})
+        drawdown_base = float(baseline_state.get("starting_cash") or starting)
         drawdown = max(0.0, (drawdown_base - equity) / drawdown_base * 100) if drawdown_base > 0 else 0.0
 
         symbol_exposure, total_exposure = exposure_from_positions(positions)
@@ -85,7 +95,22 @@ class RiskManager:
         if bad_vol:
             risk_events.append({"type": "bad_volatility", "symbols": bad_vol})
 
-        if daily_growth and daily_growth.get("trading_paused") and daily_growth.get("pause_reason"):
+        bg_state: dict[str, Any] | None = None
+        if blue_guardian_enabled(self.config):
+            cash = float(balance.get("cash", equity))
+            bg_state = evaluate_daily_state(
+                self.config,
+                balance=cash,
+                equity=equity,
+            )
+            if bg_state.get("trading_paused") and bg_state.get("pause_reason"):
+                kill_triggers.append(bg_state["pause_reason"])
+            trail_floor = float(bg_state.get("trailing_drawdown_floor", 0) or 0)
+            if trail_floor > 0 and equity <= trail_floor:
+                kill_triggers.append(
+                    f"Blue Guardian trailing DD floor (equity ${equity:.2f} <= ${trail_floor:.2f})"
+                )
+        elif daily_growth and daily_growth.get("trading_paused") and daily_growth.get("pause_reason"):
             kill_triggers.append(daily_growth["pause_reason"])
 
         if kill_triggers:
@@ -108,6 +133,8 @@ class RiskManager:
             "equity": round(equity, 2),
             "cash": round(float(balance.get("cash", starting)), 2),
         }
+        if bg_state and bg_state.get("enabled"):
+            state["blue_guardian"] = bg_state
         if daily_growth and daily_growth.get("enabled"):
             state["daily_growth"] = daily_growth
             campaign = update_campaign(equity, self.config)

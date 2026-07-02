@@ -65,7 +65,15 @@ def _collect_spread_data(
         for symbol in symbols:
             spread_data[symbol] = client.get_spread_points(symbol)
         if not any(spread_data.values()):
-            raise ConnectionError("MT5 connected but returned zero spreads for all symbols")
+            fallback = _paper_spread_fallback(symbols, features, config)
+            if any(fallback.values()):
+                spread_data = fallback
+                source = "features_fallback"
+                logger.warning(
+                    "MT5 returned zero spreads for all symbols — using features.json fallback"
+                )
+            else:
+                raise ConnectionError("MT5 connected but returned zero spreads for all symbols")
     except (ConnectionError, OSError, RuntimeError) as exc:
         session_info = log_session_alignment(logger)
         err_msg = format_mt5_connection_error(exc, session_info) if isinstance(exc, ConnectionError) else str(exc)
@@ -74,8 +82,17 @@ def _collect_spread_data(
             source = "paper_fallback"
             logger.warning("MT5 spread fetch failed (%s) — using paper-mode spread fallback", err_msg)
         else:
-            logger.error("MT5 spread fetch failed (%s)", err_msg)
-            raise
+            fallback = _paper_spread_fallback(symbols, features, config)
+            if any(fallback.values()):
+                spread_data = fallback
+                source = "features_fallback"
+                logger.warning(
+                    "MT5 spread fetch failed (%s) — using features.json fallback",
+                    err_msg,
+                )
+            else:
+                logger.error("MT5 spread fetch failed (%s)", err_msg)
+                raise
     finally:
         client.disconnect()
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
-from core.utils import utc_now_iso
+from core.symbol_manager import logical_symbol
 
 try:
     import MetaTrader5 as mt5
@@ -44,14 +45,15 @@ def fetch_mt5_agent_positions(
         synced.append({
             "position_id": str(pos.ticket),
             "ticket": pos.ticket,
-            "symbol": pos.symbol,
+            "symbol": logical_symbol(pos.symbol),
+            "broker_symbol": pos.symbol,
             "side": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
             "entry": float(pos.price_open),
             "sl": float(pos.sl),
             "tp1": float(pos.tp),
             "size": float(pos.volume),
             "profit": float(pos.profit),
-            "opened_at": utc_now_iso(),
+            "opened_at": datetime.fromtimestamp(int(pos.time), tz=timezone.utc).isoformat(),
             "setup_type": setup_type,
             "magic": pos.magic,
             "comment": pos.comment,

@@ -8,7 +8,7 @@ from typing import Any
 from core.data_collector import DataCollector
 from core.mt5_connection_manager import MT5ConnectionManager
 from core.mt5_terminal_manager import MT5TerminalManager, get_python_session_id
-from core.symbol_manager import SymbolManager
+from core.symbol_manager import SymbolManager, broker_symbol, load_resolved_symbol_map
 
 # Re-export session helpers used by loops/tests
 __all__ = [
@@ -70,8 +70,21 @@ class MT5Client:
 
     def connect(self) -> bool:
         self._connection.connect()
+        self._load_symbol_map()
         self._collector = DataCollector(self.config, self._connection, self._symbols, self.logger)
         return True
+
+    def _load_symbol_map(self) -> dict[str, str]:
+        if self._symbol_map:
+            return self._symbol_map
+        resolved = load_resolved_symbol_map()
+        if resolved:
+            self._symbol_map = dict(resolved)
+            self._symbols.set_resolved(resolved)
+        return self._symbol_map
+
+    def _broker_symbol(self, symbol: str) -> str:
+        return broker_symbol(symbol, self._load_symbol_map())
 
     def disconnect(self) -> None:
         self._connection.disconnect()
@@ -98,9 +111,10 @@ class MT5Client:
             return None
         if not self._connection.connected:
             return None
-        if not mt5.symbol_select(symbol, True):
+        broker = self._broker_symbol(symbol)
+        if not mt5.symbol_select(broker, True):
             return None
-        tick = mt5.symbol_info_tick(symbol)
+        tick = mt5.symbol_info_tick(broker)
         if tick is None:
             return None
         return {"bid": float(tick.bid), "ask": float(tick.ask), "mid": (tick.bid + tick.ask) / 2}
@@ -112,8 +126,15 @@ class MT5Client:
             return 0.0
         if not self._connection.connected:
             return 0.0
-        info = mt5.symbol_info(symbol)
-        tick = mt5.symbol_info_tick(symbol)
+        broker = self._broker_symbol(symbol)
+        if not mt5.symbol_select(broker, True):
+            return 0.0
+        info = mt5.symbol_info(broker)
+        tick = mt5.symbol_info_tick(broker)
         if info is None or tick is None or info.point == 0:
             return 0.0
-        return (tick.ask - tick.bid) / info.point
+        spread = (tick.ask - tick.bid) / info.point
+        if spread > 0:
+            return spread
+        # Some brokers only populate symbol_info.spread when tick spread is zero.
+        return float(getattr(info, "spread", 0) or 0)
