@@ -174,7 +174,7 @@ class MT5TerminalManager:
             self.logger.warning("Launch script exit=%s stderr=%s", result.returncode, result.stderr)
         return result.returncode == 0
 
-    def ensure_terminal(self, auto_launch: bool = True) -> dict[str, Any]:
+    def ensure_terminal(self, auto_launch: bool = False) -> dict[str, Any]:
         """Ensure an interactive MT5 terminal is running; optionally launch."""
         alignment = self.session_alignment()
         terminal_path = self.mt5_cfg.get("path") or alignment.get("recommended_terminal")
@@ -183,7 +183,7 @@ class MT5TerminalManager:
             alignment["status"] = "ok"
             return alignment
 
-        if auto_launch and self.mt5_cfg.get("auto_launch_terminal", True):
+        if auto_launch and self.mt5_cfg.get("auto_launch_terminal", False):
             self.logger.warning("MT5 not aligned — attempting interactive launch")
             self.launch_interactive()
             alignment = self.session_alignment()

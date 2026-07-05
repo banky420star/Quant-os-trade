@@ -59,7 +59,7 @@ class MT5ConnectionManager:
             if alignment.get("warning"):
                 self.logger.warning(alignment["warning"])
 
-            if not alignment.get("aligned") and self.config.get("mt5", {}).get("auto_launch_terminal", True):
+            if not alignment.get("aligned") and self.config.get("mt5", {}).get("auto_launch_terminal", False):
                 self.terminal_manager.ensure_terminal(auto_launch=True)
                 alignment = self.terminal_manager.session_alignment()
 
