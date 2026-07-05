@@ -424,6 +424,20 @@ def test_clamp_sl_respects_mt5_stops_level():
     assert sl_buy <= 29198.5
 
 
+def test_clamp_sl_usoil_zero_stops_level_uses_spread():
+    """Exness USOILm: stops_level=0 but trail SL must stay above ask."""
+    sl = _clamp_sl_to_stops_level(
+        "SELL",
+        68.322,
+        reference=68.387,
+        point=0.001,
+        stops_level=0,
+        digits=3,
+        spread_points=20,
+    )
+    assert sl >= 68.407
+
+
 def test_btc_trail_needs_three_dollars(config):
     config["trading"]["break_even"]["per_symbol"]["BTCUSDm"]["trigger_profit_usd"] = 3
     config["trading"]["trailing"]["per_symbol"]["BTCUSDm"]["activation_profit_usd"] = 3

@@ -107,6 +107,27 @@ def _normalize_price(value: float, digits: int) -> float:
     return round(value, digits)
 
 
+def _min_stop_distance_price(
+    point: float,
+    *,
+    stops_level: int = 0,
+    spread_points: int = 0,
+    freeze_level: int = 0,
+    min_points_fallback: int = 20,
+) -> float:
+    """Broker minimum SL distance when ``trade_stops_level`` is zero (common on Exness)."""
+    if point <= 0:
+        return 0.0
+    parts = [min_points_fallback * point]
+    if stops_level > 0:
+        parts.append(stops_level * point)
+    if freeze_level > 0:
+        parts.append(freeze_level * point)
+    if spread_points > 0:
+        parts.append(spread_points * point)
+    return max(parts)
+
+
 def _clamp_sl_to_stops_level(
     side: str,
     sl: float,
@@ -115,16 +136,26 @@ def _clamp_sl_to_stops_level(
     point: float,
     stops_level: int,
     digits: int,
+    spread_points: int = 0,
+    freeze_level: int = 0,
 ) -> float:
-    """Enforce MT5 minimum SL distance from current bid/ask (trade_stops_level).
+    """Enforce MT5 minimum SL distance from current bid/ask.
 
-    BUY SL must be at or below ``reference - stops_level * point`` (use bid).
-    SELL SL must be at or above ``reference + stops_level * point`` (use ask).
+    BUY SL must be at or below ``reference - min_dist`` (use bid).
+    SELL SL must be at or above ``reference + min_dist`` (use ask).
+
+    Some brokers (e.g. Exness USOILm) report ``trade_stops_level=0``; we still
+    enforce spread / fallback distance so trail SL cannot sit below market.
     """
     sl = _normalize_price(sl, digits)
-    if point <= 0 or stops_level <= 0:
+    min_dist = _min_stop_distance_price(
+        point,
+        stops_level=stops_level,
+        spread_points=spread_points,
+        freeze_level=freeze_level,
+    )
+    if min_dist <= 0:
         return sl
-    min_dist = stops_level * point
     if side == "BUY":
         cap = reference - min_dist
         if sl > cap:
@@ -499,6 +530,8 @@ def manage_mt5_positions(
 
         point = float(getattr(info, "point", 0) or 0)
         stops_level = int(getattr(info, "trade_stops_level", 0) or 0)
+        freeze_level = int(getattr(info, "trade_freeze_level", 0) or 0)
+        spread_points = int(getattr(info, "spread", 0) or 0)
         new_sl, row, actions = compute_managed_sl(config, pos, current, atr, row, point=point)
         mgmt.setdefault("positions", {})[ticket_key] = row
 
@@ -546,16 +579,31 @@ def manage_mt5_positions(
                 )
             continue
 
-        # MT5 rejects SL inside trade_stops_level — clamp to bid (BUY) or ask (SELL).
+        # MT5 rejects SL inside trade_stops_level / below ask (SELL) — clamp to market.
         sl_ref = bid if side == "BUY" else ask
-        new_sl = _clamp_sl_to_stops_level(
+        clamped_sl = _clamp_sl_to_stops_level(
             side,
             new_sl,
             reference=sl_ref,
             point=point,
             stops_level=stops_level,
             digits=digits,
+            spread_points=spread_points,
+            freeze_level=freeze_level,
         )
+        min_dist = _min_stop_distance_price(
+            point,
+            stops_level=stops_level,
+            spread_points=spread_points,
+            freeze_level=freeze_level,
+        )
+        new_sl = clamped_sl
+        last_fail = row.get("last_modify_fail_sl")
+        if last_fail is not None and abs(float(last_fail) - new_sl) < min_dist * 0.25:
+            audit_entry["status"] = "modify_backoff"
+            summary["audit"].append(audit_entry)
+            continue
+
         # Re-check ratchet still improved SL after broker clamp.
         if side == "BUY" and new_sl <= current_sl:
             audit_entry["status"] = "clamped_no_improvement"
@@ -580,9 +628,16 @@ def manage_mt5_positions(
             audit_entry["status"] = "modify_failed"
             audit_entry["error"] = err
             summary["audit"].append(audit_entry)
-            logger.warning("MT5 SL modify failed ticket=%s: %s", ticket, err)
+            row["last_modify_fail_sl"] = new_sl
+            mgmt.setdefault("positions", {})[ticket_key] = row
+            logger.warning(
+                "MT5 SL modify failed ticket=%s: %s (sl=%s ref=%s stops=%s spread_pts=%s)",
+                ticket, err, new_sl, sl_ref, stops_level, spread_points,
+            )
             continue
 
+        row.pop("last_modify_fail_sl", None)
+        mgmt.setdefault("positions", {})[ticket_key] = row
         summary["updated"] += 1
         action_rec = {
             "ticket": ticket,
@@ -717,6 +772,8 @@ def manage_partial_tp_mt5(
         digits = int(getattr(info, "digits", 5))
         point = float(getattr(info, "point", 0) or 0)
         stops_level = int(getattr(info, "trade_stops_level", 0) or 0)
+        freeze_level = int(getattr(info, "trade_freeze_level", 0) or 0)
+        spread_points = int(getattr(info, "spread", 0) or 0)
         lock_sl = _clamp_sl_to_stops_level(
             side,
             lock_sl,
@@ -724,6 +781,8 @@ def manage_partial_tp_mt5(
             point=point,
             stops_level=stops_level,
             digits=digits,
+            spread_points=spread_points,
+            freeze_level=freeze_level,
         )
         new_tp = float(tp2) if run.get("extend_tp_to_tp2", True) and tp2 > 0 else float(pos.get("tp1", tp1))
 
