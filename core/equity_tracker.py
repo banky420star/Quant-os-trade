@@ -34,6 +34,19 @@ def record_snapshot(
     equity_val = round(float(equity), 2)
     unrealized = round(equity_val - cash_val, 2)
 
+    # Guard against transient bad MT5 reads (e.g. equity=100 on a $5k account)
+    # that spike the equity-graph y-axis and flatten the real line. Skip
+    # non-positive values and implausible >50% crashes from the last real
+    # point — a real account does not halve in one 20s tick.
+    if equity_val <= 0:
+        return history
+    prior = read_json_state("equity_history.json", default={"points": []})
+    prior_pts = prior.get("points") or []
+    if prior_pts:
+        last_eq = float(prior_pts[-1].get("equity", 0) or 0)
+        if last_eq > 0 and equity_val < last_eq * 0.5:
+            return history
+
     point = {
         "ts": now,
         "equity": equity_val,

@@ -8,6 +8,8 @@ from typing import Any
 from core.edge_database import EdgeDatabase
 from core.setup_library import SETUP_LIBRARY
 from core.strategy_policy import preferred_setup_rank, setup_allowed, symbol_rule
+from core.utils import read_json_state
+from quant.research.cell_ranking import demote_vetoed_setups
 
 # Live move_type from market context → setup the classifier can emit.
 MOVE_TYPE_SETUP_MAP: dict[str, str] = {
@@ -36,6 +38,13 @@ class StrategyRanker:
         self.ranking_flex_min_samples = int(quant.get("ranking_flex_min_samples", 10))
         self.ranking_flex_top_n = max(1, int(quant.get("ranking_flex_top_n", 2)))
         self.ranking_context_align = bool(quant.get("ranking_context_align", True))
+        self.cell_veto_demote = bool(quant.get("cell_veto_demote", True))
+
+    def _live_policy_for_symbol(self, symbol: str) -> dict[str, Any]:
+        policy = read_json_state("symbol_policy_live.json", default={}) or {}
+        symbols = (policy.get("symbols") or {}) if isinstance(policy, dict) else {}
+        row = symbols.get(symbol) or {}
+        return row if isinstance(row, dict) else {}
 
     def _quant_for_symbol(self, symbol: str) -> dict[str, Any]:
         per = self._quant.get("per_symbol", {}) or {}
@@ -52,6 +61,8 @@ class StrategyRanker:
             "flex_min_win_rate": float(sym.get("ranking_flex_min_win_rate", self.ranking_flex_min_win_rate)),
             "flex_min_samples": int(sym.get("ranking_flex_min_samples", self.ranking_flex_min_samples)),
             "flex_top_n": max(1, int(sym.get("ranking_flex_top_n", self.ranking_flex_top_n))),
+            "preferred_setups": list(sym.get("preferred_setups") or []),
+            "preferred_sessions": list(sym.get("preferred_sessions") or []),
         }
 
     def rank_for_symbol(
@@ -80,13 +91,53 @@ class StrategyRanker:
         if not rankings:
             rankings = self._default_rankings(primary, symbol=symbol)
 
+        live_policy = self._live_policy_for_symbol(symbol)
+        promoted_cells = set(live_policy.get("promoted_cells") or [])
+        vetoed_cells = set(live_policy.get("vetoed_cells") or [])
+        cell_rankings = {
+            row.get("setup"): row
+            for row in (live_policy.get("cell_rankings") or [])
+            if isinstance(row, dict) and row.get("setup")
+        }
+
         for i, r in enumerate(rankings):
             r["rank"] = i + 1
             r["regime"] = primary
             r["session"] = session
             r["preferred_rank"] = preferred_setup_rank(rule, r["setup_type"])
+            boost = 0.0
+            if r["setup_type"] in params.get("preferred_setups", []):
+                boost += 6.0
+            if session in params.get("preferred_sessions", []):
+                boost += 4.0
+            if promoted_cells and any(
+                str(p).startswith(f"{r['setup_type']}|") and str(p).endswith(f"|{session}")
+                for p in promoted_cells
+            ):
+                boost += 12.0
+            cell_row = cell_rankings.get(r["setup_type"])
+            if cell_row and float(cell_row.get("expectancy_net_r") or 0) > 0:
+                boost += min(10.0, float(cell_row.get("expectancy_net_r", 0)) * 20.0)
+            if boost:
+                r["score"] = round(float(r.get("score", 0)) + boost, 3)
+                r["quant_boost"] = round(boost, 3)
 
         rankings.sort(key=lambda r: (r.get("preferred_rank", 999), -float(r.get("score", 0)), r.get("rank", 999)))
+
+        if self.cell_veto_demote and vetoed_cells:
+            sym_cells = {
+                row.get("cell", ""): {
+                    "verdict": row.get("verdict"),
+                    "n": row.get("n"),
+                }
+                for row in (live_policy.get("cell_rankings") or [])
+                if isinstance(row, dict) and row.get("cell")
+            }
+            rankings = demote_vetoed_setups(
+                rankings,
+                cells=sym_cells,
+                vetoed=vetoed_cells,
+            )
 
         return rankings
 

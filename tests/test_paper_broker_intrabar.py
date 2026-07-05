@@ -42,6 +42,7 @@ def broker_cfg():
     # Disable dynamic exits so _check_exits is the only exit path under test.
     cfg["trading"]["break_even"]["enabled"] = False
     cfg["trading"]["trailing"]["enabled"] = False
+    cfg.setdefault("trading", {}).setdefault("exits", {}).setdefault("partial_tp", {})["enabled"] = False
     return cfg
 
 

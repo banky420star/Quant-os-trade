@@ -198,6 +198,12 @@ def run() -> dict | None:
         "rejected_signals.json",
         {**meta, "count": len(rejected), "rejected": rejected},
     )
+    if approved:
+        from core.signal_archive import archive_signals
+
+        n = archive_signals(approved, source="verifier")
+        if n:
+            logger.info("Signal archive: +%d approved signals (durable for trade enrichment)", n)
     logger.info("Approved %d, rejected %d (spread_source=%s)", len(approved), len(rejected), spread_source)
     return {"approved": approved, "rejected": rejected, "spread_source": spread_source}
 

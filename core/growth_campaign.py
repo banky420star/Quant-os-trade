@@ -64,7 +64,7 @@ def update_campaign(equity: float, config: dict[str, Any]) -> dict[str, Any]:
 
     growth = growth_settings(config)
     duration = int(state.get("duration_days") or growth.get("campaign_days", 30))
-    daily_target = float(state.get("daily_target_pct") or growth.get("daily_target_pct", 20))
+    daily_target = float(growth.get("daily_target_pct", state.get("daily_target_pct", 20)))
     start_day = datetime.fromisoformat(str(state["start_date"]) + "T00:00:00+00:00").date()
     today = datetime.now(timezone.utc).date()
     elapsed = max(1, (today - start_day).days + 1)

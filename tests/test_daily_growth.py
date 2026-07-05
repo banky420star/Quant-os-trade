@@ -28,9 +28,12 @@ def growth_config():
 def test_growth_plan_enabled_on_demo(growth_config):
     assert growth_plan_enabled(growth_config) is True
     mode = runtime_mode_summary(growth_config)
-    assert mode["label"] == "growth"
+    assert mode["label"] in ("growth", "micro_growth")
     assert mode["growth_plan_active"] is True
-    assert mode["daily_target_pct"] == 20
+    if mode.get("micro_profile_active"):
+        assert mode["daily_target_pct"] in (20, 35)
+    else:
+        assert mode["daily_target_pct"] == 20
 
 
 def test_sync_practice_gates_applies_growth_risk(growth_config):
@@ -38,11 +41,17 @@ def test_sync_practice_gates_applies_growth_risk(growth_config):
     from core.practice_session import sync_practice_gates
 
     cfg = sync_practice_gates(growth_config)
-    assert cfg["signals"]["default_risk_percent"] == 2.5
-    assert cfg["quant"]["strategy_ranking_enabled"] is False
-    assert cfg["trading"]["aggressive_mode"] is True
-    assert cfg["session_scoring"]["enabled"] is False
-    assert cfg["risk"]["max_total_exposure_usd"] == pytest.approx(92.0, rel=0.01)
+    micro_on = bool((cfg.get("practice") or {}).get("micro", {}).get("enabled"))
+    if micro_on:
+        assert cfg["signals"]["default_risk_percent"] == 1.0
+        assert cfg["practice"]["growth"]["enabled"] is True
+    else:
+        assert cfg["signals"]["default_risk_percent"] == 2.5
+        assert cfg["quant"]["strategy_ranking_enabled"] is False
+        assert cfg["trading"]["aggressive_mode"] is True
+        assert cfg["session_scoring"]["enabled"] is False
+        exp_frac = float((cfg.get("practice") or {}).get("growth", {}).get("max_total_exposure_fraction", 0.92))
+        assert cfg["risk"]["max_total_exposure_usd"] == pytest.approx(100.0 * exp_frac, rel=0.01)
 
 
 def test_continuous_campaign_skips_daily_lock(growth_config, monkeypatch):

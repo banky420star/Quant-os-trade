@@ -135,16 +135,23 @@ def compile_adaptation_report(
     veto_diff: dict[str, list[dict[str, Any]]],
     be_trail_changes: list[dict[str, Any]],
     edge_shifts: list[dict[str, Any]],
+    positive_diff: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """One adaptation cycle summary — what changed and why."""
     veto_added = veto_diff.get("added") or []
     veto_removed = veto_diff.get("removed") or []
+    pos_added = (positive_diff or {}).get("added") or []
+    pos_removed = (positive_diff or {}).get("removed") or []
     trusted = [c for c in be_trail_changes if c.get("trusted")]
     actions: list[str] = []
     if veto_added:
         actions.append(f"blocked {len(veto_added)} losing cell(s)")
     if veto_removed:
         actions.append(f"cleared {len(veto_removed)} veto(s)")
+    if pos_added:
+        actions.append(f"evolved {len(pos_added)} positive-evolution cell(s)")
+    if pos_removed:
+        actions.append(f"cleared {len(pos_removed)} evolution slot(s)")
     if trusted:
         actions.append(f"applied BE/trail on {len(trusted)} symbol(s)")
     if edge_shifts:
@@ -168,6 +175,8 @@ def compile_adaptation_report(
         "actions": actions,
         "veto_added": veto_added,
         "veto_removed": veto_removed,
+        "positive_added": pos_added,
+        "positive_removed": pos_removed,
         "be_trail_changes": be_trail_changes,
         "edge_shifts": edge_shifts,
         "summary": (

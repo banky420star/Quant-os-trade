@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.kelly_sizing import resolve_risk_percent
 from core.trade_limits import unlimited_trades
 
 
@@ -80,7 +81,8 @@ def check_exposure_limits(
         entry = float(signal.get("entry", 0))
         sl = float(signal.get("sl", 0))
         equity_f = float(equity)
-        risk_pct = float(config.get("signals", {}).get("default_risk_percent", 1))
+        default_risk = float(config.get("signals", {}).get("default_risk_percent", 1))
+        risk_pct, kelly = resolve_risk_percent(signal, config, default_risk)
         exec_cfg = config.get("execution", {})
         max_lot = float(exec_cfg.get("max_lot", 0.1)) if config.get("execution", {}).get("mode") == "mt5" else None
         ideal_size = calc_risk_based_size(equity_f, risk_pct, entry, sl, max_size=max_lot)
@@ -89,13 +91,16 @@ def check_exposure_limits(
             "ideal_size": ideal_size,
             "projected_notional": round(position_notional(entry, ideal_size), 2),
             "unlimited_trades": True,
+            "kelly": kelly,
+            "risk_percent": risk_pct,
         }
 
     risk_cfg = config.get("risk", {})
     signals_cfg = config.get("signals", {})
     exec_cfg = config.get("execution", {})
 
-    risk_pct = float(signals_cfg.get("default_risk_percent", 1))
+    default_risk = float(signals_cfg.get("default_risk_percent", 1))
+    risk_pct, kelly = resolve_risk_percent(signal, config, default_risk)
     max_symbol = float(risk_cfg.get("max_symbol_exposure_usd", 100))
     max_total = float(risk_cfg.get("max_total_exposure_usd", 300))
     max_lot = float(exec_cfg.get("max_lot", 0.1)) if config.get("execution", {}).get("mode") == "mt5" else None
@@ -137,6 +142,8 @@ def check_exposure_limits(
         "symbol_ok": symbol_ok,
         "total_ok": total_ok,
         "exposure_allowed": allowed,
+        "kelly": kelly,
+        "risk_percent": risk_pct,
     }
 
     return symbol_ok and total_ok, details

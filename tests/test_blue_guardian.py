@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from core.blue_guardian import (
     apply_config_overrides,
     blue_guardian_enabled,
+    can_modify_position_sl,
     cell_loss_stats,
     entry_gates,
     evaluate_daily_state,
     excess_position_close_actions,
     per_trade_close_actions,
     portfolio_close_all,
+    position_age_seconds,
     total_floating_pnl,
 )
 
@@ -115,3 +119,31 @@ def test_cell_loss_stats():
 
 def test_total_floating():
     assert total_floating_pnl([{"profit": 1.5}, {"profit": -2}]) == -0.5
+
+
+def test_position_age_prefers_agent_open_time_over_mt5():
+    """MT5 pos.time is broker-local; agent open_times are true UTC."""
+    agent_open = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    future_mt5 = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    pos = {"ticket": 21611685, "opened_at": future_mt5}
+    open_times = {"21611685": agent_open}
+    age = position_age_seconds(pos, open_times)
+    assert age >= 600 - 2
+    assert age < 3600
+
+
+def test_can_modify_sl_after_min_hold_when_open_time_known():
+    cfg = _config()
+    cfg["blue_guardian"]["min_hold_seconds"] = 130
+    agent_open = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    pos = {"ticket": 99, "opened_at": agent_open}
+    assert can_modify_position_sl(cfg, pos) is True
+
+
+def test_future_mt5_opened_at_blocks_sl_without_agent_time():
+    cfg = _config()
+    cfg["blue_guardian"]["min_hold_seconds"] = 130
+    future_mt5 = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    pos = {"ticket": 21611685, "opened_at": future_mt5}
+    assert position_age_seconds(pos, open_times={}) == 0.0
+    assert can_modify_position_sl(cfg, pos) is False

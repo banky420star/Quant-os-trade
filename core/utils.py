@@ -58,6 +58,15 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
                 local = yaml.safe_load(handle) or {}
             if isinstance(local, dict):
                 config = _deep_merge(config, local)
+        from core.profile_launcher import active_profile_name, load_profile_overlay
+        profile_name = active_profile_name()
+        if profile_name:
+            try:
+                overlay = load_profile_overlay(profile_name)
+                config = _deep_merge(config, overlay)
+                config["active_profile"] = profile_name
+            except (FileNotFoundError, ValueError, OSError):
+                pass
     if isinstance(config, dict):
         from core.account_mode import performance_gates_active
         from core.blue_guardian import (
@@ -72,6 +81,12 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
             config = prepare_blue_guardian_profile(config)
         if config.get("performance"):
             config = sync_performance_gates(config)
+        if not performance_gates_active(config):
+            config = sync_practice_gates(config)
+        from core.micro_profile import sync_micro_profile
+        from core.strategy_arena import sync_arena_symbols
+        config = sync_arena_symbols(config)
+        config = sync_micro_profile(config)
         if not performance_gates_active(config):
             config = sync_practice_gates(config)
         config = apply_config_overrides(config)
@@ -108,12 +123,29 @@ def utc_now_iso() -> str:
 
 
 def read_json_state(filename: str, default: Any = None) -> Any:
-    """Read JSON state file; return default if missing."""
+    """Read JSON state file; return default if missing or unreadable."""
     path = STATE_DIR / filename
     if not path.exists():
         return default
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = handle.read().strip()
+        if not raw:
+            return default
+        return json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return default
+
+
+def _agent_lock_allows_write(filename: str) -> bool:
+    """Only the canonical start.py PID may write contested orchestration state."""
+    if filename not in ("supervisor.json", "runtime_mode.json"):
+        return True
+    lock = read_json_state("agent_lock.json", default={}) or {}
+    lock_pid = int(lock.get("pid") or 0)
+    if not lock_pid:
+        return True
+    return lock_pid == os.getpid()
 
 
 def write_json_state(filename: str, data: Any) -> Path:
@@ -123,6 +155,8 @@ def write_json_state(filename: str, data: Any) -> Path:
     parent directories under STATE_DIR. Top-level filenames are unaffected (their
     parent is STATE_DIR, which already exists).
     """
+    if not _agent_lock_allows_write(filename):
+        return STATE_DIR / filename
     ensure_dirs()
     path = STATE_DIR / filename
     # Create nested parent dirs (no-op for top-level files). Done before the

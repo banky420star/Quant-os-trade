@@ -13,10 +13,11 @@ from core.blue_guardian import (
     entry_gates,
     max_lot_for_symbol,
     record_position_open,
-    risk_per_trade_cap,
+
 )
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
 from core.kelly_sizing import kelly_for_signal
+from core.risk_cap import effective_risk_cap, estimate_stop_loss_usd
 from core.position_sync import _setup_type_from_comment
 from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer, symbol_capacity_available
 from core.trade_limits import (
@@ -390,6 +391,7 @@ class MT5Broker:
         max_lot = float(self.exec_cfg.get("max_lot", 0.1))
         default_lot = float(self.exec_cfg.get("default_lot", 0.01))
         equity = float(account.equity)
+        balance = float(account.balance)
 
         entry = float(signal.get("entry", 0))
         sl = float(signal["sl"])
@@ -399,7 +401,7 @@ class MT5Broker:
             ideal = default_lot
         else:
             risk_money = equity * (risk_pct / 100.0)
-            cap_usd = risk_per_trade_cap(self.config)
+            cap_usd = effective_risk_cap(self.config, balance)
             if cap_usd is not None:
                 risk_money = min(risk_money, cap_usd)
             tick_value = float(getattr(info, "trade_tick_value", 0) or 0)
@@ -438,7 +440,24 @@ class MT5Broker:
             vol = vmin
         layer = int(signal.get("pyramid_layer", pyramid_layer_index(signal, open_positions)))
         vol = scale_lot_for_layer(self.config, signal["symbol"], vol, layer)
-        return self._normalize_volume(vol, info)
+        vol = self._normalize_volume(vol, info)
+        cap_usd = effective_risk_cap(self.config, balance)
+        if cap_usd is not None and risk_dist > 0 and vol > 0:
+            tick_value = float(getattr(info, "trade_tick_value", 0) or 0)
+            tick_size = float(getattr(info, "trade_tick_size", 0) or info.point or 0)
+            loss_usd = estimate_stop_loss_usd(
+                risk_dist=risk_dist,
+                volume=vol,
+                tick_value=tick_value,
+                tick_size=tick_size,
+            )
+            if loss_usd > cap_usd + 0.05:
+                self.logger.info(
+                    "Skip %s — min lot stop risk $%.2f exceeds cap $%.2f",
+                    signal["symbol"], loss_usd, cap_usd,
+                )
+                return 0.0
+        return vol
 
     def _normalize_volume(self, volume: float, info: Any) -> float:
         step = float(info.volume_step or 0.01)

@@ -1,0 +1,16 @@
+# Full 14-symbol growth campaign (demo)
+label: "Full Growth"
+description: "All 14 symbols, full-Kelly growth campaign, pyramiding on"
+mode: growth
+practice:
+  micro:
+    enabled: false
+  growth:
+    enabled: true
+    daily_target_pct: 20
+    max_daily_loss_pct: 10
+trading:
+  allow_pyramiding: true
+  max_open_per_symbol: 3
+strategy_arena:
+  max_open_per_symbol: 3

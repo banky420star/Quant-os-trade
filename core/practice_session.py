@@ -7,6 +7,7 @@ from typing import Any
 
 from core.account_mode import performance_gates_active
 from core.daily_growth import growth_plan_enabled, reset_daily_growth_baseline
+from core.micro_profile import micro_profile_enabled, micro_settings
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
 
@@ -48,11 +49,17 @@ def sync_practice_gates(config: dict[str, Any]) -> dict[str, Any]:
         filters["spread_mult"] = float(growth.get("spread_mult", 4.0))
         risk["max_drawdown_pct"] = float(growth.get("max_drawdown_pct", 30))
         risk["max_consecutive_losses"] = int(growth.get("max_consecutive_losses", 0))
-        equity = _live_equity(config)
-        exposure_frac = float(growth.get("max_exposure_fraction", 0.92))
-        cap = round(equity * exposure_frac, 2)
-        risk["max_symbol_exposure_usd"] = cap
-        risk["max_total_exposure_usd"] = cap
+        if micro_profile_enabled(config):
+            micro = micro_settings(config)
+            equity = float(micro.get("account_size_usd", 30))
+            sym_frac = float(micro.get("max_symbol_exposure_fraction", 0.40))
+            total_frac = float(micro.get("max_total_exposure_fraction", 0.60))
+        else:
+            equity = _live_equity(config)
+            total_frac = float(growth.get("max_total_exposure_fraction", growth.get("max_exposure_fraction", 0.92)))
+            sym_frac = float(growth.get("max_symbol_exposure_fraction", total_frac))
+        risk["max_symbol_exposure_usd"] = round(equity * sym_frac, 2)
+        risk["max_total_exposure_usd"] = round(equity * total_frac, 2)
         quant["strategy_ranking_enabled"] = bool(growth.get("strategy_ranking_enabled", False))
         quant["require_top_ranked_setup"] = False
         quant["min_rank_win_rate"] = float(growth.get("min_rank_win_rate", 0))

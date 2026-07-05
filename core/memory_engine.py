@@ -149,7 +149,7 @@ class MemoryEngine:
 
         return {
             "trade_id": trade.get("trade_id"),
-            "signal_id": trade.get("signal_id"),
+            "signal_id": trade.get("signal_id") or meta.get("signal_id"),
             "symbol": symbol,
             "setup_type": setup_type,
             "side": trade.get("side"),
@@ -165,12 +165,16 @@ class MemoryEngine:
             "confidence_tree": trade.get("confidence_tree") or meta.get("confidence_tree"),
             "evidence": trade.get("evidence") or meta.get("evidence"),
             "market_context": mctx,
-            "regime": regime.get("primary") or mctx.get("regime") or ctx.get("regime"),
-            "session": mctx.get("session") or ctx.get("session"),
-            "move_type": ctx.get("move_type"),
-            "market_intent": ctx.get("market_intent"),
-            "m5_trend": feat.get("m5_trend"),
-            "m15_trend": feat.get("m15_trend"),
+            "regime": regime.get("primary") or mctx.get("regime") or meta.get("regime_primary") or ctx.get("regime"),
+            "session": mctx.get("session") or meta.get("session") or ctx.get("session"),
+            "move_type": mctx.get("move_type") or meta.get("move_type") or ctx.get("move_type"),
+            "market_intent": mctx.get("market_intent") or ctx.get("market_intent"),
+            "trigger_summary": trade.get("trigger_summary") or meta.get("trigger_summary"),
+            "m5_trend": feat.get("m5_trend") or (meta.get("features_at_entry") or {}).get("m5_trend"),
+            "m15_trend": feat.get("m15_trend") or (meta.get("features_at_entry") or {}).get("m15_trend"),
+            "exit_narrative": trade.get("exit_narrative"),
+            "be_triggered": trade.get("be_triggered"),
+            "trail_active": trade.get("trail_active"),
             "recorded_at": utc_now_iso(),
         }
 

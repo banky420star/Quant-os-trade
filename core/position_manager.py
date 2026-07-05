@@ -5,7 +5,22 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.blue_guardian import blue_guardian_enabled, can_modify_position_sl
+from core.blue_guardian import (
+    blue_guardian_enabled,
+    blue_guardian_settings,
+    can_modify_position_sl,
+    position_age_seconds,
+)
+from core.exit_manager import (
+    partial_close_volume,
+    partial_tp_enabled,
+    post_partial_sl,
+    profit_rr,
+    resolve_tp_levels,
+    tp1_reached,
+    trail_activation_allowed,
+    trail_distance_multiplier,
+)
 from core.symbol_manager import broker_symbol
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
@@ -253,6 +268,23 @@ def _floating_profit_usd(position: dict[str, Any]) -> float | None:
         return None
 
 
+def _load_open_times() -> dict[str, str]:
+    data = read_json_state("position_open_times.json", default={}) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _enrich_position_open_time(
+    position: dict[str, Any],
+    open_times: dict[str, str],
+) -> dict[str, Any]:
+    """Use agent-recorded UTC open time so min_hold / trail gates are correct."""
+    ticket = str(position.get("ticket") or position.get("position_id") or "")
+    opened = open_times.get(ticket)
+    if opened:
+        return {**position, "opened_at": opened}
+    return position
+
+
 def _load_mgmt_state() -> dict[str, Any]:
     return read_json_state("position_management.json", default={"positions": {}})
 
@@ -292,6 +324,9 @@ def compute_managed_sl(
     profit_usd = _floating_profit_usd(position)
     actions: list[str] = []
     row = dict(mgmt_row)
+    if row.get("initial_sl") is None and current_sl > 0:
+        row["initial_sl"] = current_sl
+    risk_sl = float(row.get("initial_sl") or current_sl or entry)
     new_sl = current_sl
 
     if be_cfg.get("enabled", True):
@@ -336,16 +371,19 @@ def compute_managed_sl(
 
     if trail_cfg.get("enabled", True):
         trail_dist = _trail_distance_price(trail_sym, trail_cfg, atr, point)
-        trail_armed = row.get("trailing", False) or _exit_trigger_met(
-            profit_usd,
-            profit_dist,
-            trail_sym,
-            trail_cfg,
-            usd_key="activation_profit_usd",
-            points_key="activation_points",
-            atr_mult_key="activation_atr_mult",
+        trail_dist *= trail_distance_multiplier(row, config)
+        rr = profit_rr(side, entry, risk_sl, current_price)
+        trail_armed = trail_activation_allowed(
+            row,
+            profit_rr_value=rr,
+            profit_usd=profit_usd,
+            profit_dist=profit_dist,
+            trail_sym=trail_sym,
+            trail_cfg=trail_cfg,
             atr=atr,
             point=point,
+            config=config,
+            exit_trigger_met=_exit_trigger_met,
         )
         if trail_armed:
             row["trailing"] = True
@@ -425,12 +463,21 @@ def manage_mt5_positions(
         raise RuntimeError("MetaTrader5 package not installed")
 
     mgmt = _load_mgmt_state()
-    summary = {"updated": 0, "actions": [], "errors": [], "timestamp": utc_now_iso()}
+    open_times = _load_open_times()
+    summary: dict[str, Any] = {
+        "updated": 0,
+        "actions": [],
+        "errors": [],
+        "audit": [],
+        "timestamp": utc_now_iso(),
+    }
 
     for pos in positions:
+        pos = _enrich_position_open_time(pos, open_times)
         symbol = pos["symbol"]
         broker_sym = broker_symbol(symbol)
         ticket = int(pos["ticket"])
+        ticket_key = str(ticket)
         feat = features.get("symbols", {}).get(symbol, {})
         if not mt5.symbol_select(broker_sym, True):
             continue
@@ -446,15 +493,57 @@ def manage_mt5_positions(
         current = bid if side == "SELL" else ask
         atr = float(feat.get("atr", current * 0.001) or current * 0.001)
         digits = int(getattr(info, "digits", 5))
-        row = dict(mgmt.get("positions", {}).get(str(ticket), {}))
-
-        if blue_guardian_enabled(config) and not can_modify_position_sl(config, pos):
-            continue
+        row = dict(mgmt.get("positions", {}).get(ticket_key, {}))
+        current_sl = float(pos.get("sl", 0))
+        profit_usd = float(pos.get("profit", 0) or 0)
 
         point = float(getattr(info, "point", 0) or 0)
         stops_level = int(getattr(info, "trade_stops_level", 0) or 0)
         new_sl, row, actions = compute_managed_sl(config, pos, current, atr, row, point=point)
+        mgmt.setdefault("positions", {})[ticket_key] = row
+
+        age = position_age_seconds(pos, open_times)
+        min_hold = (
+            blue_guardian_settings(config)["min_hold_seconds"]
+            if blue_guardian_enabled(config)
+            else 0
+        )
+        can_modify = not blue_guardian_enabled(config) or can_modify_position_sl(config, pos)
+
+        audit_entry: dict[str, Any] = {
+            "ticket": ticket,
+            "symbol": symbol,
+            "side": side,
+            "profit_usd": round(profit_usd, 2),
+            "age_sec": round(age, 0),
+            "trailing": bool(row.get("trailing")),
+            "break_even": bool(row.get("break_even")),
+            "peak_price": row.get("peak_price"),
+            "trail_distance": row.get("trail_distance"),
+            "current_sl": current_sl,
+            "computed_sl": new_sl,
+            "actions": actions,
+        }
+
+        if not can_modify:
+            audit_entry["status"] = "min_hold_pending"
+            audit_entry["min_hold_sec"] = min_hold
+            summary["audit"].append(audit_entry)
+            if row.get("trailing") or row.get("break_even"):
+                logger.info(
+                    "Trail armed pending min_hold %s %s ticket=%s age=%.0fs need=%ds profit=$%.2f",
+                    symbol, side, ticket, age, min_hold, profit_usd,
+                )
+            continue
+
         if new_sl is None or not actions:
+            audit_entry["status"] = "monitoring" if row.get("trailing") else "waiting_activation"
+            summary["audit"].append(audit_entry)
+            if row.get("trailing"):
+                logger.debug(
+                    "Trail active no SL move %s ticket=%s sl=%s peak=%s",
+                    symbol, ticket, current_sl, row.get("peak_price"),
+                )
             continue
 
         # MT5 rejects SL inside trade_stops_level — clamp to bid (BUY) or ask (SELL).
@@ -468,11 +557,15 @@ def manage_mt5_positions(
             digits=digits,
         )
         # Re-check ratchet still improved SL after broker clamp.
-        current_sl = float(pos.get("sl", 0))
         if side == "BUY" and new_sl <= current_sl:
+            audit_entry["status"] = "clamped_no_improvement"
+            summary["audit"].append(audit_entry)
             continue
         if side == "SELL" and current_sl > 0 and new_sl >= current_sl:
+            audit_entry["status"] = "clamped_no_improvement"
+            summary["audit"].append(audit_entry)
             continue
+
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "position": ticket,
@@ -484,23 +577,281 @@ def manage_mt5_positions(
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             err = str(mt5.last_error()) if result is None else f"{result.retcode} {result.comment}"
             summary["errors"].append({"ticket": ticket, "error": err})
+            audit_entry["status"] = "modify_failed"
+            audit_entry["error"] = err
+            summary["audit"].append(audit_entry)
             logger.warning("MT5 SL modify failed ticket=%s: %s", ticket, err)
             continue
 
         summary["updated"] += 1
-        summary["actions"].append({
+        action_rec = {
             "ticket": ticket,
             "symbol": symbol,
             "actions": actions,
             "sl": new_sl,
-        })
-        mgmt.setdefault("positions", {})[str(ticket)] = row
+        }
+        summary["actions"].append(action_rec)
+        audit_entry["status"] = "updated"
+        audit_entry["new_sl"] = new_sl
+        summary["audit"].append(audit_entry)
         logger.info(
-            "MT5 manage %s %s ticket=%s sl=%s (%s)",
-            symbol, side, ticket, new_sl, ",".join(actions),
+            "MT5 manage %s %s ticket=%s sl=%s (%s) profit=$%.2f trail=%s",
+            symbol, side, ticket, new_sl, ",".join(actions), profit_usd,
+            row.get("trailing", False),
         )
 
     mgmt["timestamp"] = utc_now_iso()
     mgmt["last_run"] = summary
     _save_mgmt_state(mgmt)
+    trailing_active = sum(1 for a in summary["audit"] if a.get("trailing"))
+    logger.info(
+        "Position manager done: %d SL updates, %d trailing armed, %d errors",
+        summary["updated"], trailing_active, len(summary["errors"]),
+    )
     return summary
+
+
+def _load_order_index() -> dict[str, dict[str, Any]]:
+    orders_state = read_json_state("paper_orders.json", default={}) or {}
+    index: dict[str, dict[str, Any]] = {}
+    for order in orders_state.get("orders") or []:
+        tkt = order.get("mt5_ticket")
+        if tkt and order.get("status") == "filled":
+            index[str(tkt)] = order
+    return index
+
+
+def manage_partial_tp_mt5(
+    config: dict[str, Any],
+    positions: list[dict[str, Any]],
+    features: dict[str, Any],
+    logger: logging.Logger | None = None,
+) -> dict[str, Any]:
+    """Scale out at TP1; extend runner to TP2 with a locked-profit SL."""
+    logger = logger or logging.getLogger("position_manager")
+    summary: dict[str, Any] = {
+        "partial_closes": 0,
+        "actions": [],
+        "errors": [],
+        "timestamp": utc_now_iso(),
+    }
+    if not partial_tp_enabled(config) or mt5 is None:
+        return summary
+
+    from core.exit_manager import runner_cfg
+
+    mgmt = _load_mgmt_state()
+    order_index = _load_order_index()
+    run = runner_cfg(config)
+    pcfg = config.get("trading", {}).get("exits", {}).get("partial_tp", {})
+    fraction = float(pcfg.get("fraction", 0.5))
+
+    for pos in positions:
+        ticket_key = str(pos["ticket"])
+        row = dict(mgmt.get("positions", {}).get(ticket_key, {}))
+        if row.get("partial_tp_done"):
+            continue
+
+        symbol = pos["symbol"]
+        broker_sym = broker_symbol(symbol)
+        if not mt5.symbol_select(broker_sym, True):
+            continue
+        tick = mt5.symbol_info_tick(broker_sym)
+        info = mt5.symbol_info(broker_sym)
+        if tick is None or info is None:
+            continue
+
+        side = pos["side"]
+        entry = float(pos["entry"])
+        current_sl = float(pos.get("sl", 0))
+        bid = float(tick.bid)
+        ask = float(tick.ask)
+        current = ask if side == "BUY" else bid
+        order = order_index.get(ticket_key)
+        tp1, tp2 = resolve_tp_levels(pos, order)
+        if not tp1_reached(side, current, tp1):
+            continue
+
+        size = float(pos.get("size") or pos.get("volume") or 0)
+        vmin = float(info.volume_min or 0.01)
+        vstep = float(info.volume_step or 0.01)
+        close_vol = partial_close_volume(
+            size,
+            fraction,
+            volume_min=vmin,
+            volume_step=vstep,
+            min_remain=float(pcfg.get("min_volume_remain", vmin)),
+        )
+        if close_vol <= 0:
+            continue
+
+        if side == "BUY":
+            order_type = mt5.ORDER_TYPE_SELL
+            price = bid
+        else:
+            order_type = mt5.ORDER_TYPE_BUY
+            price = ask
+        close_req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": broker_sym,
+            "volume": close_vol,
+            "type": order_type,
+            "position": int(pos["ticket"]),
+            "price": price,
+            "deviation": int(config.get("execution", {}).get("deviation", 20)),
+            "magic": int(config.get("execution", {}).get("magic_number", 20250625)),
+            "comment": "qagent_partial_tp1",
+            "type_time": mt5.ORDER_TIME_GTC,
+        }
+        close_result = mt5.order_send(close_req)
+        if close_result is None or close_result.retcode != mt5.TRADE_RETCODE_DONE:
+            err = str(mt5.last_error()) if close_result is None else f"{close_result.retcode} {close_result.comment}"
+            summary["errors"].append({"ticket": pos["ticket"], "error": err})
+            logger.warning("Partial TP close failed ticket=%s: %s", pos["ticket"], err)
+            continue
+
+        feat = features.get("symbols", {}).get(symbol, {})
+        atr = float(feat.get("atr", current * 0.001) or current * 0.001)
+        risk_sl = float(row.get("initial_sl") or current_sl or entry)
+        lock_sl = post_partial_sl(side, entry, risk_sl, atr, config)
+        digits = int(getattr(info, "digits", 5))
+        point = float(getattr(info, "point", 0) or 0)
+        stops_level = int(getattr(info, "trade_stops_level", 0) or 0)
+        lock_sl = _clamp_sl_to_stops_level(
+            side,
+            lock_sl,
+            reference=bid if side == "BUY" else ask,
+            point=point,
+            stops_level=stops_level,
+            digits=digits,
+        )
+        new_tp = float(tp2) if run.get("extend_tp_to_tp2", True) and tp2 > 0 else float(pos.get("tp1", tp1))
+
+        mod_req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "position": int(pos["ticket"]),
+            "symbol": broker_sym,
+            "sl": lock_sl,
+            "tp": new_tp,
+        }
+        mod_result = mt5.order_send(mod_req)
+        if mod_result is None or mod_result.retcode != mt5.TRADE_RETCODE_DONE:
+            err = str(mt5.last_error()) if mod_result is None else f"{mod_result.retcode} {mod_result.comment}"
+            summary["errors"].append({"ticket": pos["ticket"], "error": f"post_partial_sltp:{err}"})
+            logger.warning("Post-partial SLTP failed ticket=%s: %s", pos["ticket"], err)
+
+        row["partial_tp_done"] = True
+        row["partial_closed_volume"] = close_vol
+        row["runner_tp"] = new_tp
+        row["break_even"] = True
+        if row.get("initial_sl") is None and current_sl > 0:
+            row["initial_sl"] = current_sl
+        mgmt.setdefault("positions", {})[ticket_key] = row
+        summary["partial_closes"] += 1
+        summary["actions"].append({
+            "ticket": pos["ticket"],
+            "symbol": symbol,
+            "closed_volume": close_vol,
+            "lock_sl": lock_sl,
+            "runner_tp": new_tp,
+        })
+        logger.info(
+            "Partial TP1 %s ticket=%s closed=%.2f lock_sl=%.5f runner_tp=%.5f",
+            symbol, pos["ticket"], close_vol, lock_sl, new_tp,
+        )
+
+    mgmt["timestamp"] = utc_now_iso()
+    mgmt["last_partial_run"] = summary
+    _save_mgmt_state(mgmt)
+    return summary
+
+
+def manage_partial_tp_paper(
+    config: dict[str, Any],
+    positions: list[dict[str, Any]],
+    features: dict[str, Any],
+    logger: logging.Logger | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Paper partial TP1 — reduce size, bank partial, arm runner."""
+    logger = logger or logging.getLogger("position_manager")
+    summary: dict[str, Any] = {
+        "partial_closes": 0,
+        "actions": [],
+        "timestamp": utc_now_iso(),
+    }
+    partial_trades: list[dict[str, Any]] = []
+    if not partial_tp_enabled(config):
+        return positions, partial_trades, summary
+
+    from core.exit_manager import runner_cfg
+
+    mgmt = _load_mgmt_state()
+    run = runner_cfg(config)
+    pcfg = config.get("trading", {}).get("exits", {}).get("partial_tp", {})
+    fraction = float(pcfg.get("fraction", 0.5))
+    updated: list[dict[str, Any]] = []
+
+    for pos in positions:
+        ticket = str(pos.get("position_id") or pos.get("ticket"))
+        row = dict(mgmt.get("positions", {}).get(ticket, {}))
+        new_pos = dict(pos)
+        symbol = pos["symbol"]
+        feat = features.get("symbols", {}).get(symbol, {})
+        price = float(feat.get("price", pos.get("entry", 0)))
+        side = pos["side"]
+        entry = float(pos["entry"])
+        current_sl = float(pos.get("sl", 0))
+        tp1, tp2 = resolve_tp_levels(pos)
+
+        if not row.get("partial_tp_done") and tp1_reached(side, price, tp1):
+            size = float(pos.get("size", 0.01))
+            close_vol = partial_close_volume(
+                size,
+                fraction,
+                volume_min=0.01,
+                volume_step=0.01,
+                min_remain=float(pcfg.get("min_volume_remain", 0.01)),
+            )
+            if close_vol > 0:
+                atr = float(feat.get("atr", price * 0.001) or price * 0.001)
+                risk_sl = float(row.get("initial_sl") or current_sl or entry)
+                lock_sl = post_partial_sl(side, entry, risk_sl, atr, config)
+                diff = (tp1 - entry) if side == "BUY" else (entry - tp1)
+                partial_pnl = diff * close_vol
+                partial_trades.append({
+                    "trade_id": f"partial-{ticket}-{utc_now_iso()}",
+                    "position_id": ticket,
+                    "symbol": symbol,
+                    "side": side,
+                    "entry": entry,
+                    "exit": tp1,
+                    "sl": current_sl,
+                    "tp1": tp1,
+                    "pnl": round(partial_pnl, 2),
+                    "result": "win" if partial_pnl > 0 else "loss",
+                    "exit_reason": "partial_take_profit",
+                    "setup_type": pos.get("setup_type"),
+                    "partial": True,
+                    "closed_at": utc_now_iso(),
+                })
+                new_pos["size"] = round(size - close_vol, 2)
+                new_pos["sl"] = _normalize_price(lock_sl, 5)
+                new_pos["tp1"] = tp2 if run.get("extend_tp_to_tp2", True) and tp2 > 0 else tp1
+                new_pos["tp2"] = tp2
+                new_pos["be_triggered"] = True
+                row["partial_tp_done"] = True
+                row["partial_closed_volume"] = close_vol
+                row["break_even"] = True
+                if row.get("initial_sl") is None and current_sl > 0:
+                    row["initial_sl"] = current_sl
+                summary["partial_closes"] += 1
+                summary["actions"].append({"ticket": ticket, "symbol": symbol, "closed_volume": close_vol})
+                logger.info("Paper partial TP1 %s ticket=%s closed=%.2f", symbol, ticket, close_vol)
+
+        mgmt.setdefault("positions", {})[ticket] = row
+        updated.append(new_pos)
+
+    mgmt["timestamp"] = utc_now_iso()
+    mgmt["last_partial_run"] = summary
+    _save_mgmt_state(mgmt)
+    return updated, partial_trades, summary

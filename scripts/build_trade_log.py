@@ -151,12 +151,7 @@ def _session_trades(
     since = str(baseline.get("set_at") or "")
     clean = [r for r in trades if not r.get("archive_polluted")]
     if since:
-        anchored = [r for r in clean if str(r.get("closed_at") or "") >= since]
-        if anchored:
-            return anchored
-        # Baseline rebaseline mid-day — still show same-day live trades.
-        day = since[:10]
-        return [r for r in clean if str(r.get("closed_at") or "").startswith(day)]
+        return [r for r in clean if str(r.get("closed_at") or "") >= since]
     return clean
 
 
@@ -497,6 +492,9 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
         if s
     ]
     organized = build_organized_index(out_trades, configured_symbols=configured_symbols)
+    session_organized = build_organized_index(
+        session_list, configured_symbols=configured_symbols,
+    )
     sym_groups = group_trades_by_symbol(out_trades)
     journal_symbols = 0
     journal_written = 0
@@ -533,6 +531,7 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
         "drawdown_known": n_dd,
         "kelly": _kelly_summary(session_list or out_trades),
         "organized": organized,
+        "session_organized": session_organized,
         "journal_files": journal_written,
         "journal_symbols": journal_symbols,
         "symbols": organized.get("symbols") or [],

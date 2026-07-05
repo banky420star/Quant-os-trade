@@ -104,6 +104,13 @@ def is_duplicate_position(
     if not symbol_capacity_available(config, symbol, active_positions):
         return True
 
+    from core.strategy_arena import arena_enabled, setup_capacity_available
+
+    setup = signal.get("setup_type")
+    if arena_enabled(config) and setup:
+        if not setup_capacity_available(config, symbol, setup, active_positions):
+            return True
+
     if allow_pyramiding(config):
         block_same_setup = bool(config.get("trading", {}).get("pyramid_block_same_setup", False))
         for active in active_positions:
@@ -184,6 +191,54 @@ def session_trade_capacity_available(
     return closed_trades_for_symbol(closed_trades, symbol) < limit
 
 
+def reentry_cooldown_seconds(config: dict[str, Any]) -> float:
+    trading = config.get("trading") or {}
+    sec = trading.get("reentry_cooldown_seconds")
+    if sec is not None:
+        return max(0.0, float(sec))
+    micro = (config.get("practice") or {}).get("micro") or {}
+    if micro.get("enabled") and micro.get("reentry_cooldown_seconds") is not None:
+        return max(0.0, float(micro["reentry_cooldown_seconds"]))
+    return 0.0
+
+
+def last_close_time_for_symbol(
+    closed_trades: list[dict[str, Any]],
+    symbol: str,
+) -> datetime | None:
+    latest: datetime | None = None
+    for trade in closed_trades:
+        if trade.get("symbol") != symbol:
+            continue
+        raw = trade.get("closed_at") or trade.get("timestamp")
+        if not raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if latest is None or ts > latest:
+            latest = ts
+    return latest
+
+
+def symbol_reentry_available(
+    config: dict[str, Any],
+    symbol: str,
+    closed_trades: list[dict[str, Any]],
+) -> tuple[bool, float]:
+    """True when enough time has passed since the last close on this symbol."""
+    cooldown = reentry_cooldown_seconds(config)
+    if cooldown <= 0:
+        return True, 0.0
+    last = last_close_time_for_symbol(closed_trades, symbol)
+    if last is None:
+        return True, 0.0
+    elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+    remaining = max(0.0, cooldown - elapsed)
+    return elapsed >= cooldown, round(remaining, 1)
+
+
 def session_trade_capacity_status(
     config: dict[str, Any],
     symbol: str,
@@ -251,6 +306,32 @@ def humanize_verifier_failure(
         )
     if check_name == "no_duplicate":
         return f"Duplicate blocked — same {symbol} {signal.get('side')} setup already open"
+    if check_name == "reentry_cooldown":
+        ok, remaining = symbol_reentry_available(config, symbol, closed_trades)
+        if ok:
+            return f"Re-entry cooldown — {symbol} ready"
+        return (
+            f"Re-entry cooldown — {symbol} closed recently; "
+            f"wait {remaining:.0f}s more before a new entry"
+        )
+    if check_name == "entry_confirm":
+        from core.entry_staging import touch_and_check
+        status = touch_and_check(signal, config)
+        if status.get("ready"):
+            return f"Entry confirmed — {symbol} conditions held {status.get('age_sec', 0):.0f}s"
+        need = status.get("need_sec", 0)
+        age = status.get("age_sec", 0)
+        return (
+            f"Entry confirm pending — {symbol} {signal.get('side')} "
+            f"needs {need:.0f}s of stable conditions ({age:.0f}s so far)"
+        )
+    if check_name == "max_loss_per_trade":
+        from core.risk_cap import risk_per_trade_cap
+        cap = risk_per_trade_cap(config)
+        return (
+            f"Max loss cap — {symbol} stop risk would exceed ${cap:.2f} at minimum lot"
+            if cap is not None else "Max loss cap exceeded"
+        )
     if check_name == "confidence_floor":
         open_conf = _max_open_confidence_from_positions(active_positions)
         sig_conf = signal.get("confidence")
@@ -312,6 +393,14 @@ def humanize_verifier_failure(
             f"Data-driven veto — {signal.get('setup_type', '?')} on {symbol} @ "
             f"{reg.get('primary', '?')}/{mc.get('session', '?')} loses on clean live data; "
             f"pruned by the forward-test ledger"
+        )
+    if check_name == "positive_evolution":
+        mc = signal.get("market_context") or {}
+        reg = mc.get("market_regime") or {}
+        return (
+            f"Positive evolution gate — {signal.get('setup_type', '?')} on {symbol} @ "
+            f"{reg.get('primary', '?')}/{mc.get('session', '?')} lacks proven positive expectancy; "
+            f"cell blocked until culturing data improves"
         )
     return check_name.replace("_", " ")
 

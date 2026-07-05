@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from core.entry_narrative import build_exit_narrative
+from core.exit_manager import near_take_profit
 from core.symbol_manager import logical_symbol
 from core.strategy_policy import normalize_setup_type
 from core.trade_journal import build_mgmt_narratives
@@ -90,6 +91,11 @@ class TradeTracker:
             })
 
         if closed_trades:
+            from core.entry_staging import clear_symbol
+            for trade in closed_trades:
+                sym = trade.get("symbol")
+                if sym:
+                    clear_symbol(str(sym))
             self.logger.info("Detected %d paper closed trades", len(closed_trades))
         return closed_trades
 
@@ -167,7 +173,13 @@ class TradeTracker:
                 mgmt_row=mgmt_row,
             )
             exit_reason = "mt5_close"
-            if trail_active:
+            tp1 = float(meta.get("tp1") or 0)
+            tp2 = float(meta.get("tp2") or 0)
+            if mgmt_row.get("partial_tp_done") and deal.comment and "partial" in deal.comment.lower():
+                exit_reason = "partial_take_profit"
+            elif near_take_profit(exit_price, tp2 if mgmt_row.get("partial_tp_done") and tp2 > 0 else tp1):
+                exit_reason = "take_profit"
+            elif trail_active:
                 exit_reason = "trailing_stop"
             elif be_triggered:
                 exit_reason = "break_even_stop"

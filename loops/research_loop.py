@@ -64,6 +64,18 @@ def _find_patterns(db: EdgeDatabase) -> list[dict]:
     return patterns[:20]
 
 
+def _research_summary(db_state: dict, patterns: list[dict]) -> dict:
+    aggregates = db_state.get("aggregates", {}) if isinstance(db_state, dict) else {}
+    by_context = aggregates.get("by_context", {}) if isinstance(aggregates, dict) else {}
+    by_setup = aggregates.get("by_setup", {}) if isinstance(aggregates, dict) else {}
+    return {
+        "records": len(db_state.get("records", [])) if isinstance(db_state, dict) else 0,
+        "context_cells": len(by_context) if isinstance(by_context, dict) else 0,
+        "setup_cells": len(by_setup) if isinstance(by_setup, dict) else 0,
+        "pattern_count": len(patterns),
+    }
+
+
 def run() -> dict:
     """
     Research cycle:
@@ -84,11 +96,20 @@ def run() -> dict:
     min_trades = int(research_cfg.get("min_trades_for_research", 15))
 
     patterns = _find_patterns(edge_db)
+    summary = _research_summary(db_state, patterns)
+    status = "ok" if trade_count >= min_trades else "insufficient_data"
+    if status != "ok":
+        status_reason = f"waiting_for_more_trades:{trade_count}/{min_trades}"
+    else:
+        status_reason = "ready"
     report = {
         "timestamp": utc_now_iso(),
+        "status": status,
+        "status_reason": status_reason,
         "edge_records": trade_count,
+        "summary": summary,
+        "min_trades": min_trades,
         "patterns": patterns,
-        "status": "ok" if trade_count >= min_trades else "insufficient_data",
     }
     write_json_state("research_report.json", report)
     logger.info("Research: %d edge records, %d patterns found", trade_count, len(patterns))
@@ -97,10 +118,22 @@ def run() -> dict:
     candidate = optimizer.optimize(min_trades=min_trades)
     write_json_state("adaptive_weights_candidate.json", candidate)
 
+    validation = {
+        "timestamp": utc_now_iso(),
+        "status": candidate.get("status", "unknown"),
+        "trade_count": candidate.get("trade_count", trade_count),
+        "min_trades": candidate.get("min_trades", min_trades),
+        "weights": candidate.get("weights", {}),
+        "deployed": bool(candidate.get("deployed", False)),
+        "method": candidate.get("method", "unknown"),
+        "reason": "insufficient_data" if candidate.get("status") != "candidate" else "candidate_ready",
+    }
+    write_json_state("research_validation.json", validation)
+
     if candidate.get("status") != "candidate":
         logger.info("Research: insufficient trades for weight optimization (%d < %d)", trade_count, min_trades)
         logger.info("=== Research Loop complete ===")
-        return {"report": report, "candidate": candidate, "proposal": None}
+        return {"report": report, "candidate": candidate, "validation": validation, "proposal": None}
 
     symbol = config.get("replay", {}).get("symbol")
     replay_bars = int(research_cfg.get("replay_bars", 400))
@@ -127,8 +160,7 @@ def run() -> dict:
     auto_deploy = bool(research_cfg.get("auto_deploy", False))
     proposal = optimizer.propose_deployment(candidate, improvement, threshold)
 
-    validation = {
-        "timestamp": utc_now_iso(),
+    validation.update({
         "baseline_score": round(baseline_score, 3),
         "candidate_score": round(candidate_score, 3),
         "improvement_pct": round(improvement, 2),
@@ -136,7 +168,7 @@ def run() -> dict:
         "baseline_pnl": baseline_out.get("pnl_total"),
         "candidate_pnl": candidate_out.get("pnl_total"),
         "proposal": proposal.get("proposal"),
-    }
+    })
     write_json_state("research_validation.json", validation)
 
     if auto_deploy and proposal.get("proposal") == "deploy":
@@ -150,12 +182,42 @@ def run() -> dict:
             threshold,
         )
 
+    micro_result: dict | None = None
+    try:
+        from core.micro_quant_evolution import micro_evolution_enabled, run_micro_evolution
+
+        if micro_evolution_enabled(config):
+            logger.info("Research: running micro quant evolution (30-c2 profile)")
+            micro_result = run_micro_evolution(config, logger)
+            if micro_result.get("positive_evolution"):
+                micro_candidate = micro_result.get("candidate") or {}
+                validation["micro_evolution"] = {
+                    "symbols_evolved": micro_result.get("symbols_evolved", 0),
+                    "proposal": micro_candidate.get("proposal"),
+                    "replay_improvement_pct": micro_candidate.get("replay_improvement_pct"),
+                    "positive_evolution": True,
+                }
+                write_json_state("research_validation.json", validation)
+                logger.info(
+                    "Research: micro evolution positive — %d symbol(s) -> weight_candidates.json (hold deploy)",
+                    micro_result.get("symbols_evolved", 0),
+                )
+            else:
+                validation["micro_evolution"] = {
+                    "positive_evolution": False,
+                    "proposal": "hold",
+                }
+                write_json_state("research_validation.json", validation)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Research: micro quant evolution skipped: %s", exc)
+
     logger.info("=== Research Loop complete ===")
     return {
         "report": report,
         "candidate": candidate,
         "validation": validation,
         "proposal": proposal,
+        "micro_evolution": micro_result,
     }
 
 

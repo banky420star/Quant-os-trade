@@ -27,6 +27,11 @@ from core.adaptation_engine import (  # noqa: E402
     diff_edge_stats,
     diff_vetoes,
 )
+from core.positive_evolution import (  # noqa: E402
+    diff_positive_cells,
+    positive_evolution_active,
+    refresh_positive_evolution,
+)
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state  # noqa: E402
 
 
@@ -36,6 +41,8 @@ def _adaptation_cfg(config: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(cfg.get("enabled", True)),
         "calibrate_be_trail": bool(cfg.get("calibrate_be_trail", True)),
         "rebuild_trade_log": bool(cfg.get("rebuild_trade_log", True)),
+        "refresh_positive_evolution": bool(cfg.get("refresh_positive_evolution", True)),
+        "auto_evolve_cells": bool(cfg.get("auto_evolve_cells", False)),
     }
 
 
@@ -61,6 +68,7 @@ def run() -> dict[str, Any]:
     old_policy = read_json_state("symbol_policy_live.json", default={}) or {}
     old_be_trail = read_json_state("symbol_be_trail_live.json", default={}) or {}
     old_edge = read_json_state("edge_scores.json", default={}) or {}
+    old_positive = read_json_state("positive_evolution.json", default={}) or {}
     old_setup_stats = old_edge.get("setup_stats") or {}
 
     # Culturing ledger + vetoes refresh every cycle (same as legacy forward_test_loop).
@@ -70,6 +78,21 @@ def run() -> dict[str, Any]:
         ledger_payload = forward_test_run() or {}
     except Exception as exc:  # noqa: BLE001
         logger.error("Forward-test adaptation failed: %s", exc)
+
+    # Session-edge evolution: auto-promote winning cells, keep culturing vetoes.
+    if acfg["auto_evolve_cells"]:
+        try:
+            from quant.research.adaptation_evolution import evolve_symbol_policy
+            evolved = evolve_symbol_policy(ledger_payload, config, existing_policy=old_policy)
+            if evolved.get("symbols"):
+                write_json_state("symbol_policy_live.json", evolved)
+                logger.info(
+                    "Cell evolution: %d symbols, positive=%s",
+                    len(evolved.get("symbols") or {}),
+                    (evolved.get("evolution") or {}).get("positive_evolution"),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cell evolution skipped: %s", exc)
 
     if new_closes == 0:
         write_json_state("adaptation_state.json", {
@@ -112,12 +135,21 @@ def run() -> dict[str, Any]:
     new_edge = read_json_state("edge_scores.json", default={}) or {}
     ledger_cells = (ledger_payload.get("cells") or {}) if isinstance(ledger_payload, dict) else {}
 
+    positive_diff: dict[str, list[dict[str, Any]]] = {"added": [], "removed": []}
+    if acfg["refresh_positive_evolution"] and positive_evolution_active(config):
+        try:
+            new_positive = refresh_positive_evolution(config, ledger_cells=ledger_cells, logger=logger)
+            positive_diff = diff_positive_cells(old_positive, new_positive)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Positive evolution refresh failed: %s", exc)
+
     report = compile_adaptation_report(
         new_trade_count=new_closes,
         new_records=new_records,
         veto_diff=diff_vetoes(old_policy, new_policy, ledger_cells),
         be_trail_changes=diff_be_trail(old_be_trail, new_be_trail),
         edge_shifts=diff_edge_stats(old_setup_stats, new_edge.get("setup_stats") or {}),
+        positive_diff=positive_diff,
     )
 
     log_doc = read_json_state("adaptation_log.json", default={"history": []}) or {}

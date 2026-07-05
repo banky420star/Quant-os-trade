@@ -32,7 +32,6 @@ PIPELINE_LOOP_ORDER = [
     "data_loop",
     "feature_loop",
     "market_context_loop",
-    "adaptation_loop",
     "risk_loop",
     "signal_loop",
     "verifier_loop",
@@ -40,6 +39,7 @@ PIPELINE_LOOP_ORDER = [
     "blue_guardian_loop",
     "position_manager_loop",
     "memory_loop",
+    "adaptation_loop",
     "trade_log_loop",
     "health_loop",
 ]
@@ -152,13 +152,19 @@ def _bar(pct: float, width: int = 24) -> str:
 
 
 # ---- sections -------------------------------------------------------------
-def _header(acc, sup, rt, bg=None) -> str:
+def _header(acc, sup, rt, bg=None, arena=None) -> str:
     login = acc.get("login", "—")
     server = acc.get("server", "—")
     mode = acc.get("account_mode", "—")
     mode_col = GREEN if str(mode).lower() == "demo" else RED + B
     label = rt.get("label", "—") if isinstance(rt, dict) else "—"
-    if isinstance(bg, dict) and bg.get("enabled"):
+    if isinstance(arena, dict) and arena.get("campaign_id"):
+        cid = str(arena.get("campaign_id", ""))
+        short = cid.replace("full-tilt-", "ft-") if cid.startswith("full-tilt-") else cid
+        syms = arena.get("symbols") or []
+        sym_s = f"{len(syms)}sym" if syms else ""
+        label = f"{label} · {MAGENTA}arena {short}{R} {GREY}{sym_s}{R}"
+    elif isinstance(bg, dict) and bg.get("enabled"):
         label = f"{label} · {CYAN}blue guardian $5k{R}"
     up = sup.get("uptime_seconds") if isinstance(sup, dict) else None
     up_s = f"{int(up)//3600}h{(int(up)%3600)//60}m" if isinstance(up, (int, float)) else "—"
@@ -170,7 +176,7 @@ def _header(acc, sup, rt, bg=None) -> str:
     return line1 + "\n" + line2 + "\n" + GREY + "─" * 92 + R
 
 
-def _kpi_row(acc, dg, ks, hlt, sup, pos, bg=None) -> str:
+def _kpi_row(acc, dg, ks, hlt, sup, pos, bg=None, rt=None) -> str:
     bal = acc.get("balance")
     eq = acc.get("equity")
     try:
@@ -181,7 +187,8 @@ def _kpi_row(acc, dg, ks, hlt, sup, pos, bg=None) -> str:
     kill = bool(ks.get("kill_switch")) if isinstance(ks, dict) else False
     hstatus = hlt.get("status", "—") if isinstance(hlt, dict) else "—"
     npos = len(pos.get("positions", [])) if isinstance(pos, dict) else 0
-    if isinstance(bg, dict) and bg.get("enabled"):
+    arena_on = isinstance(rt, dict) and rt.get("arena_active")
+    if isinstance(bg, dict) and bg.get("enabled") and not arena_on:
         day_pct = bg.get("daily_pnl_pct")
     else:
         day_pct = dg.get("daily_pnl_pct") if isinstance(dg, dict) else None
@@ -207,7 +214,9 @@ def _kpi_row(acc, dg, ks, hlt, sup, pos, bg=None) -> str:
     return "  ".join(cells)
 
 
-def _blue_guardian_section(bg, pos) -> str:
+def _blue_guardian_section(bg, pos, rt=None) -> str:
+    if isinstance(rt, dict) and rt.get("arena_active"):
+        return ""
     if not isinstance(bg, dict) or not bg.get("enabled"):
         return ""
     positions = pos.get("positions", []) if isinstance(pos, dict) else []
@@ -345,6 +354,150 @@ def _signal_flow_section(approved, rejected) -> str:
     return "\n".join(lines)
 
 
+def _strategy_arena_section(arena, cand=None) -> str:
+    """Live strategy competition — all setups fire, winners earn points."""
+    ar = arena if isinstance(arena, dict) else {}
+    if not ar.get("campaign_id"):
+        return ""
+    cid = ar.get("campaign_id", "—")
+    syms = ar.get("symbols") or []
+    totals = ar.get("totals") or {}
+    trig = int(totals.get("triggers", 0) or 0)
+    closed = int(totals.get("trades_closed", 0) or 0)
+    pts = float(totals.get("points", 0) or 0)
+    pts_col = GREEN if pts >= 0 else RED
+    head = (
+        f"{B}strategy arena{R} {MAGENTA}{cid}{R}  "
+        f"{GREY}symbols{R} {B}{', '.join(syms) if syms else '—'}{R}  "
+        f"{GREY}triggers{R} {B}{trig}{R}  "
+        f"{GREY}closed{R} {B}{closed}{R}  "
+        f"{GREY}points{R} {pts_col}{B}{_signed(pts)}{R}"
+    )
+    lines = [head]
+    lb = ar.get("leaderboard") or {}
+    rows = []
+    for setup, row in lb.items():
+        if not isinstance(row, dict):
+            continue
+        rows.append(row)
+    catalog = ar.get("setup_catalog") or {}
+    catalog_by = {}
+    if isinstance(catalog, dict):
+        for entry in catalog.get("setups") or []:
+            if isinstance(entry, dict) and entry.get("setup_type"):
+                catalog_by[entry["setup_type"]] = entry
+    setup_types = ar.get("setup_types") or list(lb.keys())
+    merged_rows = []
+    seen = set()
+    for setup in setup_types:
+        row = dict(lb.get(setup) or {"setup_type": setup, "points": 0, "trades": 0, "triggers": 0})
+        row["setup_type"] = setup
+        cat = catalog_by.get(setup, {})
+        row["trigger_summary"] = cat.get("trigger_summary") or ""
+        merged_rows.append(row)
+        seen.add(setup)
+    for row in rows:
+        st = row.get("setup_type")
+        if st not in seen:
+            merged_rows.append(row)
+    merged_rows.sort(key=lambda r: (-float(r.get("points", 0)), -int(r.get("triggers", 0))))
+    if merged_rows:
+        lines.append(f"  {GREY}all setups + triggers (8 compete; zero rows still listed):{R}")
+        for i, row in enumerate(merged_rows):
+            setup = str(row.get("setup_type", "—"))[:20]
+            p = float(row.get("points", 0) or 0)
+            pcol = GREEN if p >= 0 else RED
+            trades = int(row.get("trades", 0) or 0)
+            trig_n = int(row.get("triggers", 0) or 0)
+            wins = int(row.get("wins", 0) or 0)
+            wr = (100.0 * wins / trades) if trades else 0.0
+            exp_r = row.get("expectancy_r")
+            exp_s = "—" if exp_r is None else f"{_signed(exp_r)}R"
+            crown = f"{YELLOW}★{R} " if i == 0 and (p != 0 or trades) else "  "
+            trig_hint = str(row.get("trigger_summary") or "")[:42]
+            lines.append(
+                f"  {crown}{setup:<20} {pcol}{_signed(p):>7} pts{R}  "
+                f"{GREY}t={trades} trig={trig_n} wr={wr:.0f}% exp={exp_s}{R}"
+            )
+            if trig_hint:
+                lines.append(f"      {GREY}trigger:{R} {trig_hint}")
+    by_sym = ar.get("by_symbol") or {}
+    if by_sym:
+        lines.append(f"  {GREY}per-symbol leaders:{R}")
+        for sym in sorted(by_sym.keys()):
+            setups = by_sym.get(sym) or {}
+            if not isinstance(setups, dict):
+                continue
+            leader = None
+            for row in setups.values():
+                if not isinstance(row, dict):
+                    continue
+                if leader is None or float(row.get("points", 0)) > float(leader.get("points", 0)):
+                    leader = row
+            if leader and (leader.get("trades") or leader.get("triggers")):
+                setup = str(leader.get("setup_type", "—"))[:16]
+                p = float(leader.get("points", 0) or 0)
+                pcol = GREEN if p >= 0 else RED
+                lines.append(
+                    f"    {B}{sym:<10}{R} {YELLOW}{setup:<16}{R} {pcol}{_signed(p)} pts{R}  "
+                    f"{GREY}t={leader.get('trades', 0)} trig={leader.get('triggers', 0)}{R}"
+                )
+            else:
+                lines.append(f"    {sym:<10} {GREY}no trades yet{R}")
+    snap = (cand or {}).get("strategy_arena") if isinstance(cand, dict) else None
+    n_trig = (cand or {}).get("arena_triggers_recorded") if isinstance(cand, dict) else None
+    if n_trig:
+        lines.append(f"  {GREY}last signal cycle:{R} {B}{n_trig}{R} arena triggers recorded")
+    elif snap and snap.get("global_top"):
+        top = snap["global_top"]
+        lines.append(
+            f"  {GREY}live leader:{R} {YELLOW}{top.get('setup_type', '—')}{R} "
+            f"{GREEN}{_signed(top.get('points', 0))} pts{R}"
+        )
+    insights = ar.get("insights") or {}
+    if isinstance(insights, dict) and (
+        insights.get("best_setup_per_session")
+        or insights.get("best_setup_per_symbol")
+        or insights.get("top_winning_conditions")
+    ):
+        lines.append(f"  {GREY}session + symbol insights (what worked where):{R}")
+        for row in (insights.get("best_setup_per_session") or [])[:3]:
+            sess = str(row.get("session", "—")).replace("_", " ")
+            setup = str(row.get("setup_type", "—"))[:16]
+            p = float(row.get("points", 0) or 0)
+            pcol = GREEN if p >= 0 else RED
+            lines.append(
+                f"    {GREY}session{R} {B}{sess:<18}{R} → {YELLOW}{setup:<16}{R} "
+                f"{pcol}{_signed(p)} pts{R} {GREY}wr={row.get('win_rate_pct', 0):.0f}% "
+                f"t={row.get('trades', 0)}{R}"
+            )
+        for row in (insights.get("best_setup_per_symbol") or [])[:3]:
+            sym = str(row.get("symbol", "—"))
+            setup = str(row.get("setup_type", "—"))[:16]
+            p = float(row.get("points", 0) or 0)
+            pcol = GREEN if p >= 0 else RED
+            lines.append(
+                f"    {GREY}symbol{R} {B}{sym:<10}{R} → {YELLOW}{setup:<16}{R} "
+                f"{pcol}{_signed(p)} pts{R} {GREY}wr={row.get('win_rate_pct', 0):.0f}% "
+                f"pnl={_signed(row.get('net_pnl', 0))}{R}"
+            )
+        for row in (insights.get("top_winning_conditions") or [])[:2]:
+            cond = (
+                f"{row.get('symbol')} {row.get('setup_type')} "
+                f"{row.get('session')} {row.get('regime')} "
+                f"move={row.get('move_type')} trend={row.get('m5_trend')}"
+            )[:58]
+            lines.append(
+                f"    {GREY}condition{R} {cond}  "
+                f"{GREEN}{_signed(row.get('points', 0))} pts{R} "
+                f"{GREY}wr={row.get('win_rate_pct', 0):.0f}%{R}"
+            )
+            hint = str(row.get("trigger_summary") or "")[:50]
+            if hint:
+                lines.append(f"      {GREY}cause:{R} {hint}")
+    return "\n".join(lines)
+
+
 def _rankings_section(rankings) -> str:
     """Per-symbol strategy rankings (signal_loop -> strategy_rankings.json)."""
     data = rankings if isinstance(rankings, dict) else {}
@@ -458,21 +611,46 @@ def _trade_time_label(trade: dict) -> str:
     return str(raw)[5:16].replace("T", " ")
 
 
+def _summarize_trades_inline(trades: list[dict]) -> dict:
+    wins = sum(1 for t in trades if t.get("result") == "win" or (t.get("pnl") or 0) > 0)
+    losses = sum(1 for t in trades if t.get("result") == "loss" or (t.get("pnl") or 0) < 0)
+    total = len(trades)
+    pnl = sum(float(t.get("pnl") or 0) for t in trades)
+    rs = [float(t["r_multiple"]) for t in trades if t.get("r_multiple") is not None]
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": round(100.0 * wins / max(wins + losses, 1), 1) if total else 0.0,
+        "total_pnl": round(pnl, 2),
+        "avg_R": round(sum(rs) / len(rs), 3) if rs else None,
+    }
+
+
 def _trade_log_section(tlog) -> str:
     """Comprehensive per-trade log (state/trade_log.json).
 
-    Session stats (since mt5_baseline) drive the summary; recent rows exclude
-    archive-polluted records and sort by closed_at descending.
+    Session stats (since mt5_baseline.set_at) drive the summary when a session
+    anchor exists — even when total is 0 after a fresh reset.
     """
     tl = tlog if isinstance(tlog, dict) else {}
     if not tl:
         return ""
     session = tl.get("session") if isinstance(tl.get("session"), dict) else {}
-    use_session = bool(session.get("total"))
-    stats = session if use_session else tl
+    use_session = bool(session.get("since"))
+    trades = list(tl.get("session_trades") if use_session else tl.get("trades") or [])
+    trades = [t for t in trades if not t.get("archive_polluted")]
+    trades.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
+    stats = _summarize_trades_inline(trades) if use_session else tl
     total = int(stats.get("total", 0) or 0)
-    if not total:
-        return f"{B}trade log{R}  {GREY}no closed trades yet{R}"
+    since_raw = str(session.get("since") or "")
+    since_short = since_raw[11:16] if len(since_raw) >= 16 else ""
+    if use_session and not total:
+        scope = (
+            f"{GREY}session acct {session.get('login', '—')}"
+            f"{f' since {since_short} UTC' if since_short else ''}{R}"
+        )
+        return f"{B}trade log{R} {scope}  {GREY}no closed trades this session{R}"
     wins = stats.get("wins", 0)
     losses = stats.get("losses", 0)
     wr = stats.get("win_rate_pct", 0)
@@ -484,7 +662,11 @@ def _trade_log_section(tlog) -> str:
     ks = tl.get("kelly") or {}
     ks_sized = int(ks.get("sized_trades", 0) or 0)
     ks_fb = int(ks.get("fallback_trades", 0) or 0)
-    scope = f"{GREY}session acct {session.get('login', '—')}{R}" if use_session else f"{GREY}all-time{R}"
+    since_note = f" since {since_short} UTC" if use_session and since_short else ""
+    scope = (
+        f"{GREY}session acct {session.get('login', '—')}{since_note}{R}"
+        if use_session else f"{GREY}all-time{R}"
+    )
     head = (f"{B}trade log{R} {scope}  "
             f"{GREY}trades{R} {B}{total}{R}  "
             f"{GREEN}wins{R} {B}{wins}{R}  "
@@ -492,15 +674,18 @@ def _trade_log_section(tlog) -> str:
             f"{GREY}win%{R} {B}{wr}{R}  "
             f"{GREY}netPnL{R} {pnl_col}{B}${float(pnl):.2f}{R}  "
             f"{GREY}avgR{R} {r_col}{B}{r_str}{R}  "
-            f"{GREY}kelly{R} {GREEN}sized {ks_sized}{R}/{GREY}fb {ks_fb}{R}  "
-            f"{GREY}opened={tl.get('opened_at_known','—')} dd={tl.get('drawdown_known','—')}{R}")
+            f"{GREY}kelly{R} {GREEN}sized {ks_sized}{R}/{GREY}fb {ks_fb}{R}"
+            + (
+                ""
+                if use_session
+                else f"  {GREY}opened={tl.get('opened_at_known', '—')} dd={tl.get('drawdown_known', '—')}{R}"
+            )
+    )
     lines = [head]
-    org = tl.get("organized") if isinstance(tl.get("organized"), dict) else {}
+    org = tl.get("session_organized") if use_session else tl.get("organized")
+    org = org if isinstance(org, dict) else {}
     per_sym = org.get("per_symbol") if isinstance(org.get("per_symbol"), dict) else {}
     by_sym = org.get("by_symbol") if isinstance(org.get("by_symbol"), dict) else {}
-    trades = list(tl.get("session_trades") or tl.get("trades") or [])
-    trades = [t for t in trades if not t.get("archive_polluted")]
-    trades.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
     if not trades:
         return head
     lines.append(f"  {GREY}per-symbol (each treated individually):{R}")
@@ -537,7 +722,9 @@ def _trade_log_section(tlog) -> str:
         sym = str(t.get("symbol") or "—")[:9]
         side = str(t.get("side") or "—")
         side_col = GREEN if side == "BUY" else RED
-        setup = str(t.get("setup") or "—")[:14]
+        setup = str(t.get("setup") or t.get("setup_type") or "—")[:14]
+        if setup == "unknown":
+            setup = str(t.get("exit_reason") or "mt5")[:14]
         res = str(t.get("result") or "—")
         res_col = GREEN if res == "win" else RED
         pnl_v = t.get("pnl")
@@ -813,6 +1000,8 @@ def render_frame() -> str:
     cult = _load("forward_test_ledger.json") or {}
     veto = _load("symbol_policy_live.json") or {}
     rankings = _load("strategy_rankings.json") or {}
+    arena = _load("strategy_arena.json") or {}
+    cand = _load("candidate_signals.json") or {}
     tlog = _load("trade_log.json") or {}
     features = _load("features.json") or {}
 
@@ -822,14 +1011,16 @@ def render_frame() -> str:
     # emit a dangling rule; the header + KPI row are joined as one title block
     # (no rule between them) so the title stays a coherent unit.
     _DIV = GREY + "─" * 92 + R
-    title_bits = [_header(acc, sup, rt, bg), _kpi_row(acc, dg, ks, hlt, sup, pos, bg)]
+    arena_active = bool(isinstance(arena, dict) and arena.get("campaign_id"))
+    title_bits = [_header(acc, sup, rt, bg, arena), _kpi_row(acc, dg, ks, hlt, sup, pos, bg, rt)]
     title = "\n".join(b for b in title_bits if b and b.strip())
     body = [
-        _blue_guardian_section(bg, pos),
+        _blue_guardian_section(bg, pos, rt),
         _growth_section(dg, baseline, bg),
+        _strategy_arena_section(arena, cand) if arena_active else "",
         _positions_section(pos, pmgr, conf),
         _signal_flow_section(approved, rejected),
-        _rankings_section(rankings),
+        _rankings_section(rankings) if not arena_active else "",
         _culturing_section(cult, veto),
         _trade_log_section(tlog),
         _loops_section(

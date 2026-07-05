@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
+from core.kelly_sizing import resolve_risk_percent
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
 from core.entry_narrative import build_exit_narrative
 from core.trade_limits import is_duplicate_position, session_trade_capacity_available
@@ -48,7 +49,7 @@ class PaperBroker:
         starting_cash = float(self.config["execution"].get("starting_cash", 1000))
         balance = balance_state or {"cash": starting_cash, "equity": starting_cash, "starting_cash": starting_cash}
 
-        risk_pct = float(self.config["signals"].get("default_risk_percent", 1))
+        default_risk = float(self.config["signals"].get("default_risk_percent", 1))
         executed_signal_ids = {p.get("signal_id") for p in positions if p.get("signal_id")}
 
         for record in approved:
@@ -81,6 +82,8 @@ class PaperBroker:
                 continue
 
             equity = float(balance.get("equity", balance.get("cash", starting_cash)))
+            risk_pct, kelly = resolve_risk_percent(signal, self.config, default_risk)
+            signal["kelly"] = kelly
             ideal_size = calc_risk_based_size(
                 equity,
                 risk_pct,
@@ -345,6 +348,16 @@ class PaperBroker:
                 else:
                     pos["peak"] = min(float(pos.get("peak", entry)), fav_price)
 
+                from core.exit_manager import (
+                    partial_close_volume,
+                    partial_tp_enabled,
+                    post_partial_sl,
+                    profit_rr,
+                    tp1_reached,
+                    tp2_reached,
+                    trail_activation_allowed,
+                    trail_distance_multiplier,
+                )
                 from core.position_manager import (
                     _default_broker_point,
                     _exit_trigger_met,
@@ -403,24 +416,74 @@ class PaperBroker:
                             f"{lock_sl:.5f} (locked {lock_dist:.5f} over entry)."
                         )
 
-                # --- Trailing: latch once armed; distance = MT5 broker points behind peak. ---
+                if pos.get("initial_sl") is None:
+                    pos["initial_sl"] = sl_start
+
+                # --- Partial TP1: bank half, arm runner to TP2. ---
+                if partial_tp_enabled(self.config) and not pos.get("partial_tp_done"):
+                    tp1_level = float(pos.get("tp1", 0))
+                    if tp1_reached(side, fav_price, tp1_level):
+                        pcfg = self.config.get("trading", {}).get("exits", {}).get("partial_tp", {})
+                        close_vol = partial_close_volume(
+                            float(pos.get("size", 0.01)),
+                            float(pcfg.get("fraction", 0.5)),
+                            min_remain=float(pcfg.get("min_volume_remain", 0.01)),
+                        )
+                        if close_vol > 0:
+                            risk_sl = float(pos.get("initial_sl") or sl_start)
+                            lock_sl = post_partial_sl(side, entry, risk_sl, atr, self.config)
+                            diff = (tp1_level - entry) if side == "BUY" else (entry - tp1_level)
+                            partial_pnl = diff * close_vol
+                            trades.append({
+                                "trade_id": str(uuid.uuid4()),
+                                "position_id": pos["position_id"],
+                                "signal_id": pos.get("signal_id"),
+                                "symbol": symbol,
+                                "side": side,
+                                "entry": entry,
+                                "exit": tp1_level,
+                                "sl": pos.get("sl"),
+                                "tp1": tp1_level,
+                                "pnl": round(partial_pnl, 2),
+                                "result": "win" if partial_pnl > 0 else "loss",
+                                "exit_reason": "partial_take_profit",
+                                "partial": True,
+                                "setup_type": pos.get("setup_type"),
+                                "closed_at": utc_now_iso(),
+                            })
+                            realized += partial_pnl
+                            pos["size"] = round(float(pos["size"]) - close_vol, 2)
+                            pos["sl"] = lock_sl
+                            pos["be_triggered"] = True
+                            pos["partial_tp_done"] = True
+                            runner_tp = float(pos.get("tp2") or tp1_level)
+                            pos["tp1"] = runner_tp
+                            # Runner managed on the next step — same-bar low can sit
+                            # below the new lock SL even on a winning TP1 bar.
+                            continue
+
+                # --- Trailing: deferred until partial TP or min R. ---
                 tr = self._trail_cfg(symbol)
                 tr_sym, tr_parent = tr["sym"], tr["parent"]
-                if tr["enabled"] and atr > 0 and (
-                    pos.get("trail_active")
-                    or _exit_trigger_met(
-                        profit_usd,
-                        profit,
-                        tr_sym,
-                        tr_parent,
-                        usd_key="activation_profit_usd",
-                        points_key="activation_points",
-                        atr_mult_key="activation_atr_mult",
-                        atr=atr,
-                        point=point,
-                    )
+                mgmt_row = {
+                    "trailing": bool(pos.get("trail_active")),
+                    "partial_tp_done": bool(pos.get("partial_tp_done")),
+                }
+                rr = profit_rr(side, entry, float(pos.get("initial_sl") or sl_start), fav_price)
+                if tr["enabled"] and atr > 0 and trail_activation_allowed(
+                    mgmt_row,
+                    profit_rr_value=rr,
+                    profit_usd=profit_usd,
+                    profit_dist=profit,
+                    trail_sym=tr_sym,
+                    trail_cfg=tr_parent,
+                    atr=atr,
+                    point=point,
+                    config=self.config,
+                    exit_trigger_met=_exit_trigger_met,
                 ):
                     trail_dist = float(_trail_distance_price(tr_sym, tr_parent, atr, point))
+                    trail_dist *= trail_distance_multiplier(mgmt_row, self.config)
                     new_sl = float(pos["peak"]) - direction * trail_dist
                     improved = (side == "BUY" and new_sl > float(pos["sl"])) or (side == "SELL" and new_sl < float(pos["sl"]))
                     if improved:
@@ -444,7 +507,8 @@ class PaperBroker:
             exit_reason = None
             exit_price = price
             sl_now = float(pos["sl"])
-            tp1 = float(pos["tp1"])
+            tp_target = float(pos["tp1"])
+            tp2 = float(pos.get("tp2") or 0)
             if side == "BUY":
                 if adv_price <= sl_start:
                     # stop-first at the pre-step SL (original / prior BE / prior trail)
@@ -454,9 +518,16 @@ class PaperBroker:
                     # adverse hit this step's newly-raised SL but not the pre-step SL
                     exit_reason = "trailing_stop" if pos.get("trail_active") else "break_even_stop"
                     exit_price = sl_now
-                elif fav_price >= tp1 and not pos.get("be_triggered") and not pos.get("trail_active"):
+                elif pos.get("partial_tp_done") and tp2 > 0 and tp2_reached(side, fav_price, tp2):
                     exit_reason = "take_profit"
-                    exit_price = tp1
+                    exit_price = tp2
+                elif (
+                    not partial_tp_enabled(self.config)
+                    and fav_price >= tp_target
+                    and not pos.get("trail_active")
+                ):
+                    exit_reason = "take_profit"
+                    exit_price = tp_target
             else:
                 if adv_price >= sl_start:
                     exit_reason = ("trailing_stop" if trail_start else ("break_even_stop" if be_start else "stop_loss"))
@@ -464,9 +535,16 @@ class PaperBroker:
                 elif adv_price >= sl_now and (pos.get("be_triggered") or pos.get("trail_active")):
                     exit_reason = "trailing_stop" if pos.get("trail_active") else "break_even_stop"
                     exit_price = sl_now
-                elif fav_price <= tp1 and not pos.get("be_triggered") and not pos.get("trail_active"):
+                elif pos.get("partial_tp_done") and tp2 > 0 and tp2_reached(side, fav_price, tp2):
                     exit_reason = "take_profit"
-                    exit_price = tp1
+                    exit_price = tp2
+                elif (
+                    not partial_tp_enabled(self.config)
+                    and fav_price <= tp_target
+                    and not pos.get("trail_active")
+                ):
+                    exit_reason = "take_profit"
+                    exit_price = tp_target
 
             if exit_reason:
                 diff = exit_price - entry
@@ -475,7 +553,7 @@ class PaperBroker:
                 pnl = diff * pos["size"]
                 realized += pnl
                 meta = pos.get("signal_meta") or {}
-                exit_narrative = build_exit_narrative(side, entry, sl_now, tp1, exit_price, exit_reason, pnl)
+                exit_narrative = build_exit_narrative(side, entry, sl_now, tp_target, exit_price, exit_reason, pnl)
                 closed.append({**pos, "closed_at": utc_now_iso(),
                                "exit_price": exit_price, "exit_reason": exit_reason, "pnl": round(pnl, 2)})
                 trades.append(
@@ -488,7 +566,9 @@ class PaperBroker:
                         "entry": pos["entry"],
                         "exit": exit_price,
                         "sl": pos.get("sl"),
-                        "tp1": pos.get("tp1"),
+                        "tp1": tp_target,
+                        "tp2": pos.get("tp2"),
+                        "partial_tp_done": bool(pos.get("partial_tp_done")),
                         "pnl": round(pnl, 2),
                         "result": "win" if pnl > 0 else "loss",
                         "exit_reason": exit_reason,

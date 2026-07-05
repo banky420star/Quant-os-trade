@@ -55,6 +55,8 @@ def snapshot_signal_meta(
         "session": mc.get("session"),
         "phase": mc.get("phase"),
         "move_type": mc.get("move_type"),
+        "trigger_summary": signal.get("trigger_summary"),
+        "trigger_context": signal.get("trigger_context"),
     }
 
 

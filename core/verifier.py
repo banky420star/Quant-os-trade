@@ -9,12 +9,20 @@ from typing import Any
 from core.blue_guardian import blue_guardian_enabled, entry_gates
 from core.exposure import check_exposure_limits
 from core.account_mode import performance_gates_active
+from core.news_calendar import entry_allowed_by_news, news_context_at
+from core.positive_evolution import (
+    evaluate_cell_gate,
+    positive_evolution_active,
+    positive_evolution_settings,
+)
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
 from core.strategy_policy import culturing_cell_key, setup_allowed, symbol_rule, threshold_overrides
+from core.entry_staging import touch_and_check
 from core.trade_limits import (
     humanize_verifier_failure,
     is_duplicate_position,
     session_trade_capacity_available,
+    symbol_reentry_available,
     unlimited_trades,
 )
 from core.utils import read_json_state, utc_now_iso
@@ -59,6 +67,9 @@ class Verifier:
         # Loaded here so _verify_one is safe even if called outside verify_batch;
         # verify_batch refreshes it per run to pick up the latest veto.
         self._live_veto = read_json_state("symbol_policy_live.json", default={}) or {}
+        self._positive_evolution = read_json_state("positive_evolution.json", default={}) or {}
+        self._positive_evolution_cfg = positive_evolution_settings(config)
+        self._reference_time: Any = None
 
     def _max_open_confidence(self, active_signals: list[dict[str, Any]] | None) -> float | None:
         """Strongest confidence among currently-open positions.
@@ -97,8 +108,10 @@ class Verifier:
         spread_data: dict[str, float] | None = None,
         equity: float | None = None,
         closed_trades: list[dict[str, Any]] | None = None,
+        reference_time: Any = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Verify all candidates; return (approved, rejected)."""
+        self._reference_time = reference_time
         active_signals = active_signals or []
         closed_trades = closed_trades or []
         spread_data = spread_data or {}
@@ -115,6 +128,8 @@ class Verifier:
         # candidate whose (setup|regime|align|session) cell is in its symbol's
         # vetoed_cells is hard-rejected. Empty/missing -> permissive.
         self._live_veto = read_json_state("symbol_policy_live.json", default={}) or {}
+        if positive_evolution_active(self.config):
+            self._positive_evolution = read_json_state("positive_evolution.json", default={}) or {}
 
         for signal in candidates:
             feat = features.get(signal["symbol"], {})
@@ -215,9 +230,28 @@ class Verifier:
         vetoed_cells = set(sym_veto.get("vetoed_cells", []) or [])
         checks["data_driven_veto"] = veto_cell not in vetoed_cells
 
+        if self._positive_evolution_cfg.get("enabled"):
+            pe_ok, _pe_reason = evaluate_cell_gate(
+                self.config,
+                signal.get("symbol", ""),
+                veto_cell,
+                self._positive_evolution,
+            )
+            checks["positive_evolution"] = pe_ok
+        else:
+            checks["positive_evolution"] = True
+
         checks["valid_levels"] = self._check_valid_levels(signal)
         if symbol_rule_data.get("preferred_sessions"):
-            checks["preferred_session"] = mc.get("session") in set(symbol_rule_data["preferred_sessions"])
+            preferred_sessions = set(symbol_rule_data["preferred_sessions"])
+            in_preferred = mc.get("session") in preferred_sessions
+            # Preferred sessions are ranking bias, not a hard gate, unless a
+            # symbol explicitly opts into strict session filtering.
+            if bool(symbol_rule_data.get("strict_sessions", False)):
+                checks["preferred_session"] = in_preferred
+            else:
+                checks["preferred_session"] = True
+                checks["preferred_session_bias"] = in_preferred
         else:
             checks["preferred_session"] = True
         checks["confidence"] = signal.get("confidence", 0) >= eff_min_confidence
@@ -281,6 +315,12 @@ class Verifier:
             signal["symbol"],
             closed_trades,
         )
+        reentry_ok, _reentry_wait = symbol_reentry_available(
+            self.config, signal["symbol"], closed_trades,
+        )
+        checks["reentry_cooldown"] = reentry_ok
+        confirm = touch_and_check(signal, self.config)
+        checks["entry_confirm"] = bool(confirm.get("ready"))
         dyn_ok, adjusted_signal, dyn_reason = evaluate_dynamic_entry(
             self.config,
             signal,
@@ -293,6 +333,10 @@ class Verifier:
 
         checks["kill_switch_safe"] = not kill_switch
         checks["news_safe"] = self._check_news_blackout()
+        news_ctx = news_context_at(self._reference_time, self.config)
+        checks["macro_news_safe"] = bool(news_ctx.get("safe_for_entry", True))
+        if not checks["macro_news_safe"]:
+            checks["news_safe"] = False
         bg_code = None
         if blue_guardian_enabled(self.config):
             bg_ok, bg_code, _bg_details = entry_gates(self.config, active_signals, signal)
@@ -304,6 +348,8 @@ class Verifier:
         for name, passed in checks.items():
             if passed:
                 continue
+            if name == "preferred_session_bias":
+                continue
             if name == "blue_guardian_entry" and bg_code:
                 failure_codes.append(bg_code)
             elif name == "exposure_safe":
@@ -314,6 +360,8 @@ class Verifier:
                 failure_codes.append("session_misaligned")
             elif name == "data_driven_veto":
                 failure_codes.append("data_driven_veto")
+            elif name == "positive_evolution":
+                failure_codes.append("positive_evolution")
             else:
                 failure_codes.append(name)
 
@@ -402,27 +450,8 @@ class Verifier:
 
     def _check_news_blackout(self) -> bool:
         """Block new entries within +/- news_blackout_minutes of scheduled US
-        release times (UTC). The 14:30 UTC news spike crashed the account -57.6%
-        because there was no news gate; this is the fix. Wrap-aware minute
-        distance so a slot near midnight is handled correctly. Existing positions
-        are NOT flattened here (exits + give-back guard manage them); only NEW
-        entries are gated. Returns True (safe) when the gate is off or no slot
-        is within the window.
+        release times (UTC). Uses reference_time during replay, else live clock.
         """
-        if not self.avoid_news or not self.news_release_times_utc:
-            return True
-        now = datetime.now(timezone.utc)
-        now_min = now.hour * 60 + now.minute + now.second / 60.0
-        window = self.news_blackout_minutes
-        for t in self.news_release_times_utc:
-            try:
-                hh, mm = str(t).split(":")
-                rel = int(hh) * 60 + int(mm)
-            except (ValueError, AttributeError):
-                continue
-            dist = abs(now_min - rel)
-            dist = min(dist, 1440.0 - dist)  # wrap-aware
-            if dist <= window:
-                return False
-        return True
+        when = self._reference_time if self._reference_time is not None else datetime.now(timezone.utc)
+        return entry_allowed_by_news(when, self.config)
 

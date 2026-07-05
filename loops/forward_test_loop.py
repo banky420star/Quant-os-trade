@@ -29,6 +29,7 @@ from core.blue_guardian import (
     blue_guardian_settings,
     cell_loss_stats,
 )  # noqa: E402
+from core.positive_evolution import positive_evolution_active, refresh_positive_evolution  # noqa: E402
 from core.strategy_policy import KNOWN_SETUPS, culturing_cell_from_trade  # noqa: E402
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state  # noqa: E402
 
@@ -97,9 +98,15 @@ def build_ledger(
             if n >= min_n:
                 wr = float(stats.get("win_rate_pct", 0))
                 exp_net = float(stats.get("expectancy_net_r", 0))
-                if exp_net < 0 and wr < veto_wr:
+                pe_active = config and positive_evolution_active(config)
+                if pe_active and exp_net <= 0:
                     verdict = "vetoed"
                     sym_vetoed.append(cell)
+                elif exp_net < 0 and wr < veto_wr:
+                    verdict = "vetoed"
+                    sym_vetoed.append(cell)
+                elif exp_net > 0:
+                    verdict = "positive"
                 elif (
                     config
                     and blue_guardian_enabled(config)
@@ -157,6 +164,7 @@ def run() -> dict:
         "total_cells": ledger["total_cells"],
         "total_vetoed": ledger["total_vetoed"],
         "cells": ledger["cells"],
+        "vetoed": ledger["vetoed"],
     }
     write_json_state("forward_test_ledger.json", ledger_payload)
 
@@ -177,6 +185,9 @@ def run() -> dict:
         "symbols": policy_symbols,
     }
     write_json_state("symbol_policy_live.json", policy_payload)
+
+    if positive_evolution_active(config):
+        refresh_positive_evolution(config, ledger_cells=ledger["cells"], logger=logger)
 
     # Per-symbol ledger files under state/culturing/<symbol>.json — one
     # self-contained file per symbol so the dashboard can fetch a single

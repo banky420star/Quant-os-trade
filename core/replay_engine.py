@@ -19,6 +19,8 @@ from core.memory_engine import MemoryEngine
 from core.paper_broker import PaperBroker
 from core.trade_enrichment import enrich_trades
 from core.utils import utc_now_iso, write_json_state
+from core.growth_replay import GrowthReplayTracker
+from core.news_calendar import news_context_at
 from core.verifier import Verifier
 
 
@@ -76,6 +78,9 @@ class ReplayEngine:
         memory_state: dict[str, Any] = {"records": [], "adjustments": []}
         signals_generated = 0
         signals_approved = 0
+        news_blocked = 0
+        growth_blocked = 0
+        growth_tracker = GrowthReplayTracker(self.config, balance.get("equity", balance["cash"]))
 
         for i in range(start_idx, len(m5_df), step):
             m5_slice = m5_df.iloc[: i + 1]
@@ -114,6 +119,16 @@ class ReplayEngine:
             candidates = decision.generate_candidates(features, context, edge_scores)
             signals_generated += len(candidates)
 
+            growth_tracker.on_bar(bar_time, balance.get("equity", balance["cash"]))
+            if growth_tracker.should_block_entries():
+                growth_blocked += len(candidates)
+                candidates = []
+            else:
+                news_ctx = news_context_at(bar_time, self.config)
+                if not news_ctx.get("safe_for_entry", True):
+                    news_blocked += len(candidates)
+                    candidates = []
+
             approved, _rejected = verifier.verify_batch(
                 candidates,
                 features,
@@ -121,6 +136,7 @@ class ReplayEngine:
                 spread_data={symbol: 0.0},
                 equity=balance.get("equity", balance["cash"]),
                 closed_trades=trades,
+                reference_time=bar_time,
             )
             signals_approved += len(approved)
 
@@ -179,6 +195,9 @@ class ReplayEngine:
             "starting_cash": balance.get("starting_cash"),
             "trades": trades[-50:],
             "setup_stats": edge_scores.get("setup_stats", {}),
+            "news_blocked_signals": news_blocked,
+            "growth_blocked_signals": growth_blocked,
+            "growth_replay": growth_tracker.summary(balance.get("equity", 0)),
         }
         write_json_state("replay_results.json", output)
         self.logger.info(
@@ -278,6 +297,9 @@ def run_portfolio_replay(
     memory_state: dict[str, Any] = {"records": [], "adjustments": []}
     signals_generated = 0
     signals_approved = 0
+    news_blocked = 0
+    growth_blocked = 0
+    growth_tracker = GrowthReplayTracker(cfg, starting_cash)
 
     # --- Optional pre-registered BOCPD change-point gate (OFF by default). ---
     # When ``regime_gating/bocpd_enabled`` is true, a causal Adams-MacKay
@@ -402,6 +424,16 @@ def run_portfolio_replay(
                 kept.append(cand)
             candidates = kept
 
+        growth_tracker.on_bar(bar_time, balance.get("equity", balance["cash"]))
+        if growth_tracker.should_block_entries():
+            growth_blocked += len(candidates)
+            candidates = []
+        elif candidates:
+            news_ctx = news_context_at(bar_time, cfg)
+            if not news_ctx.get("safe_for_entry", True):
+                news_blocked += len(candidates)
+                candidates = []
+
         approved, _rejected = verifier.verify_batch(
             candidates,
             features,
@@ -409,6 +441,7 @@ def run_portfolio_replay(
             spread_data=spread_data or {sym: 0.0 for sym in prices},
             equity=balance.get("equity", balance["cash"]),
             closed_trades=trades,
+            reference_time=bar_time,
         )
         signals_approved += len(approved)
         if approved:
@@ -504,6 +537,9 @@ def run_portfolio_replay(
         "symbol_results": symbol_results,
         "trades": trades if return_all_trades else trades[-50:],
         "setup_stats": edge_scores.get("setup_stats", {}),
+        "news_blocked_signals": news_blocked,
+        "growth_blocked_signals": growth_blocked,
+        "growth_replay": growth_tracker.summary(balance.get("equity", 0)),
     }
     log.info(
         "Portfolio replay: %d bars, %d trades, PnL=%.2f across %d symbols",

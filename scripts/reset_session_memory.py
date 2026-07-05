@@ -57,6 +57,7 @@ def reset_session_memory() -> None:
     write_json_state("approved_signals.json", {"timestamp": now, "approved": []})
     write_json_state("rejected_signals.json", {"timestamp": now, "rejected": []})
     write_json_state("strategy_rankings.json", {"timestamp": now, "rankings": []})
+    write_json_state("strategy_arena.json", {})
 
     write_json_state("position_management.json", {"timestamp": now, "positions": {}})
 

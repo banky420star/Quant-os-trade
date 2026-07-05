@@ -12,7 +12,7 @@ from core.weight_defaults import SUBSYSTEM_WEIGHTS
 DEFAULT_WEIGHTS = dict(SUBSYSTEM_WEIGHTS)
 
 
-def load_weights(config: dict[str, Any]) -> dict[str, float]:
+def load_weights(config: dict[str, Any], symbol: str | None = None) -> dict[str, float]:
     """Load active weights: deployed adaptive > config override > defaults."""
     override = config.get("optimizer_weights") or config.get("_replay_weights")
     if override:
@@ -25,6 +25,12 @@ def load_weights(config: dict[str, Any]) -> dict[str, float]:
         return dict(DEFAULT_WEIGHTS)
 
     state = read_json_state("adaptive_weights.json", default={})
+    if symbol and state.get("deployed"):
+        per_sym = state.get("per_symbol") or {}
+        sym_doc = per_sym.get(symbol) or {}
+        if sym_doc.get("weights"):
+            return dict(sym_doc["weights"])
+
     if state.get("deployed") and state.get("weights"):
         return dict(state["weights"])
     return dict(DEFAULT_WEIGHTS)
@@ -134,8 +140,22 @@ class AdaptiveWeightOptimizer:
             "timestamp": utc_now_iso(),
             "deployed": True,
             "weights": candidate.get("weights", DEFAULT_WEIGHTS),
-            "source": "adaptive_optimizer",
+            "source": candidate.get("method", "adaptive_optimizer"),
             "trade_count": candidate.get("trade_count", 0),
         }
+        per_symbol = candidate.get("per_symbol")
+        if isinstance(per_symbol, dict):
+            sym_deployed = {}
+            for sym, doc in per_symbol.items():
+                if not isinstance(doc, dict) or doc.get("proposal") != "deploy":
+                    continue
+                if doc.get("weights"):
+                    sym_deployed[sym] = {
+                        "weights": doc["weights"],
+                        "improvement_pct": doc.get("improvement_pct"),
+                        "expectancy_usd": doc.get("candidate_expectancy_usd"),
+                    }
+            if sym_deployed:
+                deployed["per_symbol"] = sym_deployed
         write_json_state("adaptive_weights.json", deployed)
         return deployed

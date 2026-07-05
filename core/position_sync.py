@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.symbol_manager import logical_symbol
+from core.utils import read_json_state
 
 try:
     import MetaTrader5 as mt5
@@ -37,13 +38,19 @@ def fetch_mt5_agent_positions(
     if not positions:
         return []
 
+    open_times = read_json_state("position_open_times.json", default={}) or {}
+
     synced: list[dict[str, Any]] = []
     for pos in positions:
         if pos.magic != magic:
             continue
         setup_type = _setup_type_from_comment(pos.comment)
+        ticket = str(pos.ticket)
+        opened_at = open_times.get(ticket)
+        if not opened_at:
+            opened_at = datetime.fromtimestamp(int(pos.time), tz=timezone.utc).isoformat()
         synced.append({
-            "position_id": str(pos.ticket),
+            "position_id": ticket,
             "ticket": pos.ticket,
             "symbol": logical_symbol(pos.symbol),
             "broker_symbol": pos.symbol,
@@ -53,7 +60,7 @@ def fetch_mt5_agent_positions(
             "tp1": float(pos.tp),
             "size": float(pos.volume),
             "profit": float(pos.profit),
-            "opened_at": datetime.fromtimestamp(int(pos.time), tz=timezone.utc).isoformat(),
+            "opened_at": opened_at,
             "setup_type": setup_type,
             "magic": pos.magic,
             "comment": pos.comment,

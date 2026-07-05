@@ -127,16 +127,24 @@ def culturing_cell_key(
 
 def culturing_cell_from_trade(trade: dict[str, Any]) -> str:
     """Cell key for a closed-trade record (has market_context embedded)."""
-    mc = trade.get("market_context") or {}
+    meta = trade.get("signal_meta") or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    mc = trade.get("market_context") or meta.get("market_context") or {}
     if not isinstance(mc, dict):
         mc = {}
     reg = mc.get("market_regime") or {}
     if not isinstance(reg, dict):
         reg = {}
+    setup = normalize_setup_type(
+        trade.get("setup_type") or meta.get("setup_type"),
+        meta=meta,
+        market_context=mc,
+    )
     return culturing_cell_key(
-        trade.get("setup_type"),
-        reg.get("primary"),
-        reg.get("bias"),
-        trade.get("side"),
-        mc.get("session"),
+        setup,
+        reg.get("primary") or meta.get("regime_primary") or mc.get("regime"),
+        reg.get("bias") or meta.get("regime_bias"),
+        trade.get("side") or meta.get("side"),
+        mc.get("session") or meta.get("session"),
     )

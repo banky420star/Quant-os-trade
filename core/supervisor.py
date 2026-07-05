@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import traceback
@@ -10,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from core.utils import utc_now_iso, write_json_state
+from core.utils import read_json_state, utc_now_iso, write_json_state
 
 try:
     import psutil
@@ -129,6 +130,16 @@ class Supervisor:
                 "run_count": prev.get("run_count", 0) + 1,
                 "service": service_name,
             }
+        # Drop renamed/retired loops so stale bots cannot pollute supervisor.json.
+        if service_name == "trading_pipeline" and results.get("pipeline") == "complete":
+            from core.coordination import STALE_LOOPS
+
+            for stale in STALE_LOOPS:
+                self._loop_states.pop(stale, None)
+            active = set(results.keys())
+            for name in list(self._loop_states):
+                if name not in active:
+                    self._loop_states.pop(name, None)
 
     def _collect_system_metrics(self) -> dict[str, Any]:
         metrics: dict[str, Any] = {"cpu_pct": None, "memory_mb": None, "memory_pct": None}
@@ -144,8 +155,17 @@ class Supervisor:
             pass
         return metrics
 
+    def _owns_agent_lock(self) -> bool:
+        lock = read_json_state("agent_lock.json", default={}) or {}
+        lock_pid = int(lock.get("pid") or 0)
+        if not lock_pid:
+            return True
+        return lock_pid == os.getpid()
+
     def write_heartbeat(self) -> dict[str, Any]:
         """Persist supervisor state for dashboard consumption."""
+        if not self._owns_agent_lock():
+            return read_json_state("supervisor.json", default={}) or {}
         services = []
         for svc in self._services:
             s = svc.state
@@ -172,6 +192,7 @@ class Supervisor:
         payload = {
             "timestamp": utc_now_iso(),
             "started_at": self.started_at,
+            "agent_pid": os.getpid(),
             "version": self.version,
             "os_name": self.config.get("app", {}).get("display_name", "MT5 Quant OS"),
             "overall_status": overall,

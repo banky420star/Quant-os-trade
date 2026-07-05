@@ -133,7 +133,9 @@ def prune_open_times(active_tickets: set[str]) -> None:
 def position_age_seconds(position: dict[str, Any], open_times: dict[str, str] | None = None) -> float:
     open_times = open_times or _load_open_times()
     ticket = str(position.get("ticket") or position.get("position_id") or "")
-    raw = position.get("opened_at") or open_times.get(ticket)
+    # Agent-recorded UTC open time is authoritative; MT5 pos.time is broker-local
+    # and is often mislabeled as UTC (blocks SL mods via min_hold forever).
+    raw = open_times.get(ticket) or position.get("opened_at")
     if not raw:
         return 0.0
     try:
@@ -429,9 +431,8 @@ def evaluate_daily_state(
 
 
 def risk_per_trade_cap(config: dict[str, Any]) -> float | None:
-    if not blue_guardian_enabled(config):
-        return None
-    return blue_guardian_settings(config)["risk_per_trade_usd"]
+    from core.risk_cap import risk_per_trade_cap as _cap
+    return _cap(config)
 
 
 def max_lot_for_symbol(config: dict[str, Any], symbol: str, broker_max: float) -> float:

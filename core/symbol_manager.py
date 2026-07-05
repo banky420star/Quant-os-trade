@@ -28,6 +28,7 @@ ASSET_PATTERNS: dict[str, list[str]] = {
     "NAS100": [r"^NAS100m$", r"^NAS100\.?$", r"^USTEC", r"^NDX", r"^NAS100"],
     "UK100": [r"^UK100m$", r"^UK100\.?$", r"^FTSE", r"^UK100"],
     "FR40": [r"^FR40m$", r"^FR40\.?$", r"^GER40$", r"^CAC40", r"^AUS200$", r"GER40", r"FR40", r"CAC"],
+    "JP225": [r"^JP225m$", r"^JP225\.?$", r"^NI225", r"^JPN225", r"^N225", r"JP225", r"NI225"],
 }
 
 # Config logical key -> asset class
@@ -58,6 +59,8 @@ LOGICAL_ASSET_MAP: dict[str, str] = {
     "UK100": "UK100",
     "FR40m": "FR40",
     "FR40": "FR40",
+    "JP225m": "JP225",
+    "JP225": "JP225",
 }
 
 

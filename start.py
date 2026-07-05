@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import threading
@@ -50,8 +51,14 @@ def _print_banner(
     print("  ─────────────────────────────────────────")
     if mode:
         label = mode.get("label", "practice")
-        tag = {"practice": "PRACTICE", "growth": "GROWTH"}.get(label, "LIVE PLAN")
+        tag = {
+            "practice": "PRACTICE",
+            "growth": "GROWTH",
+            "micro_growth": "MICRO GROWTH",
+        }.get(label, "LIVE PLAN")
         print(f"  Mode: {tag} ({mode.get('account_mode', 'demo')} account)")
+        if mode.get("active_profile"):
+            print(f"  Profile: {mode['active_profile']}")
         print(f"  {mode.get('detail', '')}")
         print("  ─────────────────────────────────────────")
     services = [
@@ -120,9 +127,21 @@ def _start_dashboard(config: dict, logger) -> str | None:
     return url
 
 
-def start(once: bool = False) -> None:
+def _write_agent_lock() -> None:
+    write_json_state("agent_lock.json", {
+        "pid": os.getpid(),
+        "started_at": __import__("core.utils", fromlist=["utc_now_iso"]).utc_now_iso(),
+        "entry": "start.py",
+    })
+
+
+def start(once: bool = False, profile: str | None = None) -> None:
     global _shutdown
     ensure_dirs()
+    if profile:
+        from core.profile_launcher import set_active_profile
+        set_active_profile(profile)
+    _write_agent_lock()
     config = load_config()
     logger = setup_logger("quant_os", "system.log")
     app_cfg = config.get("app", {})
@@ -136,6 +155,8 @@ def start(once: bool = False) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     mode = runtime_mode_summary(config)
+    if config.get("active_profile"):
+        mode["active_profile"] = config["active_profile"]
     validate_runtime_profile(config)
     # USER-AUTHORIZED 2026-07-01: refuse to boot on the dangerous real+growth+
     # live-trading combination (the 2026-06-30 wipe scenario) and enforce the
@@ -215,5 +236,10 @@ def start(once: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MT5 Quant OS")
     parser.add_argument("--once", action="store_true", help="Run one pipeline cycle then exit")
+    parser.add_argument(
+        "--profile",
+        choices=["30", "100", "growth", "live"],
+        help="Account profile overlay (30, 100, growth, live)",
+    )
     args = parser.parse_args()
-    start(once=args.once)
+    start(once=args.once, profile=args.profile)

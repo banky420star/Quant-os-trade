@@ -51,7 +51,7 @@ def _signal(idx: int, symbol: str) -> dict:
 @pytest.fixture
 def mock_mt5(monkeypatch):
     mt5 = MagicMock()
-    account = MagicMock(login=488006, server="BlueGuardian-Server", balance=5000.0, equity=5000.0, trade_mode=2, trade_allowed=True)
+    account = MagicMock(login=123456789, server="Demo-Server", balance=5000.0, equity=5000.0, trade_mode=2, trade_allowed=True)
     terminal = MagicMock(trade_allowed=True)
     mt5.account_info.return_value = account
     mt5.terminal_info.return_value = terminal
