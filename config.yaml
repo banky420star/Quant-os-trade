@@ -24,9 +24,11 @@ app:
   display_name: MT5 Quant OS
   version: '1.0'
   loop_interval_seconds: 45
+  remote_access:
+    enabled: false
   dashboard:
     enabled: true
-    host: 0.0.0.0
+    host: 127.0.0.1
     port: 8080
     auto_open_browser: false
     refresh_seconds: 2

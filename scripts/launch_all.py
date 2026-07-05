@@ -115,8 +115,11 @@ def _spawn_detached(name: str, args: list[str], log_name: str) -> dict[str, Any]
         "stderr": subprocess.STDOUT,
     }
     if sys.platform == "win32":
+        create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         popen_kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | create_no_window
         )
     else:
         popen_kwargs["start_new_session"] = True
@@ -127,11 +130,14 @@ def _spawn_detached(name: str, args: list[str], log_name: str) -> dict[str, Any]
 
 def _tailscale_hint() -> str | None:
     try:
-        from core.remote_access import remote_access_info
-        info = remote_access_info(8080)
+        from core.utils import load_config
+        from core.remote_access import remote_access_info, tailscale_enabled
+        config = load_config()
+        if not tailscale_enabled(config):
+            return None
+        info = remote_access_info(8080, config)
         if info.get("tailscale_connected") and info.get("tailscale_ip"):
-            ip = info["tailscale_ip"]
-            return ip
+            return info["tailscale_ip"]
     except Exception:
         pass
     return None
@@ -140,7 +146,7 @@ def _tailscale_hint() -> str | None:
 def launch_all(
     *,
     profile: str | None = None,
-    open_browser: bool = True,
+    open_browser: bool = False,
     wait_seconds: float = 4.0,
 ) -> dict[str, Any]:
     killed = kill_quant_processes()
@@ -221,9 +227,9 @@ def main() -> int:
         help="Force profile (30, 100, growth, live). Omit for auto-detect from MT5.",
     )
     parser.add_argument(
-        "--no-browser",
+        "--open-browser",
         action="store_true",
-        help="Do not open the no-JS dashboard in the browser",
+        help="Open the no-JS dashboard in the browser after launch",
     )
     parser.add_argument(
         "--wait",
@@ -236,7 +242,7 @@ def main() -> int:
     os.chdir(ROOT)
     manifest = launch_all(
         profile=args.profile,
-        open_browser=not args.no_browser,
+        open_browser=args.open_browser,
         wait_seconds=args.wait,
     )
     _print_summary(manifest)

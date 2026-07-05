@@ -216,12 +216,10 @@ def start(once: bool = False, profile: str | None = None) -> None:
             logger.info("Practice session ready: %s", session_report)
 
     dash_port = int(config.get("app", {}).get("dashboard", {}).get("port", 8080))
-    remote = remote_access_info(dash_port)
+    remote = remote_access_info(dash_port, config)
     write_json_state("remote_access.json", remote)
 
     dashboard_url = _start_dashboard(config, logger)
-    if remote.get("tailscale_connected"):
-        dashboard_url = remote["dashboard_url"]
     _print_banner(app_cfg.get("version", "1.0"), dashboard_url, mode, remote)
 
     supervisor = Supervisor(config, logger)
