@@ -104,8 +104,13 @@ def _spawn_detached(name: str, args: list[str], log_name: str) -> dict[str, Any]
     log_handle.write(f"\n--- {name} started {utc_now_iso()} ---\n")
     log_handle.flush()
 
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+
     popen_kwargs: dict[str, Any] = {
         "cwd": ROOT,
+        "env": env,
         "stdout": log_handle,
         "stderr": subprocess.STDOUT,
     }

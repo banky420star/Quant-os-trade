@@ -31,6 +31,28 @@ from core.utils import ensure_dirs, load_config, setup_logger, write_json_state
 
 _shutdown = False
 
+
+def _configure_stdio() -> None:
+    """Avoid UnicodeEncodeError when logging to cp1252 consoles (Windows)."""
+    if sys.platform != "win32":
+        return
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def _safe_print(text: str) -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="replace").decode("ascii"))
+
+
 BANNER = r"""
  ███╗   ███╗████████╗███████╗     ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗     ██████╗ ███████╗
  ████╗ ████║╚══██╔══╝██╔════╝    ██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝    ██╔═══██╗██╔════╝
@@ -47,9 +69,9 @@ def _print_banner(
     mode: dict | None = None,
     remote: dict | None = None,
 ) -> None:
-    print(BANNER)
-    print(f"  MT5 QUANT OS v{version}")
-    print("  ─────────────────────────────────────────")
+    _safe_print(BANNER)
+    _safe_print(f"  MT5 QUANT OS v{version}")
+    _safe_print("  -----------------------------------------")
     if mode:
         label = mode.get("label", "practice")
         tag = {
@@ -57,18 +79,18 @@ def _print_banner(
             "growth": "GROWTH",
             "micro_growth": "MICRO GROWTH",
         }.get(label, "LIVE PLAN")
-        print(f"  Mode: {tag} ({mode.get('account_mode', 'demo')} account)")
+        _safe_print(f"  Mode: {tag} ({mode.get('account_mode', 'demo')} account)")
         if mode.get("active_profile"):
             src = mode.get("profile_source", "")
             src_tag = f" [{src}]" if src else ""
-            print(f"  Profile: {mode['active_profile']}{src_tag}")
+            _safe_print(f"  Profile: {mode['active_profile']}{src_tag}")
         if mode.get("account_login"):
-            print(
+            _safe_print(
                 f"  MT5 login: {mode['account_login']}  "
                 f"equity: ${float(mode.get('account_equity') or 0):.2f}"
             )
-        print(f"  {mode.get('detail', '')}")
-        print("  ─────────────────────────────────────────")
+        _safe_print(f"  {mode.get('detail', '')}")
+        _safe_print("  -----------------------------------------")
     services = [
         ("MT5 Connection", "pending"),
         ("Dashboard", dashboard_url or "starting…"),
@@ -78,14 +100,14 @@ def _print_banner(
         ("Health Monitor", "active"),
     ]
     for label, status in services:
-        print(f"  ✓ {label:<22} {status}")
+        _safe_print(f"  OK {label:<22} {status}")
     if remote and remote.get("tailscale_connected"):
-        print("  ─────────────────────────────────────────")
-        print("  Phone (Tailscale)")
-        print(f"  Dashboard  {remote['dashboard_url']}")
-        print(f"  MT5 / RDP  {remote['rdp_target']}  (Microsoft Remote Desktop app)")
-    print("  ─────────────────────────────────────────")
-    print("  Listening…  (Ctrl+C to stop)\n")
+        _safe_print("  -----------------------------------------")
+        _safe_print("  Phone (Tailscale)")
+        _safe_print(f"  Dashboard  {remote['dashboard_url']}")
+        _safe_print(f"  MT5 / RDP  {remote['rdp_target']}  (Microsoft Remote Desktop app)")
+    _safe_print("  -----------------------------------------")
+    _safe_print("  Listening...  (Ctrl+C to stop)\n")
 
 
 def _handle_signal(signum, frame) -> None:
@@ -145,6 +167,7 @@ def _write_agent_lock() -> None:
 
 def start(once: bool = False, profile: str | None = None) -> None:
     global _shutdown
+    _configure_stdio()
     ensure_dirs()
     logger = setup_logger("quant_os", "system.log")
     selection = auto_select_profile(explicit=profile, logger=logger)
