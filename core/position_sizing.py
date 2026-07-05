@@ -75,7 +75,12 @@ def calc_executable_volume(
     Mirror MT5 broker lot sizing including min-lot bump, exposure caps, and
     per-trade USD stop-loss cap. Returns (volume, details); volume 0 = not executable.
     """
-    from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits, position_notional
+    from core.exposure import (
+        calc_risk_based_size,
+        cap_size_to_exposure_limits,
+        position_exposure_usd,
+        position_notional,
+    )
 
     positions = list(open_positions or [])
     exec_cfg = config.get("execution", {})
@@ -120,6 +125,8 @@ def calc_executable_volume(
         positions,
         config,
         min_size=vmin,
+        sl=sl,
+        symbol_spec=symbol_spec,
     )
     details: dict[str, Any] = {
         "ideal_size": round(ideal, 4),
@@ -139,8 +146,8 @@ def calc_executable_volume(
         risk_cfg = config.get("risk", {})
         max_symbol = float(risk_cfg.get("max_symbol_exposure_usd", equity))
         max_total = float(risk_cfg.get("max_total_exposure_usd", equity))
-        vmin_notional = position_notional(entry, vmin)
-        if vmin_notional > max_symbol + 0.01 or vmin_notional > max_total + 0.01:
+        vmin_exposure = position_exposure_usd(entry, vmin, sl=sl, symbol_spec=symbol_spec)
+        if vmin_exposure > max_symbol + 0.01 or vmin_exposure > max_total + 0.01:
             details["reject_reason"] = "min_lot_notional_exceeds_exposure"
             return 0.0, details
         vol = vmin

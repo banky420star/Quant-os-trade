@@ -50,6 +50,55 @@ def test_exposure_used_pct():
     assert exposure_used_pct(150.0, 100.0) == 100.0
 
 
+def test_micro_xau_passes_risk_exposure_not_price_notional(config):
+    """Min-lot gold must not be blocked by price×lot notional on a ~$37 account."""
+    config["execution"]["mode"] = "mt5"
+    config["practice"] = {
+        "micro": {
+            "enabled": True,
+            "max_loss_per_trade_usd": 21,
+            "cap_loss_to_balance": True,
+            "max_symbol_exposure_fraction": 0.60,
+            "max_total_exposure_fraction": 0.75,
+            "account_size_usd": 37,
+            "symbol_rules": {
+                "XAUUSDm": {"max_loss_per_trade_usd": 21},
+            },
+        }
+    }
+    config["signals"]["symbol_rules"] = {}
+    config["risk"]["max_symbol_exposure_usd"] = round(37.23 * 0.60, 2)
+    config["risk"]["max_total_exposure_usd"] = round(37.23 * 0.75, 2)
+    signal = {
+        "signal_id": "xau-exp-test",
+        "symbol": "XAUUSDm",
+        "side": "BUY",
+        "setup_type": "pullback",
+        "entry": 4187.435,
+        "sl": 4167.0,
+        "tp1": 4210.0,
+        "confidence": 82,
+    }
+    spec = {
+        "volume_min": 0.01,
+        "volume_step": 0.01,
+        "trade_tick_value": 0.1,
+        "trade_tick_size": 0.001,
+        "point": 0.001,
+    }
+    ok, details = check_exposure_limits(
+        [],
+        signal,
+        equity=37.23,
+        config=config,
+        balance=37.23,
+        symbol_specs={"XAUUSDm": spec},
+    )
+    assert ok is True
+    assert details.get("executable_volume") == 0.01
+    assert details.get("projected_notional", 0) < 25
+
+
 def test_verifier_rejects_min_lot_stop_risk_exceeds_cap(config):
     config["execution"]["mode"] = "mt5"
     config["practice"] = {
@@ -62,6 +111,7 @@ def test_verifier_rejects_min_lot_stop_risk_exceeds_cap(config):
             "account_size_usd": 37,
         }
     }
+    config["signals"]["symbol_rules"] = {}
     config["risk"]["max_symbol_exposure_usd"] = 500
     config["risk"]["max_total_exposure_usd"] = 500
     config["risk"]["max_loss_per_trade_usd"] = 10

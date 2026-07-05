@@ -33,7 +33,8 @@ practice:
     daily_target_pct: 20
     max_daily_loss_pct: 10
     max_drawdown_pct: 20
-    max_symbol_exposure_fraction: 0.50
+    # Exposure caps use stop-loss USD (not price×lot) — fit one min-lot XAU position
+    max_symbol_exposure_fraction: 0.75
     max_total_exposure_fraction: 0.75
     max_session_trades_per_symbol: 6
     max_loss_per_trade_usd: 10
@@ -58,8 +59,8 @@ practice:
         preferred_setups: [pullback]
         preferred_sessions: [rollover, tokyo]
         strict_sessions: false
-        # Broker min lot (0.01) stop risk ~$21 on typical pullback SL
-        max_loss_per_trade_usd: 21
+        # Broker min lot (0.01); volatile pullback SL can reach ~$27 on live gold
+        max_loss_per_trade_usd: 28
       USOILm:
         allowed_setups: [pullback]
         preferred_setups: [pullback]
