@@ -3,9 +3,9 @@ title MT5 Quant OS
 cd /d "%~dp0"
 call scripts\kill_agent.bat
 echo.
-echo  Starting MT5 Quant OS — auto-detects profile from logged-in MT5 account
+echo  Starting MT5 Quant OS — bot only (use LAUNCH.bat for bot + all dashboards)
+echo  Full stack: LAUNCH.bat
 echo  Override: python start.py --profile 30
-echo  Variants: start30.bat, start100.bat, start_growth.bat
 echo.
 python start.py
 if errorlevel 1 (
