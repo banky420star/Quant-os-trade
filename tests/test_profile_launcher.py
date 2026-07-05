@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import os
 
-from core.profile_launcher import list_profiles, set_active_profile
+from core.profile_launcher import (
+    auto_select_profile,
+    list_profiles,
+    resolve_profile_for_account,
+    set_active_profile,
+)
 from core.utils import load_config
 
 
@@ -57,6 +62,54 @@ def test_profile_30_c2_loads_adaptive_evolution():
         assert c["execution"]["starting_cash"] == 30
     finally:
         os.environ.pop("MT5_QUANT_PROFILE", None)
+
+
+def test_resolve_profile_demo_30():
+    assert resolve_profile_for_account({"account_mode": "demo", "equity": 30}) == "30"
+    assert resolve_profile_for_account({"account_mode": "demo", "balance": 50}) == "30"
+
+
+def test_resolve_profile_demo_100():
+    assert resolve_profile_for_account({"account_mode": "demo", "equity": 100}) == "100"
+
+
+def test_resolve_profile_demo_growth():
+    assert resolve_profile_for_account({"account_mode": "demo", "equity": 500}) == "growth"
+
+
+def test_resolve_profile_real_live():
+    assert resolve_profile_for_account({"account_mode": "real", "equity": 30}) == "live"
+
+
+def test_auto_select_from_account_json(monkeypatch):
+    monkeypatch.delenv("MT5_QUANT_PROFILE", raising=False)
+
+    def _fake_probe(**_kwargs):
+        return None
+
+    monkeypatch.setattr("core.profile_launcher.probe_logged_in_account", _fake_probe)
+    monkeypatch.setattr(
+        "core.profile_launcher.read_json_state",
+        lambda name, default=None: {
+            "login": 435656990,
+            "equity": 28.5,
+            "account_mode": "demo",
+        } if name == "account.json" else (default or {}),
+    )
+    result = auto_select_profile()
+    assert result["profile"] == "30"
+    assert result["source"] == "account_json"
+
+
+def test_auto_select_explicit_cli_overrides_probe(monkeypatch):
+    monkeypatch.delenv("MT5_QUANT_PROFILE", raising=False)
+    monkeypatch.setattr(
+        "core.profile_launcher.probe_logged_in_account",
+        lambda **_kwargs: {"login": 1, "equity": 5000, "account_mode": "demo"},
+    )
+    result = auto_select_profile(explicit="30")
+    assert result["profile"] == "30"
+    assert result["source"] == "cli"
 
 
 def test_profile_growth_disables_micro():

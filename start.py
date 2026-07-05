@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.account_mode import performance_gates_active, runtime_mode_summary, validate_runtime_profile
+from core.profile_launcher import apply_logged_in_account_mode, auto_select_profile
 from core.profile_guard import assert_profile
 from core.remote_access import remote_access_info
 from core.practice_session import ensure_practice_session
@@ -58,7 +59,14 @@ def _print_banner(
         }.get(label, "LIVE PLAN")
         print(f"  Mode: {tag} ({mode.get('account_mode', 'demo')} account)")
         if mode.get("active_profile"):
-            print(f"  Profile: {mode['active_profile']}")
+            src = mode.get("profile_source", "")
+            src_tag = f" [{src}]" if src else ""
+            print(f"  Profile: {mode['active_profile']}{src_tag}")
+        if mode.get("account_login"):
+            print(
+                f"  MT5 login: {mode['account_login']}  "
+                f"equity: ${float(mode.get('account_equity') or 0):.2f}"
+            )
         print(f"  {mode.get('detail', '')}")
         print("  ─────────────────────────────────────────")
     services = [
@@ -138,12 +146,20 @@ def _write_agent_lock() -> None:
 def start(once: bool = False, profile: str | None = None) -> None:
     global _shutdown
     ensure_dirs()
-    if profile:
-        from core.profile_launcher import set_active_profile
-        set_active_profile(profile)
+    logger = setup_logger("quant_os", "system.log")
+    selection = auto_select_profile(explicit=profile, logger=logger)
+    if selection.get("account"):
+        write_json_state("profile_selection.json", {
+            "profile": selection["profile"],
+            "source": selection["source"],
+            "account_login": selection["account"].get("login"),
+            "account_mode": selection["account"].get("account_mode"),
+            "equity": selection["account"].get("equity") or selection["account"].get("balance"),
+            "selected_at": __import__("core.utils", fromlist=["utc_now_iso"]).utc_now_iso(),
+        })
     _write_agent_lock()
     config = load_config()
-    logger = setup_logger("quant_os", "system.log")
+    config = apply_logged_in_account_mode(config, selection.get("account"))
     app_cfg = config.get("app", {})
     sup_cfg = app_cfg.get("supervisor", {})
 
@@ -157,6 +173,12 @@ def start(once: bool = False, profile: str | None = None) -> None:
     mode = runtime_mode_summary(config)
     if config.get("active_profile"):
         mode["active_profile"] = config["active_profile"]
+    mode["profile_source"] = selection.get("source")
+    if selection.get("account"):
+        mode["account_login"] = selection["account"].get("login")
+        mode["account_equity"] = (
+            selection["account"].get("equity") or selection["account"].get("balance")
+        )
     validate_runtime_profile(config)
     # USER-AUTHORIZED 2026-07-01: refuse to boot on the dangerous real+growth+
     # live-trading combination (the 2026-06-30 wipe scenario) and enforce the
@@ -238,8 +260,11 @@ if __name__ == "__main__":
     parser.add_argument("--once", action="store_true", help="Run one pipeline cycle then exit")
     parser.add_argument(
         "--profile",
-        choices=["30", "100", "growth", "live"],
-        help="Account profile overlay (30, 100, growth, live)",
+        default=None,
+        help=(
+            "Profile overlay (30, 100, growth, live, 30-c1, etc.). "
+            "Omit or pass 'auto' to detect from the logged-in MT5 account."
+        ),
     )
     args = parser.parse_args()
     start(once=args.once, profile=args.profile)
