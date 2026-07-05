@@ -59,8 +59,8 @@ practice:
         preferred_setups: [pullback]
         preferred_sessions: [rollover, tokyo]
         strict_sessions: false
-        # Broker min lot (0.01); volatile pullback SL can reach ~$27 on live gold
-        max_loss_per_trade_usd: 28
+        # Broker min lot (0.01); volatile pullback SL can reach ~$30 on live gold
+        max_loss_per_trade_usd: 30
       USOILm:
         allowed_setups: [pullback]
         preferred_setups: [pullback]

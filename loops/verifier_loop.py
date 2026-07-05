@@ -187,18 +187,34 @@ def run() -> dict | None:
     orders_data = read_json_state("paper_orders.json", default={"balance": {}})
     account_data = read_json_state("account.json", default={})
     balance = orders_data.get("balance", {})
-    equity = float(
-        balance.get("equity")
-        or account_data.get("equity")
-        or balance.get("cash")
-        or account_data.get("balance")
-        or config["execution"].get("starting_cash", 1000)
-    )
-    acct_balance = float(
-        account_data.get("balance")
-        or balance.get("cash")
-        or equity
-    )
+    live_mt5 = config.get("execution", {}).get("mode") == "mt5"
+    if live_mt5:
+        # Prefer fresh MT5 account.json over stale paper_orders balance on live runs.
+        equity = float(
+            account_data.get("equity")
+            or account_data.get("balance")
+            or balance.get("equity")
+            or balance.get("cash")
+            or config["execution"].get("starting_cash", 1000)
+        )
+        acct_balance = float(
+            account_data.get("balance")
+            or balance.get("cash")
+            or equity
+        )
+    else:
+        equity = float(
+            balance.get("equity")
+            or account_data.get("equity")
+            or balance.get("cash")
+            or account_data.get("balance")
+            or config["execution"].get("starting_cash", 1000)
+        )
+        acct_balance = float(
+            account_data.get("balance")
+            or balance.get("cash")
+            or equity
+        )
     symbol_specs = _collect_symbol_specs(config, logger)
 
     trades_data = read_json_state("paper_trades.json", default={"trades": []})
