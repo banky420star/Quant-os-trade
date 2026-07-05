@@ -107,8 +107,10 @@ class Verifier:
         kill_switch: bool = False,
         spread_data: dict[str, float] | None = None,
         equity: float | None = None,
+        balance: float | None = None,
         closed_trades: list[dict[str, Any]] | None = None,
         reference_time: Any = None,
+        symbol_specs: dict[str, dict[str, float]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Verify all candidates; return (approved, rejected)."""
         self._reference_time = reference_time
@@ -118,8 +120,12 @@ class Verifier:
         features = features_data.get("symbols", {})
         if equity is None:
             equity = float(self.config.get("execution", {}).get("starting_cash", 1000))
+        if balance is None:
+            balance = equity
 
         approved: list[dict[str, Any]] = []
+        self._symbol_specs = symbol_specs
+        self._verify_balance = balance
         rejected: list[dict[str, Any]] = []
 
         # USER-AUTHORIZED 2026-07-01: data-driven per-symbol veto. Loaded once
@@ -283,7 +289,14 @@ class Verifier:
             exposure_ok, exposure_details = True, {"unlimited_trades": True}
             checks["exposure_safe"] = True
         else:
-            exposure_ok, exposure_details = check_exposure_limits(active_signals, signal, equity, self.config)
+            exposure_ok, exposure_details = check_exposure_limits(
+                active_signals,
+                signal,
+                equity,
+                self.config,
+                balance=getattr(self, "_verify_balance", equity),
+                symbol_specs=getattr(self, "_symbol_specs", None),
+            )
             checks["exposure_safe"] = exposure_ok
             if not exposure_ok:
                 failures.append("exposure_limit_exceeded")

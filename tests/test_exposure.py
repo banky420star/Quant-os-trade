@@ -50,6 +50,52 @@ def test_exposure_used_pct():
     assert exposure_used_pct(150.0, 100.0) == 100.0
 
 
+def test_verifier_rejects_min_lot_stop_risk_exceeds_cap(config):
+    config["execution"]["mode"] = "mt5"
+    config["practice"] = {
+        "micro": {
+            "enabled": True,
+            "max_loss_per_trade_usd": 10,
+            "cap_loss_to_balance": True,
+            "max_symbol_exposure_fraction": 0.5,
+            "max_total_exposure_fraction": 0.75,
+            "account_size_usd": 37,
+        }
+    }
+    config["risk"]["max_symbol_exposure_usd"] = 500
+    config["risk"]["max_total_exposure_usd"] = 500
+    config["risk"]["max_loss_per_trade_usd"] = 10
+    config["trading"]["dynamic_entries"] = {"enabled": False}
+    config["trading"]["max_open_per_symbol"] = 1
+    signal = {
+        "signal_id": "xau-cap-test",
+        "symbol": "XAUUSDm",
+        "side": "BUY",
+        "setup_type": "pullback",
+        "entry": 4174.661,
+        "sl": 4153.83489,
+        "tp1": 4207.98,
+        "confidence": 82,
+    }
+    spec = {
+        "volume_min": 0.01,
+        "volume_step": 0.01,
+        "trade_tick_value": 0.1,
+        "trade_tick_size": 0.001,
+        "point": 0.001,
+    }
+    ok, details = check_exposure_limits(
+        [],
+        signal,
+        equity=37.74,
+        config=config,
+        balance=37.74,
+        symbol_specs={"XAUUSDm": spec},
+    )
+    assert ok is False
+    assert details.get("reject_reason") == "min_lot_stop_risk_exceeds_cap"
+
+
 def test_verifier_rejects_exposure_limit_exceeded(config):
     config["trading"]["dynamic_entries"] = {"enabled": False}
     config["trading"]["max_open_per_symbol"] = 5

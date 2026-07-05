@@ -89,13 +89,14 @@ def sync_practice_gates(config: dict[str, Any]) -> dict[str, Any]:
         if "min_volume_ratio" in practice:
             filters["min_volume_ratio"] = float(practice["min_volume_ratio"])
         risk["max_drawdown_pct"] = float(practice.get("max_drawdown_pct", 25))
-        equity_cap = float(config.get("execution", {}).get("starting_cash", 100))
-        risk["max_symbol_exposure_usd"] = float(
-            practice.get("max_symbol_exposure_usd", equity_cap)
-        )
-        risk["max_total_exposure_usd"] = float(
-            practice.get("max_total_exposure_usd", equity_cap)
-        )
+        if not micro_profile_enabled(config):
+            equity_cap = float(config.get("execution", {}).get("starting_cash", 100))
+            risk["max_symbol_exposure_usd"] = float(
+                practice.get("max_symbol_exposure_usd", equity_cap)
+            )
+            risk["max_total_exposure_usd"] = float(
+                practice.get("max_total_exposure_usd", equity_cap)
+            )
 
     if "require_top_ranked_setup" in practice and not growth_on:
         quant["require_top_ranked_setup"] = bool(practice["require_top_ranked_setup"])

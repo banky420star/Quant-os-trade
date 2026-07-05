@@ -7,8 +7,27 @@ from typing import Any
 from core.blue_guardian import blue_guardian_enabled, blue_guardian_settings
 
 
-def risk_per_trade_cap(config: dict[str, Any]) -> float | None:
+def _symbol_loss_cap(config: dict[str, Any], symbol: str | None) -> float | None:
+    if not symbol:
+        return None
+    for rules_key in ("signals", "practice"):
+        sym_rules = (config.get(rules_key) or {}).get("symbol_rules") or {}
+        rule = sym_rules.get(symbol) or {}
+        if rule.get("max_loss_per_trade_usd") is not None:
+            return float(rule["max_loss_per_trade_usd"])
+    micro = (config.get("practice") or {}).get("micro") or {}
+    micro_rule = (micro.get("symbol_rules") or {}).get(symbol) or {}
+    if micro_rule.get("max_loss_per_trade_usd") is not None:
+        return float(micro_rule["max_loss_per_trade_usd"])
+    return None
+
+
+def risk_per_trade_cap(config: dict[str, Any], symbol: str | None = None) -> float | None:
     """Max dollars at risk on a single trade (stop-loss distance × size)."""
+    sym_cap = _symbol_loss_cap(config, symbol)
+    if sym_cap is not None:
+        return sym_cap
+
     if blue_guardian_enabled(config):
         return float(blue_guardian_settings(config)["risk_per_trade_usd"])
 
@@ -38,9 +57,9 @@ def cap_loss_to_balance_enabled(config: dict[str, Any]) -> bool:
     return bool(trading.get("cap_loss_to_balance", False))
 
 
-def effective_risk_cap(config: dict[str, Any], balance: float) -> float | None:
+def effective_risk_cap(config: dict[str, Any], balance: float, *, symbol: str | None = None) -> float | None:
     """USD risk budget for one trade — never above balance when capped."""
-    base = risk_per_trade_cap(config)
+    base = risk_per_trade_cap(config, symbol=symbol)
     bal = max(0.0, float(balance))
     if not cap_loss_to_balance_enabled(config):
         return base

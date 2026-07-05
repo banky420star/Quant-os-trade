@@ -11,6 +11,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.mt5_client import MT5Client, format_mt5_connection_error, log_session_alignment
+from core.position_sizing import symbol_spec_from_mt5
+from core.symbol_manager import broker_symbol
 from core.mt5_connection_manager import MT5ConnectionManager
 from core.position_sync import fetch_mt5_agent_positions
 from core.trade_limits import enrich_positions_with_orders
@@ -99,6 +101,33 @@ def _collect_spread_data(
     return spread_data, source
 
 
+def _collect_symbol_specs(
+    config: dict[str, Any],
+    logger,
+) -> dict[str, dict[str, float]]:
+    """Live broker contract specs for executable sizing (falls back in exposure layer)."""
+    if config.get("execution", {}).get("mode") != "mt5":
+        return {}
+    specs: dict[str, dict[str, float]] = {}
+    client = MT5Client(config, logger)
+    try:
+        import MetaTrader5 as mt5
+
+        client.connect()
+        for symbol in config["mt5"]["symbols"]:
+            broker = broker_symbol(symbol)
+            if not mt5.symbol_select(broker, True):
+                continue
+            info = mt5.symbol_info(broker)
+            if info is not None:
+                specs[symbol] = symbol_spec_from_mt5(info)
+    except (ConnectionError, OSError, RuntimeError) as exc:
+        logger.warning("Symbol spec fetch failed (%s) — using defaults", exc)
+    finally:
+        client.disconnect()
+    return specs
+
+
 def _collect_active_positions(
     config: dict[str, Any],
     logger,
@@ -165,6 +194,12 @@ def run() -> dict | None:
         or account_data.get("balance")
         or config["execution"].get("starting_cash", 1000)
     )
+    acct_balance = float(
+        account_data.get("balance")
+        or balance.get("cash")
+        or equity
+    )
+    symbol_specs = _collect_symbol_specs(config, logger)
 
     trades_data = read_json_state("paper_trades.json", default={"trades": []})
     closed_trades = list(trades_data.get("trades", []))
@@ -177,7 +212,9 @@ def run() -> dict | None:
         kill_switch=kill_data.get("kill_switch", False),
         spread_data=spread_data,
         equity=equity,
+        balance=acct_balance,
         closed_trades=closed_trades,
+        symbol_specs=symbol_specs or None,
     )
 
     meta = {

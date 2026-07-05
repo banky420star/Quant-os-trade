@@ -47,6 +47,17 @@ def test_micro_runtime_mode_label():
     assert "XAUUSDm" in mode["detail"]
 
 
+def test_practice_gates_do_not_override_micro_exposure():
+    config = _load_micro_config()
+    from core.practice_session import sync_practice_gates
+
+    config["practice"]["max_symbol_exposure_usd"] = 80
+    config["practice"]["max_total_exposure_usd"] = 80
+    sync_practice_gates(config)
+    assert config["risk"]["max_symbol_exposure_usd"] == 12.0
+    assert config["risk"]["max_total_exposure_usd"] == 18.0
+
+
 def test_micro_disabled_is_noop():
     config = {"practice": {"micro": {"enabled": False, "symbols": ["XAUUSDm"]}}}
     before = copy.deepcopy(config)

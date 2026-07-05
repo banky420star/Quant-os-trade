@@ -71,6 +71,9 @@ def check_exposure_limits(
     signal: dict[str, Any],
     equity: float,
     config: dict[str, Any],
+    *,
+    balance: float | None = None,
+    symbol_specs: dict[str, dict[str, float]] | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """
     Check whether a new signal would exceed exposure limits.
@@ -109,15 +112,34 @@ def check_exposure_limits(
     sl = float(signal.get("sl", 0))
     symbol = signal["symbol"]
 
-    ideal_size = calc_risk_based_size(equity, risk_pct, entry, sl, max_size=max_lot)
-    capped_size, allowed = cap_size_to_exposure_limits(
-        ideal_size,
-        entry,
-        symbol,
-        positions,
-        config,
-    )
-    projected_notional = position_notional(entry, capped_size)
+    bal = float(balance if balance is not None else equity)
+    from core.position_sizing import calc_executable_volume, requires_executable_sizing, resolve_symbol_spec
+
+    if requires_executable_sizing(config):
+        spec = resolve_symbol_spec(symbol, config, overrides=symbol_specs)
+        exec_vol, exec_details = calc_executable_volume(
+            signal,
+            equity=equity,
+            balance=bal,
+            config=config,
+            symbol_spec=spec,
+            open_positions=positions,
+        )
+        ideal_size = float(exec_details.get("ideal_size", 0))
+        capped_size = exec_vol
+        allowed = exec_vol > 0
+        projected_notional = position_notional(entry, capped_size) if capped_size > 0 else 0.0
+    else:
+        ideal_size = calc_risk_based_size(equity, risk_pct, entry, sl, max_size=max_lot)
+        capped_size, allowed = cap_size_to_exposure_limits(
+            ideal_size,
+            entry,
+            symbol,
+            positions,
+            config,
+        )
+        projected_notional = position_notional(entry, capped_size)
+        exec_details = {}
 
     symbol_exp, total_exp = exposure_from_positions(positions)
     current_symbol = symbol_exp.get(symbol, 0.0)
@@ -144,9 +166,15 @@ def check_exposure_limits(
         "exposure_allowed": allowed,
         "kelly": kelly,
         "risk_percent": risk_pct,
+        "executable_volume": capped_size if requires_executable_sizing(config) else None,
     }
+    if exec_details:
+        details.update({k: v for k, v in exec_details.items() if k not in details})
 
-    return symbol_ok and total_ok, details
+    ok = allowed and symbol_ok and total_ok
+    if requires_executable_sizing(config) and capped_size <= 0:
+        ok = False
+    return ok, details
 
 
 def cap_size_to_exposure_limits(

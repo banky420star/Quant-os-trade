@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.utils import read_json_state
+
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
@@ -22,6 +24,18 @@ def micro_profile_enabled(config: dict[str, Any]) -> bool:
 
 def micro_settings(config: dict[str, Any]) -> dict[str, Any]:
     return dict((config.get("practice") or {}).get("micro") or {})
+
+
+def micro_reference_equity(config: dict[str, Any]) -> float:
+    """Sizing reference: live MT5 balance on micro-live, else configured account_size_usd."""
+    micro = micro_settings(config)
+    if bool(micro.get("live_mode", False)):
+        account = read_json_state("account.json", default={})
+        for key in ("equity", "balance"):
+            val = account.get(key)
+            if val is not None and float(val) > 0:
+                return float(val)
+    return float(micro.get("account_size_usd", 30))
 
 
 def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:
@@ -87,7 +101,7 @@ def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:
     if micro.get("default_lot") is not None:
         exec_cfg["default_lot"] = float(micro["default_lot"])
 
-    ref_equity = float(micro.get("account_size_usd", 30))
+    ref_equity = micro_reference_equity(config)
     sym_frac = float(micro.get("max_symbol_exposure_fraction", 0.40))
     total_frac = float(micro.get("max_total_exposure_fraction", 0.60))
     risk["max_symbol_exposure_usd"] = round(ref_equity * sym_frac, 2)
@@ -127,10 +141,13 @@ def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:
         signals["symbol_rules"] = base_rules
 
     if live_mode:
-        ref_equity = float(micro.get("account_size_usd", 30))
         exec_cfg["starting_cash"] = ref_equity
         if micro.get("aggressive_mode"):
             trading["aggressive_mode"] = True
+        arena = config.setdefault("strategy_arena", {})
+        if micro.get("disable_arena", True):
+            arena["enabled"] = False
+            arena["symbols"] = symbols or arena.get("symbols") or []
 
     config["micro_profile_active"] = True
     config["micro_live_mode"] = live_mode

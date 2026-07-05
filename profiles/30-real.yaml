@@ -1,4 +1,4 @@
-# $30–$150 real-money micro — aggressive edge sessions, no growth campaign
+# Real-money micro — live equity sizing, aligned verifier/execution gates
 label: "$30 Micro Live"
 description: "REAL account micro — XAU/Oil/UK100, 0.01 lot, $10 max loss, positive-evolution"
 mode: live
@@ -20,7 +20,9 @@ practice:
     live_mode: true
     growth_enabled: false
     aggressive_mode: true
-    account_size_usd: 40
+    disable_arena: true
+    # Live equity read from state/account.json at runtime (fallback if missing)
+    account_size_usd: 37
     symbols: [XAUUSDm, USOILm, UK100m]
     max_open_per_symbol: 1
     max_open_per_setup: 1
@@ -31,8 +33,8 @@ practice:
     daily_target_pct: 20
     max_daily_loss_pct: 10
     max_drawdown_pct: 20
-    max_symbol_exposure_fraction: 0.40
-    max_total_exposure_fraction: 0.60
+    max_symbol_exposure_fraction: 0.50
+    max_total_exposure_fraction: 0.75
     max_session_trades_per_symbol: 6
     max_loss_per_trade_usd: 10
     cap_loss_to_balance: true
@@ -56,6 +58,8 @@ practice:
         preferred_setups: [pullback]
         preferred_sessions: [rollover, tokyo]
         strict_sessions: false
+        # Broker min lot (0.01) stop risk ~$21 on typical pullback SL
+        max_loss_per_trade_usd: 21
       USOILm:
         allowed_setups: [pullback]
         preferred_setups: [pullback]
@@ -152,9 +156,10 @@ filters:
     - '14:30'
     - '15:00'
 execution:
-  starting_cash: 40
   live_trading_enabled: true
   mt5_trading_enabled: true
+strategy_arena:
+  enabled: false
 research:
   min_trades_for_research: 10
   replay_bars: 300

@@ -11,15 +11,12 @@ from core.blue_guardian import (
     blue_guardian_enabled,
     can_close_position,
     entry_gates,
-    max_lot_for_symbol,
     record_position_open,
 
 )
-from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
-from core.kelly_sizing import kelly_for_signal
-from core.risk_cap import effective_risk_cap, estimate_stop_loss_usd
+from core.position_sizing import calc_executable_volume, symbol_spec_from_mt5
 from core.position_sync import _setup_type_from_comment
-from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer, symbol_capacity_available
+from core.dynamic_entry import symbol_capacity_available
 from core.trade_limits import (
     enrich_positions_with_orders,
     is_duplicate_position,
@@ -377,86 +374,22 @@ class MT5Broker:
         info: Any,
         open_positions: list[dict[str, Any]],
     ) -> float:
-        default_risk_pct = float(self.config["signals"].get("default_risk_percent", 1))
-        # Per-cell Kelly sizing (USER request 2026-07-01): size by each cell's
-        # own proven edge (f* = p(1-1/PF)) instead of a flat risk %. Gated by
-        # min_n + PF>1 + bootstrap ci95_lo>0; falls back to default_risk_pct
-        # when disabled or the cell has no proven edge, so culturing keeps
-        # collecting data. See core/kelly_sizing.py.
-        kelly = kelly_for_signal(signal, self.config, default_risk_pct)
-        risk_pct = float(kelly.get("fraction", default_risk_pct))
-        # Stamp on the signal so the executed-order record carries the Kelly
-        # verdict (cell, f*, pf, gated) for the trade log / UI.
-        signal["kelly"] = kelly
-        max_lot = float(self.exec_cfg.get("max_lot", 0.1))
-        default_lot = float(self.exec_cfg.get("default_lot", 0.01))
-        equity = float(account.equity)
-        balance = float(account.balance)
-
-        entry = float(signal.get("entry", 0))
-        sl = float(signal["sl"])
-        risk_dist = abs(entry - sl)
-
-        if risk_dist <= 0:
-            ideal = default_lot
-        else:
-            risk_money = equity * (risk_pct / 100.0)
-            cap_usd = effective_risk_cap(self.config, balance)
-            if cap_usd is not None:
-                risk_money = min(risk_money, cap_usd)
-            tick_value = float(getattr(info, "trade_tick_value", 0) or 0)
-            tick_size = float(getattr(info, "trade_tick_size", 0) or info.point or 0)
-            if tick_value > 0 and tick_size > 0:
-                ticks = risk_dist / tick_size
-                ideal = risk_money / (ticks * tick_value)
-            else:
-                ideal = calc_risk_based_size(equity, risk_pct, entry, sl, max_size=max_lot)
-
-        vmin = float(info.volume_min or 0.01)
-        ideal = min(ideal, max_lot_for_symbol(self.config, signal["symbol"], max_lot))
-        # Micro accounts: tick-based risk sizing can fall below broker minimum lot.
-        if ideal < vmin:
-            ideal = min(max(default_lot, vmin), max_lot)
-        capped, allowed = cap_size_to_exposure_limits(
-            ideal,
-            entry,
-            signal["symbol"],
-            open_positions,
-            self.config,
-            min_size=vmin,
+        vol, details = calc_executable_volume(
+            signal,
+            equity=float(account.equity),
+            balance=float(account.balance),
+            config=self.config,
+            symbol_spec=symbol_spec_from_mt5(info),
+            open_positions=open_positions,
+            stamp_kelly=True,
         )
-        if not allowed or capped <= 0:
-            return 0.0
-        vol = capped
-        if vol < vmin:
-            from core.exposure import position_notional
-
-            risk_cfg = self.config.get("risk", {})
-            max_symbol = float(risk_cfg.get("max_symbol_exposure_usd", equity))
-            max_total = float(risk_cfg.get("max_total_exposure_usd", equity))
-            vmin_notional = position_notional(entry, vmin)
-            if vmin_notional > max_symbol + 0.01 or vmin_notional > max_total + 0.01:
-                return 0.0
-            vol = vmin
-        layer = int(signal.get("pyramid_layer", pyramid_layer_index(signal, open_positions)))
-        vol = scale_lot_for_layer(self.config, signal["symbol"], vol, layer)
-        vol = self._normalize_volume(vol, info)
-        cap_usd = effective_risk_cap(self.config, balance)
-        if cap_usd is not None and risk_dist > 0 and vol > 0:
-            tick_value = float(getattr(info, "trade_tick_value", 0) or 0)
-            tick_size = float(getattr(info, "trade_tick_size", 0) or info.point or 0)
-            loss_usd = estimate_stop_loss_usd(
-                risk_dist=risk_dist,
-                volume=vol,
-                tick_value=tick_value,
-                tick_size=tick_size,
+        if vol <= 0 and details.get("reject_reason") == "min_lot_stop_risk_exceeds_cap":
+            self.logger.info(
+                "Skip %s — min lot stop risk $%.2f exceeds cap $%.2f",
+                signal["symbol"],
+                float(details.get("stop_loss_usd", 0)),
+                float(details.get("risk_cap_usd", 0)),
             )
-            if loss_usd > cap_usd + 0.05:
-                self.logger.info(
-                    "Skip %s — min lot stop risk $%.2f exceeds cap $%.2f",
-                    signal["symbol"], loss_usd, cap_usd,
-                )
-                return 0.0
         return vol
 
     def _normalize_volume(self, volume: float, info: Any) -> float:
