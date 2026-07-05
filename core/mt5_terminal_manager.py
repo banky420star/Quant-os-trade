@@ -123,15 +123,21 @@ class MT5TerminalManager:
                 seen.add(str(p))
                 ranked.append((priority, str(p)))
 
-        add(os.environ.get("MT5_PATH"), 0)
-        add(self.mt5_cfg.get("path"), 0)
+        use_logged_in = bool(self.mt5_cfg.get("use_logged_in_account", True))
 
         if psutil:
             for proc in self.list_processes():
                 if proc.get("session_id") == 0:
                     continue
-                priority = 1 if proc.get("session_id") == python_session else 3
+                if use_logged_in:
+                    priority = 0 if proc.get("session_id") == python_session else 4
+                else:
+                    priority = 1 if proc.get("session_id") == python_session else 3
                 add(proc.get("exe"), priority)
+
+        cfg_priority = 3 if use_logged_in else 0
+        add(os.environ.get("MT5_PATH"), cfg_priority)
+        add(self.mt5_cfg.get("path"), cfg_priority)
 
         for candidate in self.DEFAULT_CANDIDATES:
             add(candidate, 5)

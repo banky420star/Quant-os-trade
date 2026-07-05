@@ -210,7 +210,7 @@ def start(once: bool = False, profile: str | None = None) -> None:
     write_json_state("runtime_mode.json", mode)
     logger.info("Runtime mode: %s — %s", mode["label"], mode["detail"])
     if not performance_gates_active(config):
-        session_report = ensure_practice_session(config, logger, force_rebaseline=True)
+        session_report = ensure_practice_session(config, logger, force_rebaseline=False)
         if session_report.get("kill_switch_cleared") or session_report.get("rebaseline"):
             logger.info("Practice session ready: %s", session_report)
 

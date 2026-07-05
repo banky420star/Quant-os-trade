@@ -73,7 +73,9 @@ class MT5ConnectionManager:
             modes = (False,) if logged_in_only else (False, True)
 
             if logged_in_only:
-                self.logger.info("Attaching to logged-in MT5 demo account (no forced re-login)")
+                self.logger.info(
+                    "Attaching to logged-in MT5 account (no stored-credentials re-login)"
+                )
 
             last_error: Any = "no attempts"
             for path in paths:
@@ -184,6 +186,10 @@ class MT5ConnectionManager:
 
     def _credentials(self) -> dict[str, Any]:
         mt5_cfg = self.config.get("mt5", {})
+        if bool(mt5_cfg.get("use_logged_in_account", True)) or bool(
+            mt5_cfg.get("ignore_stored_credentials", True)
+        ):
+            return {}
         login = os.environ.get("MT5_LOGIN") or mt5_cfg.get("login")
         password = os.environ.get("MT5_PASSWORD") or mt5_cfg.get("password")
         server = os.environ.get("MT5_SERVER") or mt5_cfg.get("server")

@@ -123,7 +123,14 @@ def ensure_practice_session(
 
     account = read_json_state("account.json", default={})
     kill = read_json_state("kill_switch.json", default={"kill_switch": False})
+    prior_baseline = read_json_state("mt5_baseline.json", default={}) or {}
     equity = account.get("equity") or account.get("balance")
+    login_changed = (
+        account.get("login") is not None
+        and prior_baseline.get("login") is not None
+        and int(account["login"]) != int(prior_baseline["login"])
+    )
+    needs_baseline = not prior_baseline.get("starting_cash")
 
     report: dict[str, Any] = {
         "timestamp": utc_now_iso(),
@@ -131,7 +138,7 @@ def ensure_practice_session(
         "kill_switch_cleared": False,
     }
 
-    if equity is not None:
+    if equity is not None and (force_rebaseline or login_changed or needs_baseline):
         equity_f = float(equity)
         baseline = {
             "login": account.get("login"),
@@ -149,6 +156,12 @@ def ensure_practice_session(
             report["daily_growth_reset"] = True
             log.info("Daily growth baseline reset to %.2f (+%.0f%% target today)",
                      equity_f, config.get("practice", {}).get("growth", {}).get("daily_target_pct", 20))
+    elif equity is not None:
+        log.info(
+            "Practice baseline unchanged (login=%s equity=%.2f)",
+            account.get("login"),
+            float(equity),
+        )
 
     if kill.get("kill_switch") or force_rebaseline:
         write_json_state("kill_switch.json", {

@@ -36,19 +36,15 @@ app:
     research_interval_seconds: 1800
     restart_delay_seconds: 5
 mt5:
-  # Attaches to whatever account is logged into the MT5 terminal.
+  # Attaches to whatever account YOU logged into in the MT5 terminal window.
+  # Never set login/password/server here (or in config.local.yaml) unless you
+  # intentionally want forced re-login — use_logged_in_account blocks that.
   use_logged_in_account: true
+  ignore_stored_credentials: true
   account_mode: demo
   path: C:\Users\Administrator\MT5Agent\terminal64.exe
   prefer_logged_in_session: true
   timeout_ms: 60000
-  # Fallback only if terminal is open but not logged in. NOTE: these point at a
-  # REAL server (Exness-MT5Real27) and are used when the terminal session is
-  # logged in to the real account. Do not change these unless the live login
-  # on the terminal changes too.
-  login: 435656990
-  password: ''
-  server: Exness-MT5Trial9
   # Arena campaign symbols (strategy_arena.symbols overrides when arena enabled).
   symbols:
   - XAUUSDm
