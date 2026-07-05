@@ -16,6 +16,8 @@ STATE_FILE = "active_profile.json"
 ENV_VAR = "MT5_QUANT_PROFILE"
 DEFAULT_PROFILE = "30"
 REAL_ACCOUNT_PROFILE = "live"
+REAL_MICRO_PROFILE = "30-real"
+REAL_MICRO_MAX_EQUITY = 150.0
 BALANCE_TIERS: tuple[tuple[float, str], ...] = (
     (75.0, "30"),
     (250.0, "100"),
@@ -142,10 +144,11 @@ def probe_logged_in_account(
 def resolve_profile_for_account(account: dict[str, Any]) -> str:
     """Map a logged-in MT5 account snapshot to a profile name."""
     account_mode = str(account.get("account_mode") or "demo").lower()
-    if account_mode == "real":
-        return REAL_ACCOUNT_PROFILE
-
     equity = float(account.get("equity") or account.get("balance") or 0)
+    if account_mode == "real":
+        if equity <= REAL_MICRO_MAX_EQUITY:
+            return REAL_MICRO_PROFILE
+        return REAL_ACCOUNT_PROFILE
     for max_equity, profile in BALANCE_TIERS:
         if equity <= max_equity:
             return profile

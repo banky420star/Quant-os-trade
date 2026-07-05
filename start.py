@@ -78,6 +78,7 @@ def _print_banner(
             "practice": "PRACTICE",
             "growth": "GROWTH",
             "micro_growth": "MICRO GROWTH",
+            "micro_live": "MICRO LIVE",
         }.get(label, "LIVE PLAN")
         _safe_print(f"  Mode: {tag} ({mode.get('account_mode', 'demo')} account)")
         if mode.get("active_profile"):

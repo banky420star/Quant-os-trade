@@ -99,8 +99,12 @@ def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:
     if micro.get("risk_percent_per_trade") is not None:
         signals["default_risk_percent"] = float(micro["risk_percent_per_trade"])
 
+    live_mode = bool(micro.get("live_mode", False))
     growth = config.setdefault("practice", {}).setdefault("growth", {})
-    growth["enabled"] = True
+    if live_mode or micro.get("growth_enabled") is False:
+        growth["enabled"] = False
+    else:
+        growth["enabled"] = True
     if micro.get("campaign_days") is not None:
         growth["campaign_days"] = int(micro["campaign_days"])
     elif not growth.get("campaign_days"):
@@ -122,5 +126,12 @@ def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:
         base_rules.update(sym_rules)
         signals["symbol_rules"] = base_rules
 
+    if live_mode:
+        ref_equity = float(micro.get("account_size_usd", 30))
+        exec_cfg["starting_cash"] = ref_equity
+        if micro.get("aggressive_mode"):
+            trading["aggressive_mode"] = True
+
     config["micro_profile_active"] = True
+    config["micro_live_mode"] = live_mode
     return config

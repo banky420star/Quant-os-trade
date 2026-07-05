@@ -77,8 +77,12 @@ def test_resolve_profile_demo_growth():
     assert resolve_profile_for_account({"account_mode": "demo", "equity": 500}) == "growth"
 
 
-def test_resolve_profile_real_live():
-    assert resolve_profile_for_account({"account_mode": "real", "equity": 30}) == "live"
+def test_resolve_profile_real_micro():
+    assert resolve_profile_for_account({"account_mode": "real", "equity": 37.74}) == "30-real"
+
+
+def test_resolve_profile_real_large():
+    assert resolve_profile_for_account({"account_mode": "real", "equity": 500}) == "live"
 
 
 def test_auto_select_from_account_json(monkeypatch):
@@ -110,6 +114,22 @@ def test_auto_select_explicit_cli_overrides_probe(monkeypatch):
     result = auto_select_profile(explicit="30")
     assert result["profile"] == "30"
     assert result["source"] == "cli"
+
+
+def test_profile_30_real_loads_micro_live():
+    os.environ["MT5_QUANT_PROFILE"] = "30-real"
+    try:
+        set_active_profile("30-real")
+        c = load_config()
+        assert c.get("active_profile") == "30-real"
+        assert c["practice"]["micro"]["live_mode"] is True
+        assert c["practice"]["growth"]["enabled"] is False
+        assert c["mt5"]["account_mode"] == "real"
+        assert c["trading"]["aggressive_mode"] is True
+        assert c["mt5"]["symbols"] == ["XAUUSDm", "USOILm", "UK100m"]
+        assert c["execution"]["live_trading_enabled"] is True
+    finally:
+        os.environ.pop("MT5_QUANT_PROFILE", None)
 
 
 def test_profile_growth_disables_micro():

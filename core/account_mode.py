@@ -42,6 +42,15 @@ def runtime_mode_summary(config: dict[str, Any]) -> dict[str, Any]:
             f"$50k performance plan active on {account_mode} account "
             f"(target ${perf.get('target_monthly_pnl_usd', TARGET_MONTHLY_PNL_USD):,.0f}/mo)"
         )
+    elif micro_profile_enabled(config) and micro_settings(config).get("live_mode"):
+        micro = micro_settings(config)
+        ref = float(micro.get("account_size_usd", 30))
+        sym_s = ", ".join(micro.get("symbols") or [])
+        label = "micro_live"
+        detail = (
+            f"${ref:.0f} micro LIVE on {account_mode} — {sym_s} · "
+            f"0.01 lot · ${float(micro.get('max_loss_per_trade_usd', 10)):.0f} max loss/trade"
+        )
     else:
         label = "practice"
         apply_when = perf.get("apply_when", "real")
@@ -114,8 +123,10 @@ def validate_runtime_profile(config: dict[str, Any]) -> dict[str, Any]:
 
     bg_eval = blue_guardian_enabled(config) and account_mode == "real"
 
+    micro_live = micro_profile_enabled(config) and bool(micro_settings(config).get("live_mode"))
+
     if account_mode == "real":
-        if not perf_active and not bg_eval:
+        if not perf_active and not bg_eval and not micro_live:
             issues.append("real_account_requires_performance.apply_when=real")
         if growth_active and not bg_eval:
             issues.append("real_account_cannot_run_practice_growth")
