@@ -96,6 +96,12 @@ def run() -> dict:
 
     write_json_state("risk_state.json", result["risk_state"])
     write_json_state("kill_switch.json", result["kill_switch"])
+    if result["kill_switch"].get("kill_switch") and result["kill_switch"].get("reason"):
+        from core.audit_log import append_event
+        from core.ops_alerts import alert_kill_switch
+
+        append_event("risk.kill_switch", details={"reason": result["kill_switch"]["reason"]})
+        alert_kill_switch(config, result["kill_switch"]["reason"])
     record_snapshot(
         result["risk_state"].get("equity", balance.get("equity", 0)),
         result["risk_state"].get("cash", balance.get("cash")),

@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.decision_engine import DecisionEngine
+from core.entry_pipeline import refine_candidates
 from core.setup_triggers import write_setup_catalog
 from core.strategy_arena import (
     arena_enabled,
@@ -58,9 +59,20 @@ def run() -> dict | None:
             if has_outcomes and not has_cells:
                 rebuild_analytics_from_outcomes(arena_state)
 
+    positions_data = read_json_state("paper_positions.json", default={"positions": []})
+    open_positions = list(positions_data.get("positions") or [])
+
     engine = DecisionEngine(config, logger)
     ranker = StrategyRanker(config, logger)
-    candidates = engine.generate_candidates(features, context_data, edge_scores)
+    raw_candidates = engine.generate_candidates(features, context_data, edge_scores)
+    candidates = refine_candidates(
+        raw_candidates,
+        features,
+        context_data,
+        config,
+        positions=open_positions,
+        logger=logger,
+    )
     arena_report = record_triggers(candidates, config, logger=logger) if arena_enabled(config) else {}
 
     strategy_rankings: dict[str, list] = {}
@@ -73,6 +85,7 @@ def run() -> dict | None:
         "timestamp": utc_now_iso(),
         "engine": "decision_engine",
         "count": len(candidates),
+        "raw_candidate_count": len(raw_candidates),
         "candidates": candidates,
         "top_explain": top_explain,
         "strategy_rankings": strategy_rankings,

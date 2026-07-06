@@ -19,6 +19,15 @@ adaptation:
   enabled: true
   calibrate_be_trail: true
   rebuild_trade_log: true
+ops:
+  alerts:
+    enabled: false
+    webhook_url: ""
+    username: MT5 Quant OS
+    on_kill_switch: true
+    on_health_degraded: true
+    on_execution_error: true
+    cooldown_sec: 300
 app:
   name: mt5_quant_os
   display_name: MT5 Quant OS
@@ -108,6 +117,10 @@ trading:
     entry_buffer_atr: 0.05
     market_if_within_atr: 99.0
     max_entry_wait_atr: 2.0
+    # Entry pipeline (signal_loop): refresh pins each cycle, score quality, drop far limits
+    refresh_each_cycle: true
+    reject_unreachable_entries: true
+    skip_at_capacity_in_candidates: true
     # Per-symbol SL/TP calibration (USER request 2026-07-01). The SL distance
     # is already ATR-scaled (auto-adapts to each symbol's volatility), but the
     # ATR multiplier for the stop and the RR (TP1/TP2 in R) were hardcoded

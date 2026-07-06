@@ -266,6 +266,7 @@ class DecisionEngine:
             "entry_narrative": entry_narrative,
             "market_price": entry_meta.get("market_price", feat.get("price")),
             "distance_atr": entry_meta.get("distance_atr"),
+            "within_reach": entry_meta.get("within_reach", True),
             "confidence": confidence,
             "confidence_tree": votes,
             "evidence": ev,

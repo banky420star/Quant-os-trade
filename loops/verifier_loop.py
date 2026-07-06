@@ -259,6 +259,31 @@ def run() -> dict | None:
         n = archive_signals(approved, source="verifier")
         if n:
             logger.info("Signal archive: +%d approved signals (durable for trade enrichment)", n)
+    from core.audit_log import append_event
+
+    for row in approved:
+        sym = row.get("symbol", "")
+        append_event(
+            "signal.approved",
+            symbol=sym,
+            details={
+                "side": row.get("side"),
+                "setup": row.get("setup_type"),
+                "confidence": row.get("confidence"),
+                "entry_quality": row.get("entry_quality"),
+            },
+        )
+    for row in rejected:
+        sym = row.get("symbol", "")
+        append_event(
+            "signal.rejected",
+            symbol=sym,
+            details={
+                "reason": row.get("rejection_reason"),
+                "failures": row.get("failure_codes"),
+            },
+        )
+
     logger.info("Approved %d, rejected %d (spread_source=%s)", len(approved), len(rejected), spread_source)
     return {"approved": approved, "rejected": rejected, "spread_source": spread_source}
 

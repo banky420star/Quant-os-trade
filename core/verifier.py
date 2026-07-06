@@ -332,7 +332,7 @@ class Verifier:
             self.config, signal["symbol"], closed_trades,
         )
         checks["reentry_cooldown"] = reentry_ok
-        confirm = touch_and_check(signal, self.config)
+        confirm = touch_and_check(signal, self.config, feat=feat)
         checks["entry_confirm"] = bool(confirm.get("ready"))
         dyn_ok, adjusted_signal, dyn_reason = evaluate_dynamic_entry(
             self.config,

@@ -160,6 +160,33 @@ git commit -m "your message"
 git push origin blue-guardian
 ```
 
+## Pre-flight check
+
+Before starting (or after switching accounts):
+
+```powershell
+python scripts\preflight.py
+```
+
+Exits 0 when ready; reports kill switch, health, and `trade_allowed` blockers.
+
+## Pipeline architecture
+
+See **`PIPELINE.md`** for the full loop diagram, entry strategy flow, and hardening roadmap.
+
+## Ops alerts (optional)
+
+Enable Discord/Slack-style webhooks in `config.yaml`:
+
+```yaml
+ops:
+  alerts:
+    enabled: true
+    webhook_url: "https://discord.com/api/webhooks/..."
+```
+
+Alerts fire on kill switch, health degradation, and execution errors. Audit trail: `state/audit_log.jsonl`.
+
 ## Quick reference
 
 ```powershell

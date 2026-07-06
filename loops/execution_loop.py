@@ -161,6 +161,20 @@ def run() -> dict | None:
                 len(result["positions"]),
                 result["balance"]["equity"],
             )
+            from core.audit_log import append_event
+            from core.ops_alerts import alert_execution_error
+
+            for order in result.get("placed", []):
+                append_event(
+                    "order.placed",
+                    symbol=order.get("symbol"),
+                    details={"ticket": order.get("ticket"), "side": order.get("side"), "lot": order.get("volume")},
+                )
+            for err in result.get("errors", []):
+                sym = err.get("symbol", "?")
+                msg = str(err.get("error") or err)
+                append_event("order.error", symbol=sym, details={"error": msg})
+                alert_execution_error(config, sym, msg)
             return result
         finally:
             connection.disconnect()

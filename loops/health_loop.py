@@ -30,6 +30,10 @@ def run(connect: bool = False) -> dict:
 
     monitor = HealthMonitor(config, connection, logger=logger)
     health = monitor.write_health()
+    if health.get("status") != "healthy" and health.get("issues"):
+        from core.ops_alerts import alert_health_degraded
+
+        alert_health_degraded(config, list(health.get("issues") or []))
     logger.info("Health status: %s issues=%s", health["status"], health["issues"])
     logger.info("=== Health Loop complete ===")
 

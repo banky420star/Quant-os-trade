@@ -10,6 +10,12 @@ performance:
   apply_when: never
 trading:
   aggressive_mode: true
+  strategy_entries:
+    refresh_each_cycle: true
+    reject_unreachable_entries: true
+    skip_at_capacity_in_candidates: true
+    market_if_within_atr: 0.35
+    max_entry_wait_atr: 1.5
 practice:
   relax_structure_checks: true
   relax_volume_check: true
