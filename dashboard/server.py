@@ -876,7 +876,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path == "/api/replay":
+        if path == "/api/reset-session":
+            try:
+                from scripts.reset_session_memory import reset_session_memory
+
+                reset_session_memory()
+                self._send_json({
+                    "ok": True,
+                    "message": "Session state reset — baselines, kill switch, and memory cleared",
+                    "timestamp": utc_now_iso(),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/replay":
             body = self._read_json_body()
             config = load_config()
             symbol = body.get("symbol") or config.get("replay", {}).get("symbol")

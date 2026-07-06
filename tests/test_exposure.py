@@ -596,6 +596,68 @@ def test_pyramiding_blocked_without_flag(config):
     assert is_duplicate_position(config, signal, existing) is True
 
 
+def test_independent_symbol_exposure_ignores_other_positions(config):
+    """XAU can open while UK100 already holds risk — symbols are independent."""
+    config["execution"]["mode"] = "mt5"
+    config["practice"] = {
+        "micro": {
+            "enabled": True,
+            "independent_symbol_exposure": True,
+            "max_loss_per_trade_usd": 30,
+            "cap_loss_to_balance": True,
+            "max_symbol_exposure_fraction": 1.0,
+            "max_total_exposure_fraction": 3.0,
+            "account_size_usd": 30,
+            "symbol_rules": {"XAUUSDm": {"max_loss_per_trade_usd": 30}},
+        }
+    }
+    config["signals"]["symbol_rules"] = {}
+    config["risk"]["max_symbol_exposure_usd"] = 30.0
+    config["risk"]["max_total_exposure_usd"] = 90.0
+    existing = [{
+        "symbol": "UK100m",
+        "side": "BUY",
+        "entry": 10683.53,
+        "sl": 10643.63,
+        "size": 0.01,
+    }]
+    signal = {
+        "signal_id": "xau-indep-test",
+        "symbol": "XAUUSDm",
+        "side": "BUY",
+        "setup_type": "pullback",
+        "entry": 4187.435,
+        "sl": 4167.0,
+        "tp1": 4210.0,
+        "confidence": 82,
+    }
+    spec = {
+        "volume_min": 0.01,
+        "volume_step": 0.01,
+        "trade_tick_value": 0.1,
+        "trade_tick_size": 0.001,
+        "point": 0.001,
+    }
+    uk_spec = {
+        "volume_min": 0.01,
+        "volume_step": 0.01,
+        "trade_tick_value": 0.013392,
+        "trade_tick_size": 0.01,
+        "point": 0.01,
+    }
+    ok, details = check_exposure_limits(
+        existing,
+        signal,
+        equity=30.0,
+        config=config,
+        balance=30.0,
+        symbol_specs={"XAUUSDm": spec, "UK100m": uk_spec},
+    )
+    assert ok is True
+    assert details.get("executable_volume") == 0.01
+    assert details.get("total_ok") is True
+
+
 def test_risk_state_includes_exposure_used_pct(config):
     positions = [{"symbol": "XAUUSDm", "entry": 100.0, "size": 0.5}]
     manager = RiskManager(config)

@@ -26,6 +26,11 @@ def micro_settings(config: dict[str, Any]) -> dict[str, Any]:
     return dict((config.get("practice") or {}).get("micro") or {})
 
 
+def independent_symbol_exposure(config: dict[str, Any]) -> bool:
+    """True when each symbol has its own exposure budget (no cross-symbol total cap)."""
+    return bool(micro_settings(config).get("independent_symbol_exposure", False))
+
+
 def micro_reference_equity(config: dict[str, Any]) -> float:
     """Sizing reference: live MT5 balance on micro-live, else configured account_size_usd."""
     micro = micro_settings(config)

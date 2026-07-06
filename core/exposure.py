@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.kelly_sizing import resolve_risk_percent
+from core.micro_profile import independent_symbol_exposure
 from core.risk_cap import estimate_stop_loss_usd
 from core.trade_limits import unlimited_trades
 
@@ -232,7 +233,10 @@ def check_exposure_limits(
     total_after = total_exp + projected_notional
 
     symbol_ok = allowed and symbol_after <= max_symbol + 0.01
-    total_ok = allowed and total_after <= max_total + 0.01
+    if independent_symbol_exposure(config):
+        total_ok = allowed
+    else:
+        total_ok = allowed and total_after <= max_total + 0.01
 
     details = {
         "equity": round(equity, 2),
@@ -288,8 +292,11 @@ def cap_size_to_exposure_limits(
     specs = symbol_specs or ({symbol: symbol_spec} if symbol_spec else None)
     symbol_exp, total_exp = exposure_from_positions(positions, config=config, symbol_specs=specs)
     symbol_remaining = max(0.0, max_symbol - symbol_exp.get(symbol, 0.0))
-    total_remaining = max(0.0, max_total - total_exp)
-    remaining = min(symbol_remaining, total_remaining)
+    if independent_symbol_exposure(config):
+        remaining = symbol_remaining
+    else:
+        total_remaining = max(0.0, max_total - total_exp)
+        remaining = min(symbol_remaining, total_remaining)
 
     max_allowed = max_size_for_exposure(
         entry,

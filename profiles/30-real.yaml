@@ -33,9 +33,10 @@ practice:
     daily_target_pct: 20
     max_daily_loss_pct: 10
     max_drawdown_pct: 20
-    # Exposure = stop-loss USD; 1.0 fits one min-lot XAU (~$30 risk) on ~$30 equity
+    # Each symbol trades on its own SL-risk budget; total cap = 3× equity for reporting
+    independent_symbol_exposure: true
     max_symbol_exposure_fraction: 1.0
-    max_total_exposure_fraction: 1.0
+    max_total_exposure_fraction: 3.0
     max_session_trades_per_symbol: 6
     max_loss_per_trade_usd: 10
     cap_loss_to_balance: true

@@ -10,6 +10,7 @@ from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
 from core.daily_growth import evaluate_daily_growth
 from core.growth_campaign import update_campaign
 from core.exposure import exposure_from_positions, exposure_used_pct
+from core.micro_profile import independent_symbol_exposure
 from core.position_sizing import requires_executable_sizing, resolve_symbol_spec
 from core.trade_limits import unlimited_trades
 from core.utils import read_json_state, utc_now_iso
@@ -94,7 +95,7 @@ class RiskManager:
             risk_events.append({"type": "max_drawdown", "value": drawdown, "limit": risk_cfg["max_drawdown_pct"]})
             kill_triggers.append(f"Drawdown {drawdown:.2f}% exceeds limit")
 
-        if not unlimited_trades(self.config):
+        if not unlimited_trades(self.config) and not independent_symbol_exposure(self.config):
             if total_exposure > risk_cfg["max_total_exposure_usd"]:
                 risk_events.append({"type": "max_total_exposure", "value": total_exposure, "limit": risk_cfg["max_total_exposure_usd"]})
 

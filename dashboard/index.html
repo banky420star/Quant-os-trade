@@ -150,6 +150,12 @@
     .brand .ver { font-size: 11px; color: var(--muted); font-weight: 500; }
     .topbar-stats { display: flex; gap: 24px; font-size: 12px; color: var(--muted); }
     .topbar-stats strong { color: var(--text); font-weight: 600; }
+    .topbar-link {
+      font-size: 12px; color: var(--muted); text-decoration: none;
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+      white-space: nowrap;
+    }
+    .topbar-link:hover { color: var(--text); border-color: var(--accent); }
     .status-pill {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;
@@ -669,6 +675,7 @@
       <span class="status-pill" id="osStatus"><span class="dot"></span> Listening</span>
     </div>
     <div class="topbar-stats" id="topStats"></div>
+    <a href="#" class="topbar-link" id="resetSessionLink" title="Clear kill switch, daily baselines, and learned memory">Reset state</a>
   </header>
 
   <div class="shell">
@@ -911,6 +918,15 @@
           <div class="card">
             <div class="card-title">Configuration</div>
             <div id="configInfo"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Session Reset</div>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+              Clears kill switch, daily-loss baselines, edge memory, and signal history.
+              Live MT5 positions and account balance are preserved; open tickets resync on the next cycle.
+            </p>
+            <button type="button" class="btn secondary" id="resetSessionBtn">Reset session state</button>
+            <div id="resetSessionStatus" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
           </div>
         </div>
 
@@ -2291,6 +2307,48 @@
         } catch (_) { /* retry on next tick */ }
       }, 2000);
     }
+
+    async function resetSessionState(triggerEl) {
+      const statusEl = document.getElementById("resetSessionStatus");
+      const label = triggerEl?.textContent || "Reset";
+      if (triggerEl) {
+        triggerEl.style.pointerEvents = "none";
+        if (triggerEl.tagName === "BUTTON") triggerEl.disabled = true;
+      }
+      if (statusEl) statusEl.textContent = "Resetting…";
+      try {
+        if (!confirm("Reset session state? Kill switch and daily baselines will clear. Open MT5 positions stay open.")) {
+          if (statusEl) statusEl.textContent = "";
+          return;
+        }
+        const res = await fetch("/api/reset-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const out = await res.json();
+        if (!res.ok || !out.ok) {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${out.message || "Reset failed"}</span>`;
+        } else {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--green)">${out.message || "Reset complete"}</span>`;
+          refresh();
+        }
+      } catch (e) {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">Could not reach dashboard API</span>`;
+      } finally {
+        if (triggerEl) {
+          triggerEl.style.pointerEvents = "";
+          if (triggerEl.tagName === "BUTTON") {
+            triggerEl.disabled = false;
+            triggerEl.textContent = label;
+          }
+        }
+      }
+    }
+
+    document.getElementById("resetSessionBtn")?.addEventListener("click", (e) => {
+      resetSessionState(e.currentTarget);
+    });
+    document.getElementById("resetSessionLink")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      resetSessionState(e.currentTarget);
+    });
 
     document.getElementById("replayBtn").addEventListener("click", async () => {
       const btn = document.getElementById("replayBtn");
