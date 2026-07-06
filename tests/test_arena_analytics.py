@@ -82,7 +82,7 @@ def test_update_analytics_builds_session_and_symbol_insights():
     assert insights["top_winning_conditions"][0]["symbol"] == "US500m"
 
 
-def test_record_outcomes_populates_insights():
+def test_record_outcomes_populates_insights(growth_profile):
     cfg = _config()
     reset_arena(cfg, campaign_id="analytics-test")
     record_outcomes(

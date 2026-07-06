@@ -17,7 +17,8 @@ from core.utils import load_config, write_json_state
 
 
 @pytest.fixture
-def growth_config():
+def growth_config(monkeypatch):
+    monkeypatch.setenv("MT5_QUANT_PROFILE", "growth")
     cfg = load_config()
     cfg.setdefault("practice", {}).setdefault("growth", {})["enabled"] = True
     cfg["practice"]["growth"]["daily_target_pct"] = 20

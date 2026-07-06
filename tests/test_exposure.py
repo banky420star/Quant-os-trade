@@ -26,7 +26,7 @@ from core.verifier import Verifier
 
 
 @pytest.fixture
-def config():
+def config(growth_profile):
     from core.utils import load_config
     cfg = load_config()
     cfg = copy.deepcopy(cfg)

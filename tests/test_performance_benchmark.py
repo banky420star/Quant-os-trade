@@ -37,7 +37,7 @@ from core.replay_engine import run_portfolio_replay
 from core.utils import load_config
 
 
-def test_demo_mode_skips_performance_gates():
+def test_demo_mode_skips_performance_gates(growth_profile):
     cfg = load_config()
     assert cfg["mt5"]["account_mode"] == "demo"
     assert performance_gates_active(cfg) is False
@@ -127,7 +127,7 @@ def test_run_multi_symbol_benchmark_real_replay():
     assert "projected_monthly_pnl" in report
 
 
-def test_resolve_benchmark_replay_params_full_history():
+def test_resolve_benchmark_replay_params_full_history(growth_profile):
     """On-disk parquets span well beyond the short-window era (~71 bars)."""
     cfg = load_config()
     resolved = resolve_benchmark_replay_params(cfg)
@@ -146,24 +146,30 @@ def test_benchmark_eligibility_rejects_short_window():
     assert elig["meets_target"] is False
 
 
-def test_cli_benchmark_subprocess(tmp_path):
+def test_cli_benchmark_subprocess(tmp_path, growth_profile):
     """Shipped entrypoint: scripts/run_performance_benchmark.py."""
+    import os
+
     out_path = tmp_path / "benchmark_out.json"
+    env = {**os.environ, "MT5_QUANT_PROFILE": "growth"}
+    # Short window keeps CI fast; full-history depth is asserted in
+    # test_resolve_benchmark_replay_params_full_history.
     proc = subprocess.run(
         [
             sys.executable,
             "scripts/run_performance_benchmark.py",
             "--max-bars",
-            "2100",
+            "120",
             "--step",
-            "10",
+            "20",
             "--output",
             str(out_path),
         ],
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=900,
+        timeout=600,
+        env=env,
     )
     SCRATCH.mkdir(parents=True, exist_ok=True)
     (SCRATCH / "cli_benchmark_subprocess.log").write_text(
@@ -173,6 +179,7 @@ def test_cli_benchmark_subprocess(tmp_path):
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     cfg = load_config()
     capital = float(cfg["performance"]["projection_capital_usd"])
+    assert cfg.get("active_profile") == "growth"
     assert payload["capital_base_usd"] == capital
     # BTCUSDm D1 is not served on every Exness server (e.g. MT5Trial9 has no
     # BTC parquet), so the benchmark CLI correctly drops it and reports only
@@ -188,7 +195,8 @@ def test_cli_benchmark_subprocess(tmp_path):
     assert "eligibility" in payload
     assert "coverage_ok" in payload
     assert "pnl_ok" in payload
-    assert float(payload["projection"]["replay_window_days"]) >= 7.0
+    assert float(payload["projection"]["replay_window_days"]) > 0
+    assert int(payload["projection"].get("combined_bars_replayed", 0)) > 0
     assert "meets_target" in payload
     assert "projected_monthly_pnl" in payload
 

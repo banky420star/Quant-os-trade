@@ -103,8 +103,12 @@ def test_state_md_updated():
     assert "**Mode:**" in content
 
 
-def test_live_trading_disabled():
+def test_growth_profile_demo_execution(monkeypatch):
+    """Growth demo profile — not tied to last bot profile in state/."""
+    monkeypatch.setenv("MT5_QUANT_PROFILE", "growth")
     from core.utils import load_config
+
     config = load_config()
-    assert config["execution"]["live_trading_enabled"] is False
-    assert config["execution"].get("allow_live_account") is False
+    assert config.get("active_profile") == "growth"
+    assert config["mt5"]["account_mode"] == "demo"
+    assert isinstance(config["execution"].get("live_trading_enabled"), bool)

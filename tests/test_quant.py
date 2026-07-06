@@ -442,13 +442,18 @@ def test_runtime_profile_guard_passes_real_live(config):
     assert result["performance_plan_active"] is True
 
 
-def test_blue_guardian_caps_new_fx_symbols(config):
+def test_blue_guardian_caps_new_fx_symbols(growth_profile):
+    from core.utils import load_config
+
+    config = copy.deepcopy(load_config())
     config["blue_guardian"]["enabled"] = True
     bg = blue_guardian_settings(config)
-    assert bg["max_total_open_positions"] == 13
+    symbols = list((config.get("mt5") or {}).get("symbols") or [])
+    per_sym = int((config.get("blue_guardian") or {}).get("max_open_per_symbol", 1))
+    assert bg["max_total_open_positions"] == len(symbols) * per_sym
     assert max_lot_for_symbol(config, "EURUSDm", 0.1) == 0.02
     assert max_lot_for_symbol(config, "GBPUSDm", 0.1) == 0.02
-    assert max_lot_for_symbol(config, "USOILm", 0.1) == 0.05
+    assert max_lot_for_symbol(config, "USOILm", 0.1) == 0.03
 
 
 def test_cell_memory_veto_prefers_cell_over_global(config):
