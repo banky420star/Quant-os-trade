@@ -10,6 +10,7 @@ from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
 from core.daily_growth import evaluate_daily_growth
 from core.growth_campaign import update_campaign
 from core.exposure import exposure_from_positions, exposure_used_pct
+from core.position_sizing import requires_executable_sizing, resolve_symbol_spec
 from core.trade_limits import unlimited_trades
 from core.utils import read_json_state, utc_now_iso
 
@@ -21,6 +22,20 @@ class RiskManager:
         self.config = config
         self.logger = logger or logging.getLogger("risk_manager")
 
+    def _resolve_position_specs(
+        self,
+        positions: list[dict[str, Any]],
+        symbol_specs: dict[str, dict[str, float]] | None = None,
+    ) -> dict[str, dict[str, float]] | None:
+        if not requires_executable_sizing(self.config):
+            return None
+        specs = dict(symbol_specs or {})
+        for pos in positions:
+            symbol = pos.get("symbol")
+            if symbol and symbol not in specs:
+                specs[symbol] = resolve_symbol_spec(symbol, self.config)
+        return specs or None
+
     def evaluate(
         self,
         positions: list[dict[str, Any]],
@@ -29,6 +44,7 @@ class RiskManager:
         trades: list[dict[str, Any]] | None = None,
         features_data: dict[str, Any] | None = None,
         existing_kill_switch: dict[str, Any] | None = None,
+        symbol_specs: dict[str, dict[str, float]] | None = None,
     ) -> dict[str, Any]:
         """Run all risk checks and produce risk state + kill switch update."""
         balance = balance or {}
@@ -61,7 +77,12 @@ class RiskManager:
         drawdown_base = float(baseline_state.get("starting_cash") or starting)
         drawdown = max(0.0, (drawdown_base - equity) / drawdown_base * 100) if drawdown_base > 0 else 0.0
 
-        symbol_exposure, total_exposure = exposure_from_positions(positions)
+        specs = self._resolve_position_specs(positions, symbol_specs)
+        symbol_exposure, total_exposure = exposure_from_positions(
+            positions,
+            config=self.config,
+            symbol_specs=specs,
+        )
         max_total = float(risk_cfg["max_total_exposure_usd"])
         exp_used = exposure_used_pct(total_exposure, max_total)
         risk_events: list[dict[str, Any]] = []

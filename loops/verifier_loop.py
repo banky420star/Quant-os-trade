@@ -216,6 +216,8 @@ def run() -> dict | None:
             or equity
         )
     symbol_specs = _collect_symbol_specs(config, logger)
+    if symbol_specs:
+        write_json_state("symbol_specs.json", {"timestamp": utc_now_iso(), "specs": symbol_specs})
 
     trades_data = read_json_state("paper_trades.json", default={"trades": []})
     closed_trades = list(trades_data.get("trades", []))

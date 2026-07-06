@@ -68,8 +68,19 @@ def run() -> dict:
         if account.get("balance") is not None:
             balance["cash"] = float(account["balance"])
 
+    symbol_specs_data = read_json_state("symbol_specs.json", default={})
+    symbol_specs = symbol_specs_data.get("specs") or None
+
     manager = RiskManager(config, logger)
-    result = manager.evaluate(positions, orders, balance, trades, features, kill_existing)
+    result = manager.evaluate(
+        positions,
+        orders,
+        balance,
+        trades,
+        features,
+        kill_existing,
+        symbol_specs=symbol_specs,
+    )
 
     if blue_guardian_enabled(config):
         eq = float(balance.get("equity", 0) or 0)
