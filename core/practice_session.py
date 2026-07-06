@@ -152,11 +152,9 @@ def ensure_practice_session(
         report["rebaseline"] = True
         report["starting_cash"] = equity_f
         log.info("Practice baseline reset to current MT5 equity: %.2f", equity_f)
-        if growth_plan_enabled(config):
-            reset_daily_growth_baseline(equity_f, config)
-            report["daily_growth_reset"] = True
-            log.info("Daily growth baseline reset to %.2f (+%.0f%% target today)",
-                     equity_f, config.get("practice", {}).get("growth", {}).get("daily_target_pct", 20))
+        reset_daily_growth_baseline(equity_f, config)
+        report["daily_growth_reset"] = True
+        log.info("Daily growth baseline reset to %.2f (login=%s)", equity_f, account.get("login"))
     elif equity is not None:
         log.info(
             "Practice baseline unchanged (login=%s equity=%.2f)",

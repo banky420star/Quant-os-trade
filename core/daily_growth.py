@@ -38,15 +38,26 @@ def _utc_day() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _account_login() -> int | None:
+    account = read_json_state("account.json", default={})
+    login = account.get("login")
+    return int(login) if login is not None else None
+
+
 def reset_daily_growth_baseline(equity: float, config: dict[str, Any]) -> dict[str, Any]:
-    """Force today's baseline to live equity (practice restart / manual reset)."""
-    if not growth_plan_enabled(config):
-        return {"enabled": False}
+    """Force today's baseline to live equity (practice restart / account switch)."""
     growth = growth_settings(config)
+    micro = (config.get("practice") or {}).get("micro") or {}
+    plan_on = growth_plan_enabled(config)
     target_pct = float(growth.get("daily_target_pct", 20))
+    max_loss_pct = float(
+        micro.get("max_daily_loss_pct")
+        or growth.get("max_daily_loss_pct", 12)
+    )
     equity_f = round(float(equity), 2)
     state = {
-        "enabled": True,
+        "enabled": plan_on,
+        "login": _account_login(),
         "day": _utc_day(),
         "day_start_equity": equity_f,
         "current_equity": equity_f,
@@ -55,7 +66,7 @@ def reset_daily_growth_baseline(equity: float, config: dict[str, Any]) -> dict[s
         "target_pct": target_pct,
         "remaining_pct": target_pct,
         "target_hit": False,
-        "max_daily_loss_pct": float(growth.get("max_daily_loss_pct", 12)),
+        "max_daily_loss_pct": max_loss_pct,
         "trading_paused": False,
         "pause_reason": None,
         "updated_at": utc_now_iso(),
@@ -67,16 +78,30 @@ def reset_daily_growth_baseline(equity: float, config: dict[str, Any]) -> dict[s
 def sync_daily_session(equity: float, config: dict[str, Any]) -> dict[str, Any]:
     """Roll day baseline at UTC midnight; persist progress toward daily target."""
     growth = growth_settings(config)
+    micro = (config.get("practice") or {}).get("micro") or {}
     target_pct = float(growth.get("daily_target_pct", 20))
+    max_loss_pct = float(
+        micro.get("max_daily_loss_pct")
+        or growth.get("max_daily_loss_pct", 12)
+    )
     today = _utc_day()
     state = read_json_state(STATE_FILE, default={})
     equity_f = round(float(equity), 2)
+    login = _account_login()
+    login_changed = (
+        login is not None
+        and state.get("login") is not None
+        and int(login) != int(state["login"])
+    )
 
-    if state.get("day") != today or not state.get("day_start_equity"):
+    if state.get("day") != today or not state.get("day_start_equity") or login_changed:
         state = {
+            "enabled": growth_plan_enabled(config),
+            "login": login,
             "day": today,
             "day_start_equity": equity_f,
             "target_pct": target_pct,
+            "max_daily_loss_pct": max_loss_pct,
             "target_hit": False,
             "trading_paused": False,
             "pause_reason": None,
@@ -116,7 +141,11 @@ def evaluate_daily_growth(
     start = float(state.get("day_start_equity") or equity or 0)
     equity_f = float(equity)
     target_pct = float(state.get("target_pct") or growth.get("daily_target_pct", 20))
-    max_loss_pct = float(growth.get("max_daily_loss_pct", 12))
+    micro = (config.get("practice") or {}).get("micro") or {}
+    max_loss_pct = float(
+        micro.get("max_daily_loss_pct")
+        or growth.get("max_daily_loss_pct", 12)
+    )
     lock_on_target = bool(growth.get("lock_profit_when_target_hit", True))
     continuous = bool(growth.get("continuous_through_campaign", False))
     campaign_days = int(growth.get("campaign_days", 0))

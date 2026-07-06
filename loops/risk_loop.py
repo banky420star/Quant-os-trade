@@ -35,6 +35,32 @@ def run() -> dict:
     if config.get("execution", {}).get("mode") == "mt5":
         baseline = read_json_state("mt5_baseline.json", default={})
         account = read_json_state("account.json", default={})
+        acct_login = account.get("login")
+        if (
+            acct_login is not None
+            and baseline.get("login") is not None
+            and int(acct_login) != int(baseline["login"])
+            and account.get("balance") is not None
+        ):
+            from core.daily_growth import reset_daily_growth_baseline
+            from core.utils import utc_now_iso as _now
+
+            eq = float(account.get("equity") or account["balance"])
+            cash = float(account["balance"])
+            baseline = {
+                "login": int(acct_login),
+                "server": account.get("server", ""),
+                "starting_cash": cash,
+                "set_at": _now(),
+                "source": "risk_loop_login_change",
+            }
+            write_json_state("mt5_baseline.json", baseline)
+            reset_daily_growth_baseline(eq, config)
+            kill_existing = {"kill_switch": False, "reason": None, "activated_at": None}
+            logger.info(
+                "MT5 login changed -> rebaselined to $%.2f and cleared kill switch",
+                cash,
+            )
         if baseline.get("starting_cash"):
             balance["starting_cash"] = float(baseline["starting_cash"])
         if account.get("equity") is not None:

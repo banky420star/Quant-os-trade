@@ -114,6 +114,25 @@ def reset_session_memory() -> None:
             "set_at": now,
         })
 
+    micro = (config.get("practice") or {}).get("micro") or {}
+    growth = (config.get("practice") or {}).get("growth") or {}
+    write_json_state("daily_growth.json", {
+        "enabled": False,
+        "login": int(account["login"]) if account.get("login") else None,
+        "day": now[:10],
+        "day_start_equity": round(equity, 2),
+        "current_equity": round(equity, 2),
+        "daily_pnl": 0.0,
+        "daily_pnl_pct": 0.0,
+        "target_pct": float(growth.get("daily_target_pct", 20)),
+        "remaining_pct": float(growth.get("daily_target_pct", 20)),
+        "target_hit": False,
+        "max_daily_loss_pct": float(micro.get("max_daily_loss_pct") or growth.get("max_daily_loss_pct", 10)),
+        "trading_paused": False,
+        "pause_reason": None,
+        "updated_at": now,
+    })
+
     state_dir = ROOT / "state"
     for name in DELETE_FILES:
         path = state_dir / name
