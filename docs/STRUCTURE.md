@@ -36,6 +36,7 @@ Generated/runtime paths are **gitignored** unless noted.
 | Risk | `risk_manager.py`, `exposure.py`, `daily_growth.py` |
 | Execution | `mt5_broker.py`, `paper_broker.py`, `position_manager.py` |
 | Ops | `audit_log.py`, `ops_alerts.py`, `health_monitor.py` |
+| State (Phase 2) | `state_store.py`, `state_schema.py` |
 
 ### `loops/` — pipeline agents (one file per loop)
 
@@ -60,7 +61,8 @@ YAML overlays merged at startup (`30-real.yaml`, `growth.yaml`, …).
 
 | Script | Purpose |
 |--------|---------|
-| `preflight.py` | Pre-start health checks |
+| `preflight.py` | Pre-start health checks (incl. SQLite DB) |
+| `migrate_json_state_to_sqlite.py` | Import JSON mirrors into `quant_os.db` |
 | `reset_session_memory.py` | Clear kill switch, baselines, memory |
 | `kill_agent.bat` | Stop processes |
 | `launch_all.py` | Full stack launcher |
@@ -79,7 +81,9 @@ Research modules (cell ranking, adaptation evolution).
 
 ### `state/`
 
-Hot JSON written each cycle. Key files:
+**SQLite (Phase 2):** `quant_os.db` — primary hot state when `state_store.enabled: true` (gitignored).
+
+Hot JSON mirrors written each cycle (kept for dashboard + rollback). Key files:
 
 | File | Writer | Consumer |
 |------|--------|----------|
@@ -105,6 +109,7 @@ Parquet candle history (incremental downloads).
 | Path | Notes |
 |------|-------|
 | `docs/PHASE1_UPDATE.md` | Phase 1 release notes (ops + entry pipeline) |
+| `docs/PHASE2_UPDATE.md` | Phase 2 SQLite state store + known issues |
 | `docs/HOW_TO_RUN.md` | Operator runbook |
 | `docs/PIPELINE.md` | Architecture diagrams |
 | `docs/STRUCTURE.md` | This file |

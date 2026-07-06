@@ -19,6 +19,11 @@ adaptation:
   enabled: true
   calibrate_be_trail: true
   rebuild_trade_log: true
+state_store:
+  enabled: true
+  dual_write_json: true
+  read_from_sqlite: true
+  db_path: quant_os.db
 ops:
   alerts:
     enabled: false

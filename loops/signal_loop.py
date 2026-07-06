@@ -21,6 +21,7 @@ from core.strategy_arena import (
     reset_arena,
 )
 from core.strategy_ranker import StrategyRanker
+from core.state_store import sync_store_from_doc
 from core.utils import (
     fail_safe_missing,
     load_config,
@@ -93,6 +94,7 @@ def run() -> dict | None:
         "arena_triggers_recorded": arena_report.get("recorded", 0),
     }
     write_json_state("candidate_signals.json", output)
+    sync_store_from_doc(config, "signals", output)
     write_json_state("strategy_rankings.json", {
         "timestamp": utc_now_iso(),
         "rankings": strategy_rankings,

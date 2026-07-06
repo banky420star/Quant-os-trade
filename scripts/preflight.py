@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.state_store import get_state_store, state_store_enabled
 from core.utils import load_config, read_json_state
 
 
@@ -26,6 +27,21 @@ def run_preflight() -> int:
                 warnings.append(f"agent_lock pid {lock['pid']} still running — run kill_agent.bat first")
         except Exception:
             pass
+
+    if state_store_enabled(config):
+        store = get_state_store(config)
+        if store is None:
+            issues.append("state_store.enabled but StateStore failed to initialize")
+        else:
+            ok, msg = store.health_check()
+            if ok:
+                print(f"  SQLite state store: {msg}")
+                try:
+                    store.seed_from_json()
+                except Exception as exc:
+                    warnings.append(f"SQLite JSON seed skipped: {exc}")
+            else:
+                issues.append(f"SQLite state store unhealthy: {msg}")
 
     kill = read_json_state("kill_switch.json", default={})
     if kill.get("kill_switch"):

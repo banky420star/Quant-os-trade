@@ -17,6 +17,11 @@ from core.mt5_connection_manager import MT5ConnectionManager
 from core.position_sync import fetch_mt5_agent_positions
 from core.trade_limits import enrich_positions_with_orders
 from core.verifier import Verifier
+from core.state_store import (
+    candidates_available,
+    read_candidate_signals,
+    sync_store_from_doc,
+)
 from core.utils import (
     fail_safe_missing,
     load_config,
@@ -143,12 +148,14 @@ def _collect_active_positions(
     try:
         connection.connect()
         active = fetch_mt5_agent_positions(config, logger)
-        write_json_state("paper_positions.json", {
+        positions_doc = {
             "timestamp": utc_now_iso(),
             "mode": "mt5",
             "source": "mt5_sync",
             "positions": active,
-        })
+        }
+        write_json_state("paper_positions.json", positions_doc)
+        sync_store_from_doc(config, "positions", positions_doc)
         return active, "mt5"
     finally:
         connection.disconnect()
@@ -161,12 +168,12 @@ def run() -> dict | None:
     logger.info("Starting verifier loop (mode=%s)", config.get("execution", {}).get("mode", "paper"))
     log_session_alignment(logger)
 
-    if fail_safe_missing("candidate_signals.json", logger):
+    if not candidates_available(config) and fail_safe_missing("candidate_signals.json", logger):
         return None
     if fail_safe_missing("features.json", logger):
         return None
 
-    candidates_data = read_json_state("candidate_signals.json")
+    candidates_data = read_candidate_signals(config) or {}
     candidates = candidates_data.get("candidates", [])
     features = read_json_state("features.json")
     active_positions, position_source = _collect_active_positions(config, logger)
@@ -245,14 +252,12 @@ def run() -> dict | None:
         "equity": equity,
         "candidate_count": len(candidates),
     }
-    write_json_state(
-        "approved_signals.json",
-        {**meta, "count": len(approved), "approved": approved},
-    )
-    write_json_state(
-        "rejected_signals.json",
-        {**meta, "count": len(rejected), "rejected": rejected},
-    )
+    approved_doc = {**meta, "count": len(approved), "approved": approved}
+    rejected_doc = {**meta, "count": len(rejected), "rejected": rejected}
+    write_json_state("approved_signals.json", approved_doc)
+    write_json_state("rejected_signals.json", rejected_doc)
+    sync_store_from_doc(config, "approved", approved_doc)
+    sync_store_from_doc(config, "rejected", rejected_doc)
     if approved:
         from core.signal_archive import archive_signals
 

@@ -43,8 +43,8 @@ flowchart TB
     RL --> SL --> VL --> EL
     EL --> BGL --> PML --> ML --> AL --> TLL --> HL
 
-    SL -.->|candidate_signals.json| VL
-    VL -.->|approved_signals.json| EL
+    SL -.->|SQLite + candidate_signals.json| VL
+    VL -.->|SQLite + approved_signals.json| EL
     RL -.->|kill_switch.json| VL
     RL -.->|kill_switch.json| EL
 ```
@@ -98,11 +98,15 @@ Configure in `trading.strategy_entries` (enabled on `30-real` profile).
 
 ## State files (hot path)
 
-| File | Writer | Reader |
-|------|--------|--------|
+**Phase 2:** Loops dual-write `state/quant_os.db` (SQLite) and JSON mirrors. See [PHASE2_UPDATE.md](PHASE2_UPDATE.md).
+
+| File / store | Writer | Reader |
+|--------------|--------|--------|
+| `quant_os.db` → `signals` | signal_loop | verifier_loop |
+| `quant_os.db` → `approved_signals` | verifier_loop | execution_loop |
 | `features.json` | feature_loop | signal_loop |
-| `candidate_signals.json` | signal_loop | verifier_loop |
-| `approved_signals.json` | verifier_loop | execution_loop |
+| `candidate_signals.json` (mirror) | signal_loop | dashboard |
+| `approved_signals.json` (mirror) | verifier_loop | dashboard |
 | `paper_positions.json` | execution / position sync | risk, verifier, entry pipeline |
 | `kill_switch.json` | risk_loop | verifier, execution |
 | `audit_log.jsonl` | verifier, execution, risk | ops / forensics |
@@ -119,4 +123,6 @@ flowchart TB
     P1 --> P2 --> P3 --> P4
 ```
 
-Phase 1 (this update): `audit_log.jsonl`, `ops.alerts` webhooks, `scripts/preflight.py`, entry pipeline refinement.
+Phase 1: `audit_log.jsonl`, `ops.alerts` webhooks, `scripts/preflight.py`, entry pipeline refinement.
+
+Phase 2 (current): `core/state_store.py`, dual-write SQLite + JSON mirrors, `scripts/migrate_json_state_to_sqlite.py`.

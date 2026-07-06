@@ -14,6 +14,11 @@ from core.mt5_connection_manager import MT5ConnectionManager
 from core.mt5_broker import MT5Broker
 from core.paper_broker import PaperBroker
 from core.trade_tracker import TradeTracker
+from core.state_store import (
+    approved_available,
+    read_approved_signals,
+    sync_store_from_doc,
+)
 from core.utils import (
     fail_safe_missing,
     load_config,
@@ -103,10 +108,10 @@ def run() -> dict | None:
         logger.error("Execution blocked — Blue Guardian daily pause: %s", bg.get("pause_reason"))
         return None
 
-    if fail_safe_missing("approved_signals.json", logger):
+    if not approved_available(config) and fail_safe_missing("approved_signals.json", logger):
         return None
 
-    approved_data = read_json_state("approved_signals.json")
+    approved_data = read_approved_signals(config) or {}
     approved = approved_data.get("approved", [])
 
     if not approved:
@@ -133,23 +138,29 @@ def run() -> dict | None:
                 existing_trades=trades,
                 existing_positions=positions,
             )
-            write_json_state("paper_orders.json", {
+            orders_doc = {
                 "timestamp": result["timestamp"],
                 "mode": "mt5",
                 "balance": result["balance"],
                 "account": result["account"],
                 "orders": result["orders"],
-            })
-            write_json_state("paper_positions.json", {
+            }
+            positions_doc = {
                 "timestamp": result["timestamp"],
                 "mode": "mt5",
                 "positions": result["positions"],
-            })
-            write_json_state("paper_trades.json", {
+            }
+            trades_doc = {
                 "timestamp": result["timestamp"],
                 "mode": "mt5",
                 "trades": result["trades"],
-            })
+            }
+            write_json_state("paper_orders.json", orders_doc)
+            write_json_state("paper_positions.json", positions_doc)
+            write_json_state("paper_trades.json", trades_doc)
+            sync_store_from_doc(config, "orders", orders_doc)
+            sync_store_from_doc(config, "positions", positions_doc)
+            sync_store_from_doc(config, "trades", trades_doc)
             new_closed = result.get("new_closed_trades", [])
             if new_closed:
                 wins = sum(1 for t in new_closed if t.get("result") == "win")
@@ -198,9 +209,15 @@ def run() -> dict | None:
             wins = sum(1 for t in added if t.get("result") == "win")
             logger.info("Paper closed trades: %d new (%d wins, %d losses)", len(added), wins, len(added) - wins)
 
-        write_json_state("paper_orders.json", {"timestamp": result["timestamp"], "balance": result["balance"], "orders": result["orders"]})
-        write_json_state("paper_positions.json", {"timestamp": result["timestamp"], "positions": result["positions"]})
-        write_json_state("paper_trades.json", {"timestamp": result["timestamp"], "trades": result["trades"]})
+        orders_doc = {"timestamp": result["timestamp"], "balance": result["balance"], "orders": result["orders"]}
+        positions_doc = {"timestamp": result["timestamp"], "positions": result["positions"]}
+        trades_doc = {"timestamp": result["timestamp"], "trades": result["trades"]}
+        write_json_state("paper_orders.json", orders_doc)
+        write_json_state("paper_positions.json", positions_doc)
+        write_json_state("paper_trades.json", trades_doc)
+        sync_store_from_doc(config, "orders", orders_doc)
+        sync_store_from_doc(config, "positions", positions_doc)
+        sync_store_from_doc(config, "trades", trades_doc)
         logger.info("Paper portfolio: cash=%.2f equity=%.2f positions=%d", result["balance"]["cash"], result["balance"]["equity"], len(result["positions"]))
         return result
 
