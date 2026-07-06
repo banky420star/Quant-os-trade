@@ -10,12 +10,14 @@ from core.trade_limits import symbol_reentry_available
 from core.utils import load_config, write_json_state
 
 
-def test_micro_risk_cap_is_ten_dollars():
+def test_micro_risk_cap_is_ten_dollars(monkeypatch):
+    monkeypatch.setenv("MT5_QUANT_PROFILE", "30-real")
     config = load_config()
     assert risk_per_trade_cap(config) == 10.0
 
 
-def test_effective_risk_cap_never_exceeds_balance():
+def test_effective_risk_cap_never_exceeds_balance(monkeypatch):
+    monkeypatch.setenv("MT5_QUANT_PROFILE", "30-real")
     config = load_config()
     assert effective_risk_cap(config, 7.5) == 7.5
     assert effective_risk_cap(config, 30.0) == 10.0
