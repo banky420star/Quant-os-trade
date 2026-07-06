@@ -70,17 +70,22 @@ Preflight initializes the DB, checks writability, and seeds from JSON mirrors wh
 
 ---
 
-## Known issue — if trade analytics look wrong
+## Phase 2.1 — Exit classification (fixed)
 
-**Do not trust SQLite `trades` exit labels until this is fixed.**
+`near_take_profit()` now uses **0.15% tolerance** (not 15%), checks **side direction**, and `trade_tracker` only labels `take_profit` when **PnL > 0**.
 
-`core/exit_manager.py` → `near_take_profit()` uses `tolerance_pct=0.15`, which is **15% of TP price**, not 0.15%. That mislabels many closes as `take_profit` when they were losses or other exit types (especially indices and oil).
+## Phase 2.2 — Evaluation loop
 
-Symptoms:
+`evaluation_loop` runs after `signal_loop`, writes `evaluated_signals.json` + SQLite `evaluated_signals`. Verifier reads evaluated signals when `evaluation.enabled: true`.
 
-- Closed trades with **negative PnL** and `exit_reason: take_profit`
-- Win/loss stats and adaptation inputs skewed
+Config:
 
-If Phase 2 “goes wrong” on trade forensics or performance metrics, **check this first** before blaming SQLite dual-write. The bug is in exit classification (`trade_tracker.py` / `exit_manager.py`), not in the state store layer.
+```yaml
+evaluation:
+  enabled: true
+  mode: shadow
+  min_policy_score: 35
+  skip_below_score: 25
+```
 
-Planned fix (Phase 2.1 or alongside): symbol-aware tick tolerance (e.g. `0.0015` or points-based), then re-classify or re-import `trades`.
+Each evaluated signal carries `execution_policy` and `management_profile` for position manager.

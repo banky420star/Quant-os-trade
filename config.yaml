@@ -24,6 +24,11 @@ state_store:
   dual_write_json: true
   read_from_sqlite: true
   db_path: quant_os.db
+evaluation:
+  enabled: true
+  mode: shadow
+  min_policy_score: 35
+  skip_below_score: 25
 ops:
   alerts:
     enabled: false

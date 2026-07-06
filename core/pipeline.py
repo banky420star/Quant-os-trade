@@ -15,6 +15,7 @@ def _init_loops() -> list[tuple[str, Any]]:
     from loops import (
         blue_guardian_loop,
         data_loop,
+        evaluation_loop,
         execution_loop,
         feature_loop,
         adaptation_loop,
@@ -33,6 +34,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         ("market_context_loop", market_context_loop.run),
         ("risk_loop", risk_loop.run),
         ("signal_loop", signal_loop.run),
+        ("evaluation_loop", evaluation_loop.run),
         ("verifier_loop", verifier_loop.run),
         ("execution_loop", execution_loop.run),
         ("blue_guardian_loop", blue_guardian_loop.run),

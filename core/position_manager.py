@@ -46,6 +46,27 @@ def _symbol_overrides(cfg: dict[str, Any], symbol: str) -> dict[str, Any]:
     return dict(cfg.get("per_symbol", {}).get(symbol, {}))
 
 
+def _merge_management_profile(
+    be_sym: dict[str, Any],
+    trail_sym: dict[str, Any],
+    position: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply per-trade management_profile from evaluation_loop when present."""
+    meta = position.get("signal_meta") or {}
+    prof = position.get("management_profile") or meta.get("management_profile")
+    if not isinstance(prof, dict) or not prof:
+        return be_sym, trail_sym
+    be_out = dict(be_sym)
+    trail_out = dict(trail_sym)
+    if prof.get("break_even_trigger_r") is not None:
+        be_out["trigger_atr_mult"] = float(prof["break_even_trigger_r"])
+    if prof.get("trail_start_r") is not None:
+        trail_out["activation_atr_mult"] = float(prof["trail_start_r"])
+    if prof.get("trail_atr_mult") is not None:
+        trail_out["trail_points_atr_mult"] = float(prof["trail_atr_mult"])
+    return be_out, trail_out
+
+
 # Live data-driven overrides for BE/trailing (calibrate_be_trail.py ->
 # state/symbol_be_trail_live.json). Honored only when ``trusted`` (n>=50 +
 # beats seed + ci95 lo>0). Same pattern as strategy_entry._sltp_cfg.
@@ -345,6 +366,7 @@ def compute_managed_sl(
     trail_cfg = _trail_cfg(config)
     be_sym = _symbol_overrides(be_cfg, symbol)
     trail_sym = _symbol_overrides(trail_cfg, symbol)
+    be_sym, trail_sym = _merge_management_profile(be_sym, trail_sym, position)
     # Data-driven live override (scripts/calibrate_be_trail.py). Trusted only.
     be_sym, trail_sym, _applied = _merge_live(be_sym, trail_sym, symbol, _load_live_mgmt())
 

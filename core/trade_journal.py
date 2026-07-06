@@ -57,6 +57,10 @@ def snapshot_signal_meta(
         "move_type": mc.get("move_type"),
         "trigger_summary": signal.get("trigger_summary"),
         "trigger_context": signal.get("trigger_context"),
+        "management_profile": signal.get("management_profile"),
+        "execution_policy": signal.get("execution_policy"),
+        "evaluation": signal.get("evaluation"),
+        "entry_quality": signal.get("entry_quality"),
     }
 
 

@@ -177,6 +177,44 @@ class StateStore:
         rejected = [json.loads(r[0]) for r in rows]
         return {**meta, "rejected": rejected, "count": len(rejected)}
 
+    def write_evaluated(self, doc: dict[str, Any]) -> None:
+        ts = doc.get("timestamp") or utc_now_iso()
+        evaluated = list(doc.get("evaluated") or [])
+        meta = {k: v for k, v in doc.items() if k not in ("evaluated", "skipped")}
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM evaluated_signals")
+                for row in evaluated:
+                    sid = str(row.get("signal_id") or uuid.uuid4())
+                    ev = row.get("evaluation") or {}
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO evaluated_signals
+                            (signal_id, symbol, action, policy_score, created_at, raw_json)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            sid,
+                            row.get("symbol", ""),
+                            ev.get("action") or row.get("execution_policy", {}).get("action"),
+                            _float_or_none(ev.get("policy_score")),
+                            ts,
+                            json.dumps(row, default=str),
+                        ),
+                    )
+                self._set_kv(conn, "evaluated_signals_meta", meta, ts)
+                conn.commit()
+
+    def read_evaluated(self) -> dict[str, Any]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT raw_json FROM evaluated_signals ORDER BY created_at DESC"
+                ).fetchall()
+                meta = self._get_kv(conn, "evaluated_signals_meta", default={})
+        evaluated = [json.loads(r[0]) for r in rows]
+        return {**meta, "evaluated": evaluated, "count": len(evaluated)}
+
     def write_positions(self, doc: dict[str, Any]) -> None:
         ts = doc.get("timestamp") or utc_now_iso()
         positions = list(doc.get("positions") or [])
@@ -460,6 +498,38 @@ def sync_store_from_doc(config: dict[str, Any], kind: str, doc: dict[str, Any]) 
         store.write_orders(doc)
     elif kind == "trades":
         store.write_trades(doc)
+    elif kind == "evaluated":
+        store.write_evaluated(doc)
+
+
+def read_evaluated_signals(config: dict[str, Any]) -> dict[str, Any] | None:
+    if read_from_sqlite(config):
+        store = get_state_store(config)
+        if store:
+            doc = store.read_evaluated()
+            if doc.get("evaluated") is not None:
+                return doc
+    return read_json_state("evaluated_signals.json")
+
+
+def evaluated_available(config: dict[str, Any]) -> bool:
+    if read_from_sqlite(config):
+        store = get_state_store(config)
+        if store and store.read_evaluated().get("evaluated") is not None:
+            return True
+    return (STATE_DIR / "evaluated_signals.json").exists()
+
+
+def read_verifier_candidates(config: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Prefer evaluated signals when evaluation layer is enabled."""
+    from core.evaluation_policy import evaluation_enabled
+
+    if evaluation_enabled(config):
+        ev_doc = read_evaluated_signals(config) or {}
+        if ev_doc.get("evaluated") is not None:
+            return ev_doc, list(ev_doc.get("evaluated") or [])
+    cand_doc = read_candidate_signals(config) or {}
+    return cand_doc, list(cand_doc.get("candidates") or [])
 
 
 def candidates_available(config: dict[str, Any]) -> bool:

@@ -17,9 +17,11 @@ from core.mt5_connection_manager import MT5ConnectionManager
 from core.position_sync import fetch_mt5_agent_positions
 from core.trade_limits import enrich_positions_with_orders
 from core.verifier import Verifier
+from core.evaluation_policy import evaluation_enabled
 from core.state_store import (
     candidates_available,
-    read_candidate_signals,
+    evaluated_available,
+    read_verifier_candidates,
     sync_store_from_doc,
 )
 from core.utils import (
@@ -168,13 +170,21 @@ def run() -> dict | None:
     logger.info("Starting verifier loop (mode=%s)", config.get("execution", {}).get("mode", "paper"))
     log_session_alignment(logger)
 
-    if not candidates_available(config) and fail_safe_missing("candidate_signals.json", logger):
+    has_input = candidates_available(config) or (
+        evaluation_enabled(config) and evaluated_available(config)
+    )
+    if not has_input and fail_safe_missing("candidate_signals.json", logger):
         return None
     if fail_safe_missing("features.json", logger):
         return None
 
-    candidates_data = read_candidate_signals(config) or {}
-    candidates = candidates_data.get("candidates", [])
+    candidates_data, candidates = read_verifier_candidates(config)
+    if evaluation_enabled(config):
+        logger.info(
+            "Verifier input: %d evaluated signals (mode=%s)",
+            len(candidates),
+            (candidates_data or {}).get("mode", "n/a"),
+        )
     features = read_json_state("features.json")
     active_positions, position_source = _collect_active_positions(config, logger)
     orders_data = read_json_state("paper_orders.json", default={"orders": []})

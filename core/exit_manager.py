@@ -184,8 +184,29 @@ def resolve_tp_levels(
     return tp1, tp2
 
 
-def near_take_profit(exit_price: float, tp: float, *, tolerance_pct: float = 0.15) -> bool:
+def near_take_profit(
+    exit_price: float,
+    tp: float,
+    *,
+    side: str | None = None,
+    point: float | None = None,
+    tolerance_pct: float = 0.0015,
+    max_tolerance_points: int = 80,
+) -> bool:
+    """True only when exit is on the profitable side of TP within a tight band.
+
+    ``tolerance_pct`` is a fraction of TP price (0.0015 = 0.15%), not 15%.
+    """
     if tp <= 0 or exit_price <= 0:
         return False
     tol = abs(tp) * tolerance_pct
-    return abs(exit_price - tp) <= max(tol, 1e-6)
+    if point and point > 0:
+        tol = min(tol, max_tolerance_points * point)
+        tol = max(tol, point * 2)
+    else:
+        tol = max(tol, 1e-6)
+    if side == "BUY":
+        return exit_price >= tp - tol
+    if side == "SELL":
+        return exit_price <= tp + tol
+    return abs(exit_price - tp) <= tol

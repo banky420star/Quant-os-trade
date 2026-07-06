@@ -19,8 +19,9 @@ flowchart TB
     end
 
     subgraph decide["3 — Strategy & entry"]
-        SL[signal_loop<br/>DecisionEngine + EntryPipeline]
-        VL[verifier_loop<br/>gates · confirm · exposure]
+    SL[signal_loop<br/>DecisionEngine + EntryPipeline]
+    EV[evaluation_loop<br/>corrective policy · shadow]
+    VL[verifier_loop<br/>gates · confirm · exposure]
     end
 
     subgraph execute["4 — Execution & management"]
@@ -40,10 +41,11 @@ flowchart TB
     end
 
     DL --> FL --> MCL --> RL
-    RL --> SL --> VL --> EL
+    RL --> SL --> EV --> VL --> EL
     EL --> BGL --> PML --> ML --> AL --> TLL --> HL
 
-    SL -.->|SQLite + candidate_signals.json| VL
+    SL -.->|candidate_signals| EV
+    EV -.->|evaluated_signals| VL
     VL -.->|SQLite + approved_signals.json| EL
     RL -.->|kill_switch.json| VL
     RL -.->|kill_switch.json| EL

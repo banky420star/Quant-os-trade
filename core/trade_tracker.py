@@ -177,7 +177,11 @@ class TradeTracker:
             tp2 = float(meta.get("tp2") or 0)
             if mgmt_row.get("partial_tp_done") and deal.comment and "partial" in deal.comment.lower():
                 exit_reason = "partial_take_profit"
-            elif near_take_profit(exit_price, tp2 if mgmt_row.get("partial_tp_done") and tp2 > 0 else tp1):
+            elif float(deal.profit) > 0 and near_take_profit(
+                exit_price,
+                tp2 if mgmt_row.get("partial_tp_done") and tp2 > 0 else tp1,
+                side=side,
+            ):
                 exit_reason = "take_profit"
             elif trail_active:
                 exit_reason = "trailing_stop"

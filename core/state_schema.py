@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -120,4 +120,15 @@ CREATE TABLE IF NOT EXISTS kv_state (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS evaluated_signals (
+    signal_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    action TEXT,
+    policy_score REAL,
+    created_at TEXT NOT NULL,
+    raw_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluated_action ON evaluated_signals(action);
 """
