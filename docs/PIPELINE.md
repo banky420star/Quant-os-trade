@@ -1,5 +1,7 @@
 # MT5 Quant OS — Pipeline Architecture
 
+Back to [README](../README.md) · [Structure](STRUCTURE.md) · [How to run](HOW_TO_RUN.md)
+
 ## Trading cycle (every ~45s)
 
 Each supervisor tick runs **one sequential pipeline**. A failure in one loop is isolated — later loops still run.

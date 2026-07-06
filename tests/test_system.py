@@ -97,7 +97,7 @@ def test_logs_created():
 
 
 def test_state_md_updated():
-    content = (ROOT / "STATE.md").read_text(encoding="utf-8")
+    content = (ROOT / "docs" / "STATE.md").read_text(encoding="utf-8")
     assert "Last run:" in content
     assert "## Loop Status" in content
     assert "**Mode:**" in content

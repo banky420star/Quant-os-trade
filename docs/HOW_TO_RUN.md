@@ -1,5 +1,7 @@
 # MT5 Quant OS — How to Run
 
+Back to [README](../README.md).
+
 Repo: https://github.com/banky420star/Quant-os-trade.git  
 Active branch: `blue-guardian`
 
@@ -16,7 +18,7 @@ Active branch: `blue-guardian`
 Install dependencies from the project root:
 
 ```powershell
-cd mt5_quant_agent
+cd Quant-os-trade
 pip install -r requirements.txt
 ```
 
@@ -172,7 +174,8 @@ Exits 0 when ready; reports kill switch, health, and `trade_allowed` blockers.
 
 ## Pipeline architecture
 
-See **`PIPELINE.md`** for the full loop diagram, entry strategy flow, and hardening roadmap.
+See **[PIPELINE.md](PIPELINE.md)** for the full loop diagram, entry strategy flow, and hardening roadmap.  
+Repository layout: **[STRUCTURE.md](STRUCTURE.md)**.
 
 ## Ops alerts (optional)
 

@@ -1,6 +1,8 @@
 # MT5 Quant OS — Team Map
 
-> Open this folder as an Obsidian vault: **File → Open folder as vault** → `mt5_quant_agent/obsidian`
+> Open this folder as an Obsidian vault: **File → Open folder as vault** → `obsidian/`
+
+**Operator docs (repo root):** [README](../README.md) · [HOW_TO_RUN](../docs/HOW_TO_RUN.md) · [PIPELINE](../docs/PIPELINE.md) · [STRUCTURE](../docs/STRUCTURE.md)
 
 ## Status
 
