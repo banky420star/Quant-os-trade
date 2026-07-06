@@ -104,6 +104,7 @@ Parquet candle history (incremental downloads).
 
 | Path | Notes |
 |------|-------|
+| `docs/PHASE1_UPDATE.md` | Phase 1 release notes (ops + entry pipeline) |
 | `docs/HOW_TO_RUN.md` | Operator runbook |
 | `docs/PIPELINE.md` | Architecture diagrams |
 | `docs/STRUCTURE.md` | This file |

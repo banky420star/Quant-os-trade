@@ -20,6 +20,7 @@ Open **http://127.0.0.1:8080** — MT5 must be logged in with **Algo Trading** e
 
 | Doc | Purpose |
 |-----|---------|
+| [docs/PHASE1_UPDATE.md](docs/PHASE1_UPDATE.md) | Phase 1 release notes — ops hardening + entry pipeline (`65de9df`) |
 | [docs/HOW_TO_RUN.md](docs/HOW_TO_RUN.md) | Setup, profiles, start/stop, reset, troubleshooting |
 | [docs/PIPELINE.md](docs/PIPELINE.md) | Loop diagram, entry flow, hardening roadmap |
 | [docs/STRUCTURE.md](docs/STRUCTURE.md) | Repository layout and where things live |

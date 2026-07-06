@@ -1,6 +1,6 @@
 # MT5 Quant OS — Pipeline Architecture
 
-Back to [README](../README.md) · [Structure](STRUCTURE.md) · [How to run](HOW_TO_RUN.md)
+Back to [README](../README.md) · [Phase 1 update](PHASE1_UPDATE.md) · [Structure](STRUCTURE.md) · [How to run](HOW_TO_RUN.md)
 
 ## Trading cycle (every ~45s)
 
