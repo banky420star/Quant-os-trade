@@ -56,7 +56,11 @@ def send_alert(
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # Cloudflare returns 1010 on datacenter IPs without a browser UA.
+            "User-Agent": "Mozilla/5.0 (compatible; MT5-Quant-OS/1.0)",
+        },
         method="POST",
     )
     try:
