@@ -47,6 +47,9 @@ STATE_FILES = (
     "replay_job.json",
     "forward_test_ledger.json",
     "symbol_policy_live.json",
+    "evaluated_signals.json",
+    "policy_scores.json",
+    "best_policies.json",
     "trade_log.json",
     "blue_guardian.json",
     "blue_guardian_actions.json",
@@ -521,6 +524,160 @@ def _run_replay_job(symbol: str | None, max_bars: int) -> None:
         })
 
 
+def _policy_lookup_key(symbol: str, setup: str, session: str) -> str:
+    return f"{symbol}|{setup or ''}|{session or ''}"
+
+
+def _lookup_best_policy(
+    best_policies: dict,
+    symbol: str,
+    setup: str,
+    session: str,
+) -> dict | None:
+    """Resolve best policy for symbol/setup/session from flexible state shapes."""
+    if not best_policies:
+        return None
+    key = _policy_lookup_key(symbol, setup, session)
+    by_key = (
+        best_policies.get("by_key")
+        or best_policies.get("policies_by_key")
+        or best_policies.get("lookup")
+        or {}
+    )
+    if isinstance(by_key, dict) and key in by_key:
+        return by_key[key]
+
+    policies = best_policies.get("policies") or best_policies.get("best") or []
+    if isinstance(policies, list):
+        for row in policies:
+            if row.get("symbol") != symbol:
+                continue
+            if setup and row.get("setup") not in (setup, row.get("setup_type")):
+                continue
+            if session and row.get("session") not in (session, None, ""):
+                continue
+            return row
+
+    sym_block = (best_policies.get("symbols") or {}).get(symbol) or {}
+    if isinstance(sym_block, dict):
+        if setup and setup in sym_block:
+            cell = sym_block[setup]
+            return cell if isinstance(cell, dict) else None
+        if session and session in sym_block:
+            cell = sym_block[session]
+            return cell if isinstance(cell, dict) else None
+    return None
+
+
+def _build_evaluation_policy_row(
+    signal: dict,
+    *,
+    best_policy: dict | None = None,
+    fallback_mode: str = "shadow",
+) -> dict:
+    """Normalize one evaluated/skipped signal for the dashboard panel."""
+    ev = signal.get("evaluation") or {}
+    ep = signal.get("execution_policy") or {}
+    mgmt = signal.get("management_profile") or {}
+    ctx = signal.get("market_context") or {}
+    session = ctx.get("session") if isinstance(ctx, dict) else None
+    recent = ev.get("recent_symbol_stats") or {}
+    entry_type = ep.get("entry_type") or ev.get("entry_mode") or mgmt.get("entry_type")
+    trail_on = bool(mgmt.get("trailing_enabled", True))
+    trail_model = (
+        f"ATR×{mgmt.get('trail_atr_mult')}"
+        if trail_on and mgmt.get("trail_atr_mult") is not None
+        else ("off" if not trail_on else "atr")
+    )
+
+    row = {
+        "symbol": signal.get("symbol"),
+        "side": signal.get("side"),
+        "setup": signal.get("setup_type"),
+        "session": session,
+        "entry_type": entry_type,
+        "limit_offset_atr": (
+            ep.get("entry_offset_atr")
+            if entry_type == "limit"
+            else mgmt.get("limit_offset_atr")
+        ),
+        "sl_model": mgmt.get("sl_model"),
+        "sl_atr_mult": mgmt.get("sl_atr_mult"),
+        "tp_model": mgmt.get("tp_model"),
+        "tp1_r": mgmt.get("tp1_r"),
+        "be_trigger_r": mgmt.get("break_even_trigger_r"),
+        "trail_model": trail_model,
+        "trail_start_r": mgmt.get("trail_start_r"),
+        "policy_score": ev.get("policy_score"),
+        "reason": ev.get("reason"),
+        "sample_size": int(recent.get("n") or 0),
+        "mode": ev.get("mode") or fallback_mode,
+        "action": ev.get("action") or ep.get("action"),
+        "confidence": signal.get("confidence"),
+        "confidence_adjusted": ep.get("confidence_adjusted"),
+    }
+    if best_policy:
+        row["best_policy"] = {
+            "entry_type": best_policy.get("entry_type"),
+            "policy_score": best_policy.get("policy_score") or best_policy.get("score"),
+            "reason": best_policy.get("reason") or best_policy.get("label"),
+            "sample_size": best_policy.get("sample_size") or best_policy.get("n"),
+            "mode": best_policy.get("mode"),
+        }
+    return row
+
+
+def _build_evaluation_policy(
+    evaluated_data: dict,
+    policy_scores: dict,
+    best_policies: dict,
+    config: dict,
+) -> dict:
+    """Dashboard-friendly evaluation policy snapshot."""
+    eval_cfg = config.get("evaluation") or {}
+    fallback_mode = str(evaluated_data.get("mode") or eval_cfg.get("mode") or "shadow")
+    evaluated = list(evaluated_data.get("evaluated") or [])
+    skipped = list(evaluated_data.get("skipped") or [])
+
+    rows: list[dict] = []
+    for signal in evaluated + skipped:
+        ctx = signal.get("market_context") or {}
+        session = ctx.get("session") if isinstance(ctx, dict) else None
+        setup = str(signal.get("setup_type") or "")
+        symbol = str(signal.get("symbol") or "")
+        best = _lookup_best_policy(best_policies, symbol, setup, str(session or ""))
+        rows.append(
+            _build_evaluation_policy_row(
+                signal,
+                best_policy=best,
+                fallback_mode=fallback_mode,
+            )
+        )
+
+    scores_block = {}
+    if policy_scores:
+        scores_block = (
+            policy_scores.get("scores")
+            or policy_scores.get("summary")
+            or policy_scores.get("by_symbol")
+            or policy_scores
+        )
+
+    return {
+        "timestamp": evaluated_data.get("timestamp"),
+        "mode": fallback_mode,
+        "enabled": bool(eval_cfg.get("enabled", True)),
+        "min_policy_score": float(eval_cfg.get("min_policy_score") or 35),
+        "skip_below_score": float(eval_cfg.get("skip_below_score") or 25),
+        "count": len(evaluated),
+        "skipped_count": evaluated_data.get("skipped_count", len(skipped)),
+        "candidate_count": evaluated_data.get("candidate_count"),
+        "rows": rows,
+        "policy_scores": scores_block if isinstance(scores_block, dict) else {},
+        "best_policies_present": bool(best_policies),
+    }
+
+
 def _build_trading_status(
     kill_switch: dict,
     risk_state: dict,
@@ -715,6 +872,12 @@ def aggregate_state(*, lite: bool = False) -> dict:
         live_trading_enabled=bool(
             config.get("execution", {}).get("live_trading_enabled", False)
         ),
+    )
+    payload["evaluation_policy"] = _build_evaluation_policy(
+        payload.get("evaluated_signals", {}),
+        payload.get("policy_scores", {}),
+        payload.get("best_policies", {}),
+        config,
     )
     payload["logs"] = _tail_log(50)
     # Surface the bot's MT5 connection state as a top-level `connection` field

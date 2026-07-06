@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -131,4 +131,25 @@ CREATE TABLE IF NOT EXISTS evaluated_signals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_evaluated_action ON evaluated_signals(action);
+
+CREATE TABLE IF NOT EXISTS policy_scores (
+    policy_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    setup_type TEXT,
+    session TEXT,
+    entry_type TEXT,
+    limit_offset_atr REAL,
+    sl_atr_mult REAL,
+    tp1_r REAL,
+    be_trigger_r REAL,
+    trail_start_r REAL,
+    score REAL,
+    sample_n INTEGER,
+    created_at TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    PRIMARY KEY (policy_id, symbol, setup_type, session)
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_scores_symbol ON policy_scores(symbol);
+CREATE INDEX IF NOT EXISTS idx_policy_scores_score ON policy_scores(score);
 """

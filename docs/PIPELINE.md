@@ -127,4 +127,4 @@ flowchart TB
 
 Phase 1: `audit_log.jsonl`, `ops.alerts` webhooks, `scripts/preflight.py`, entry pipeline refinement.
 
-Phase 2 (current): `core/state_store.py`, dual-write SQLite + JSON mirrors, `scripts/migrate_json_state_to_sqlite.py`.
+Phase 2 (current): `core/state_store.py`, dual-write SQLite + JSON mirrors, `evaluation_loop`, `policy_detection_loop`, `policy_optimizer_loop` (shadow mode), dashboard Evaluation Policy panel.

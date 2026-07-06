@@ -767,6 +767,13 @@
             <div class="card" id="signalsCard"><div class="card-title">Recent Signals</div><div id="signalsTable"></div></div>
             <div class="card" id="tradesCard"><div class="card-title">Closed Trades</div><div id="tradesTable"></div></div>
           </div>
+          <div class="card" id="evaluationPolicyCard">
+            <div class="section-head">
+              <div class="card-title">Evaluation Policy</div>
+              <span class="hint">Entry + management recipe per evaluated signal</span>
+            </div>
+            <div id="evaluationPolicyPanel"><p class="empty">Waiting for evaluation_loop…</p></div>
+          </div>
           <div class="card" id="culturingCard">
             <div class="card-title">Culturing Ledger — Data-Driven Veto</div>
             <div id="culturingPanel"><p class="empty">Waiting for forward_test_loop…</p></div>
@@ -1949,7 +1956,72 @@
         ${trades.slice(-6).reverse().map(t=>`<tr><td>${t.symbol}</td><td><span class="badge ${t.result==="win"?"ok":"bad"}">${t.result}</span></td><td>$${fmt(t.pnl)}</td></tr>`).join("")}
         </tbody></table>` : '<p class="empty">No trades</p>';
 
+      renderEvaluationPolicy(data);
       renderCulturing(data);
+    }
+
+    function renderEvaluationPolicy(data) {
+      const el = document.getElementById("evaluationPolicyPanel");
+      if (!el) return;
+      const ep = data.evaluation_policy || {};
+      const rows = ep.rows || [];
+      if (!rows.length) {
+        const enabled = ep.enabled !== false;
+        el.innerHTML = `<p class="empty">${enabled
+          ? "No evaluated signals yet — evaluation_loop runs after signal_loop."
+          : "Evaluation disabled — enable evaluation.enabled in config."}</p>`;
+        return;
+      }
+      const modeCls = ep.mode === "auto" ? "ok" : ep.mode === "suggest" ? "warn" : "";
+      const head = `<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)">
+        <span>mode <strong style="color:var(--text)"><span class="badge ${modeCls}">${ep.mode || "shadow"}</span></strong></span>
+        <span>executable <strong style="color:var(--green)">${ep.count || 0}</strong></span>
+        <span>skipped <strong style="color:var(--orange)">${ep.skipped_count || 0}</strong></span>
+        <span>min score <strong style="color:var(--text)">${fmt(ep.min_policy_score, 0)}</strong></span>
+        <span>skip below <strong style="color:var(--text)">${fmt(ep.skip_below_score, 0)}</strong></span>
+        ${ep.best_policies_present ? `<span>best policies <strong style="color:var(--blue)">loaded</strong></span>` : ""}
+        ${ep.timestamp ? `<span>updated <strong style="color:var(--text)">${ep.timestamp}</strong></span>` : ""}
+      </div>`;
+      const scoreColor = (s) => {
+        if (s == null || isNaN(s)) return "var(--muted)";
+        if (s >= (ep.min_policy_score || 35)) return "var(--green)";
+        if (s >= (ep.skip_below_score || 25)) return "var(--orange)";
+        return "var(--red)";
+      };
+      const table = `<div style="overflow-x:auto"><table style="font-size:11px;min-width:100%"><thead><tr>
+        <th>Symbol</th><th>Setup</th><th>Session</th><th>Entry</th><th>Offset ATR</th>
+        <th>SL</th><th>TP</th><th>BE</th><th>Trail</th>
+        <th>Score</th><th>Reason</th><th>N</th><th>Mode</th><th>Action</th>
+        </tr></thead><tbody>
+        ${rows.map(r => {
+          const act = r.action || "execute";
+          const actCls = act === "skip" ? "bad" : "ok";
+          const setup = (r.setup || "—").replace(/_/g, " ");
+          const sl = r.sl_model ? `${r.sl_model}${r.sl_atr_mult != null ? " ×"+fmt(r.sl_atr_mult,2) : ""}` : "—";
+          const tp = r.tp_model ? `${r.tp_model}${r.tp1_r != null ? " "+fmt(r.tp1_r,2)+"R" : ""}` : "—";
+          const be = r.be_trigger_r != null ? fmt(r.be_trigger_r,2)+"R" : "—";
+          const trail = r.trail_model ? `${r.trail_model}${r.trail_start_r != null ? " @"+fmt(r.trail_start_r,2)+"R" : ""}` : "—";
+          const reason = (r.reason || "—").length > 48 ? (r.reason || "").slice(0,45)+"…" : (r.reason || "—");
+          const best = r.best_policy ? `<div style="font-size:10px;color:var(--blue);margin-top:2px">best: ${r.best_policy.entry_type || "—"} score=${r.best_policy.policy_score ?? "—"}</div>` : "";
+          return `<tr>
+            <td><strong>${(r.symbol||"—").replace("m","")}</strong> <span style="color:var(--muted)">${r.side||""}</span>${best}</td>
+            <td>${setup}</td>
+            <td>${r.session || "—"}</td>
+            <td><span class="badge ${r.entry_type==="market"?"warn":"ok"}">${r.entry_type || "—"}</span></td>
+            <td>${r.limit_offset_atr != null ? fmt(r.limit_offset_atr,2) : "—"}</td>
+            <td>${sl}</td>
+            <td>${tp}</td>
+            <td>${be}</td>
+            <td>${trail}</td>
+            <td style="color:${scoreColor(r.policy_score)};font-weight:600">${fmt(r.policy_score,1)}</td>
+            <td style="color:var(--muted);max-width:180px" title="${(r.reason||"").replace(/"/g,"&quot;")}">${reason}</td>
+            <td>${r.sample_size || 0}</td>
+            <td><span class="badge">${r.mode || ep.mode || "shadow"}</span></td>
+            <td><span class="badge ${actCls}">${act}</span></td>
+          </tr>`;
+        }).join("")}
+        </tbody></table></div>`;
+      el.innerHTML = head + table;
     }
 
     function renderCulturing(data) {

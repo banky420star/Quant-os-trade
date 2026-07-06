@@ -59,6 +59,61 @@ def _build_management_profile(session_bias: dict[str, Any], entry_type: str) -> 
     }
 
 
+def merge_best_policy(
+    session_bias: dict[str, Any],
+    *,
+    symbol: str,
+    setup: str,
+    session: str,
+) -> dict[str, Any]:
+    """Bias session_entry_bias from best_policies when gate is suggest+ and samples suffice."""
+    try:
+        from core.policy_optimizer import policy_cell_key
+        from core.utils import read_json_state
+    except ImportError:
+        return session_bias
+
+    doc = read_json_state("best_policies.json", default={}) or {}
+    policies = doc.get("policies") or {}
+    if not isinstance(policies, dict):
+        return session_bias
+
+    cell = policy_cell_key(symbol, setup, session)
+    row = policies.get(cell)
+    if not isinstance(row, dict):
+        return session_bias
+
+    gate = str(row.get("gate") or "observe")
+    if gate not in ("suggest", "soft", "auto"):
+        return session_bias
+    sample_n = int(row.get("sample_n") or 0)
+    if sample_n < 10:
+        return session_bias
+
+    merged = dict(session_bias)
+    mgmt = row.get("management_profile") or {}
+    if isinstance(mgmt, dict):
+        for key in (
+            "entry_type",
+            "limit_offset_atr",
+            "sl_atr_mult",
+            "tp1_r",
+            "tp2_r",
+            "break_even_trigger_r",
+            "trail_start_r",
+            "trail_atr_mult",
+            "max_hold_minutes",
+            "cancel_if_not_filled_seconds",
+        ):
+            if key in mgmt and mgmt[key] is not None:
+                merged[key] = mgmt[key]
+    if row.get("entry_type"):
+        merged["entry_type"] = row["entry_type"]
+    merged["best_policy_gate"] = gate
+    merged["best_policy_score"] = row.get("policy_score")
+    return merged
+
+
 def evaluate_candidate(
     signal: dict[str, Any],
     feat: dict[str, Any],
@@ -73,7 +128,14 @@ def evaluate_candidate(
     cfg = _eval_cfg(config)
     symbol = signal.get("symbol", "")
     session = (signal.get("market_context") or {}).get("session") if isinstance(signal.get("market_context"), dict) else None
+    setup = str(signal.get("setup_type") or "unknown")
     session_bias = session_entry_bias(str(session or "unknown"))
+    session_bias = merge_best_policy(
+        session_bias,
+        symbol=str(symbol),
+        setup=setup,
+        session=str(session or "unknown"),
+    )
     recent = recent_symbol_stats(list(recent_trades or []), symbol)
 
     score, reason_parts = compute_policy_score(

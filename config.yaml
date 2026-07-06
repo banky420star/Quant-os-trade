@@ -29,6 +29,18 @@ evaluation:
   mode: shadow
   min_policy_score: 35
   skip_below_score: 25
+policy_optimizer:
+  enabled: true
+  mode: shadow
+  min_trades_suggest: 10
+  min_trades_soft: 30
+  min_trades_auto: 50
+policy_detection:
+  enabled: true
+  mode: shadow
+  min_sample_n: 3
+  trade_lookback: 200
+  insufficient_sample_penalty: 12.0
 ops:
   alerts:
     enabled: false

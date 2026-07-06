@@ -215,6 +215,67 @@ class StateStore:
         evaluated = [json.loads(r[0]) for r in rows]
         return {**meta, "evaluated": evaluated, "count": len(evaluated)}
 
+    def write_best_policies(self, doc: dict[str, Any]) -> None:
+        ts = doc.get("timestamp") or utc_now_iso()
+        with self._lock:
+            with self._connect() as conn:
+                self._set_kv(conn, "best_policies", doc, ts)
+                conn.commit()
+
+    def read_best_policies(self) -> dict[str, Any]:
+        with self._lock:
+            with self._connect() as conn:
+                return self._get_kv(conn, "best_policies", default={})
+
+    def write_policy_scores(self, doc: dict[str, Any]) -> None:
+        ts = doc.get("timestamp") or utc_now_iso()
+        variants = list(doc.get("variants") or [])
+        meta = {k: v for k, v in doc.items() if k != "variants"}
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM policy_scores")
+                for row in variants:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO policy_scores (
+                            policy_id, symbol, setup_type, session, entry_type,
+                            limit_offset_atr, sl_atr_mult, tp1_r, be_trigger_r,
+                            trail_start_r, score, sample_n, created_at, raw_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(row.get("policy_id") or uuid.uuid4()),
+                            row.get("symbol", ""),
+                            row.get("setup_type"),
+                            row.get("session"),
+                            row.get("entry_type"),
+                            _float_or_none(row.get("limit_offset_atr")),
+                            _float_or_none(row.get("sl_atr_mult")),
+                            _float_or_none(row.get("tp1_r")),
+                            _float_or_none(row.get("be_trigger_r")),
+                            _float_or_none(row.get("trail_start_r")),
+                            _float_or_none(row.get("score")),
+                            int(row.get("sample_n") or 0),
+                            ts,
+                            json.dumps(row, default=str),
+                        ),
+                    )
+                self._set_kv(conn, "policy_scores_meta", meta, ts)
+                conn.commit()
+
+    def read_policy_scores(self) -> dict[str, Any]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT raw_json FROM policy_scores
+                    ORDER BY score DESC, sample_n DESC
+                    """
+                ).fetchall()
+                meta = self._get_kv(conn, "policy_scores_meta", default={})
+        variants = [json.loads(r[0]) for r in rows]
+        return {**meta, "variants": variants, "variant_count": len(variants)}
+
     def write_positions(self, doc: dict[str, Any]) -> None:
         ts = doc.get("timestamp") or utc_now_iso()
         positions = list(doc.get("positions") or [])
@@ -500,6 +561,10 @@ def sync_store_from_doc(config: dict[str, Any], kind: str, doc: dict[str, Any]) 
         store.write_trades(doc)
     elif kind == "evaluated":
         store.write_evaluated(doc)
+    elif kind == "best_policies":
+        store.write_best_policies(doc)
+    elif kind == "policy_scores":
+        store.write_policy_scores(doc)
 
 
 def read_evaluated_signals(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -518,6 +583,42 @@ def evaluated_available(config: dict[str, Any]) -> bool:
         if store and store.read_evaluated().get("evaluated") is not None:
             return True
     return (STATE_DIR / "evaluated_signals.json").exists()
+
+
+def read_best_policies(config: dict[str, Any]) -> dict[str, Any]:
+    if read_from_sqlite(config):
+        store = get_state_store(config)
+        if store:
+            doc = store.read_best_policies()
+            if doc.get("policies") is not None:
+                return doc
+    return read_json_state("best_policies.json", default={})
+
+
+def best_policies_available(config: dict[str, Any]) -> bool:
+    if read_from_sqlite(config):
+        store = get_state_store(config)
+        if store and store.read_best_policies().get("policies") is not None:
+            return True
+    return (STATE_DIR / "best_policies.json").exists()
+
+
+def read_policy_scores(config: dict[str, Any]) -> dict[str, Any] | None:
+    if read_from_sqlite(config):
+        store = get_state_store(config)
+        if store:
+            doc = store.read_policy_scores()
+            if doc.get("variants") is not None:
+                return doc
+    return read_json_state("policy_scores.json")
+
+
+def policy_scores_available(config: dict[str, Any]) -> bool:
+    if read_from_sqlite(config):
+        store = get_state_store(config)
+        if store and store.read_policy_scores().get("variants") is not None:
+            return True
+    return (STATE_DIR / "policy_scores.json").exists()
 
 
 def read_verifier_candidates(config: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
