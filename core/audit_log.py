@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
-from core.utils import ROOT, utc_now_iso
+from core.utils import STATE_DIR, utc_now_iso
 
-AUDIT_PATH = ROOT / "state" / "audit_log.jsonl"
+AUDIT_PATH = STATE_DIR / "audit_log.jsonl"
 _MAX_LINES = 5000
 
 
