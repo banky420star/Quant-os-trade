@@ -23,7 +23,7 @@ def test_effective_risk_cap_never_exceeds_balance(monkeypatch):
     assert effective_risk_cap(config, 30.0) == 10.0
 
 
-def test_reentry_cooldown_blocks_immediate_reentry():
+def test_reentry_cooldown_blocks_immediate_reentry(micro_profile):
     config = load_config()
     now = datetime.now(timezone.utc)
     closed = [{"symbol": "XAUUSDm", "closed_at": now.isoformat()}]
@@ -32,7 +32,7 @@ def test_reentry_cooldown_blocks_immediate_reentry():
     assert remaining > 0
 
 
-def test_reentry_allowed_after_cooldown():
+def test_reentry_allowed_after_cooldown(micro_profile):
     config = load_config()
     old = datetime.now(timezone.utc) - timedelta(seconds=45)
     closed = [{"symbol": "XAUUSDm", "closed_at": old.isoformat()}]
@@ -40,7 +40,7 @@ def test_reentry_allowed_after_cooldown():
     assert ok is True
 
 
-def test_entry_confirm_requires_hold_time():
+def test_entry_confirm_requires_hold_time(micro_profile):
     config = load_config()
     write_json_state("entry_staging.json", {"entries": {}})
     signal = {"symbol": "USOILm", "side": "BUY", "setup_type": "pullback", "signal_id": "a"}
