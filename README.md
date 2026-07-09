@@ -22,8 +22,11 @@ Open **http://127.0.0.1:8080** — MT5 must be logged in with **Algo Trading** e
 |-----|---------|
 | [docs/PHASE1_UPDATE.md](docs/PHASE1_UPDATE.md) | Phase 1 release notes — ops hardening + entry pipeline (`65de9df`) |
 | [docs/PHASE2_UPDATE.md](docs/PHASE2_UPDATE.md) | Phase 2 — SQLite state store (dual-write + known issues) |
+| [docs/PHASE2.3_FAST_MODE.md](docs/PHASE2.3_FAST_MODE.md)
+| [docs/PHASE2.4_LEARNING_LOOP.md](docs/PHASE2.4_LEARNING_LOOP.md) | Phase 2.4 - normalized learning loop (review + bounded config proposals) | | Phase 2.3 - tick-reactive fast scalper layer (presets, gates, pending orders) |
 | [docs/HOW_TO_RUN.md](docs/HOW_TO_RUN.md) | Setup, profiles, start/stop, reset, troubleshooting |
-| [docs/PIPELINE.md](docs/PIPELINE.md) | Loop diagram, entry flow, hardening roadmap |
+| [docs/PIPELINE.md](docs/PIPELINE.md)
+| [docs/PIPELINE_REVIEW.md](docs/PIPELINE_REVIEW.md) | Full pipeline review - every loop, status, skip conditions, visual diagram | | Loop diagram, entry flow, hardening roadmap |
 | [docs/STRUCTURE.md](docs/STRUCTURE.md) | Repository layout and where things live |
 | [obsidian/00 Home.md](obsidian/00%20Home.md) | Team wiki (open `obsidian/` as an Obsidian vault) |
 | [docs/research/VERDICT.md](docs/research/VERDICT.md) | Historical backtest audit (negative result reference) |

@@ -48,6 +48,10 @@ def test_limit_mode_when_entry_away_from_market(config):
     assert resolve_entry_mode(4039.0, 4040.0, 10.0, config) == "market"
 
 
+def test_use_limit_orders_false_forces_market(config):
+    config["trading"]["strategy_entries"]["use_limit_orders"] = False
+    assert resolve_entry_mode(4020.0, 4040.0, 10.0, config) == "market"
+
 def test_market_snap_recalculates_sl_tp_for_valid_rr(config):
     """When entry snaps to market, SL/TP must be recomputed — not left at anchor levels."""
     feat = {

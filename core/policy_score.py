@@ -144,17 +144,25 @@ def compute_policy_score(
         reasons.append(f"session={session}")
 
     recent = recent or {}
-    n = int(recent.get("n") or 0)
+    n = int(recent.get("n", 0))
     if n >= 5:
-        wr = float(recent.get("win_rate_pct") or 50)
-        score += (wr - 50) * 0.2
+        wr = float(recent.get("win_rate_pct", 50.0))
+        # Win-rate weight raised 0.2 -> 0.5: a 0% symbol now costs -25, not -10,
+        # so a cold streak actually drags the score below the execute threshold.
+        score += (wr - 50) * 0.5
         net = float(recent.get("net_pnl") or 0)
-        if net < -0.5:
+        # Micro-lot PnL is tiny ($0.01/trade); lower the loss threshold so a
+        # string of small realized losses still flags the symbol.
+        if net < -0.15:
             score -= 10
             reasons.append("recent_symbol_losses")
-        elif net > 0.5:
+        elif net > 0.15:
             score += 6
             reasons.append("recent_symbol_wins")
+        # Hard cold-streak penalty: >=8 recent trades under 20% win rate.
+        if n >= 8 and wr < 20.0:
+            score -= 30
+            reasons.append("recent_symbol_cold")
 
     if signal.get("within_reach") is False:
         score -= 25

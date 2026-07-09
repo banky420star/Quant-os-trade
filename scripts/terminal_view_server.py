@@ -38,7 +38,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # Import the TUI renderer. The module lives next to this file.
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT))
 import terminal_view as tv  # noqa: E402
 
 PUSH_INTERVAL = 2  # seconds between websocket pushes
@@ -107,11 +109,28 @@ def _ansi_to_html(s: str) -> str:
     return "".join(out)
 
 
+def _preset_buttons_html() -> str:
+    from core.fast_mode_runtime import FAST_MODE_PRESETS, read_runtime
+
+    rt = read_runtime()
+    active = rt.get("preset")
+    parts = []
+    for pid, spec in FAST_MODE_PRESETS.items():
+        cls = " on" if active == pid else ""
+        parts.append(
+            f"<button type='button' class='pbtn{cls}' data-preset='{html.escape(pid)}' "
+            f"title='{html.escape(spec.get('description', ''))}'>{html.escape(spec.get('label', pid))}</button>"
+        )
+    parts.append("<button type='button' class='pbtn' data-preset='clear'>Profile default</button>")
+    return "<div class='preset-bar'>" + "".join(parts) + "<span id='pstatus'></span></div>"
+
+
 def render_html() -> str:
     # Initial server-rendered frame so the page is non-empty before the
     # WebSocket connects; the socket then overwrites #frame on each push.
     frame = _ansi_to_html(tv.render_frame())
     body_text = frame  # _ansi_to_html already html-escapes text runs
+    presets = _preset_buttons_html()
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -131,15 +150,33 @@ def render_html() -> str:
         ".c-r{color:#ff453a}.c-g{color:#34c759}.c-y{color:#ffd60a}"
         ".c-b{color:#0a84ff}.c-m{color:#bf5af2}.c-c{color:#64d2ff}"
         ".c-gr{color:#8e8e93}.b{font-weight:bold}.d{opacity:.55}"
+        ".preset-bar{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 12px;align-items:center}"
+        ".pbtn{background:#222228;color:#f5f5f7;border:1px solid #333;padding:6px 10px;"
+        "border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit}"
+        ".pbtn.on{border-color:#0a84ff;color:#0a84ff}"
+        "#pstatus{font-size:11px;color:#8e8e93;margin-left:6px}"
         "@media(max-width:640px){body{font-size:9px;padding:8px}"
         "#frame{font-size:9px}}"
         "</style></head><body>"
         "<div class='hdr'><span class='dot' id='dot'></span>"
-        "<b>MT5 Quant OS — terminal view (Tailscale)</b> · read-only · "
+        "<b>MT5 Quant OS — terminal view (Tailscale)</b> · "
         "<span id='mode'>connecting…</span> · updated <span class='ts' "
         "id='ts'>—</span></div>"
+        + presets +
         "<div id='frame'>" + body_text + "</div>"
         "<script>(function(){"
+        "document.querySelectorAll('.pbtn').forEach(function(b){"
+        "b.addEventListener('click',function(){"
+        "var p=b.getAttribute('data-preset');"
+        "var body=p==='clear'?{action:'clear'}:{action:'preset',preset:p};"
+        "fetch('/api/fast-mode',{method:'POST',headers:{'Content-Type':'application/json'},"
+        "body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(o){"
+        "var s=document.getElementById('pstatus');"
+        "if(s){s.textContent=o.ok?(o.label||p)+' applied':(o.message||'failed');}"
+        "document.querySelectorAll('.pbtn').forEach(function(x){x.classList.remove('on');});"
+        "if(o.ok&&p!=='clear'){b.classList.add('on');}"
+        "}).catch(function(){var s=document.getElementById('pstatus');if(s)s.textContent='API error';});"
+        "});});"
         "var f=document.getElementById('frame'),ts=document.getElementById('ts'),"
         "m=document.getElementById('mode'),d=document.getElementById('dot');"
         "var url=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws';"
@@ -268,6 +305,73 @@ def _ws_serve(handler) -> None:
 
 
 class H(BaseHTTPRequestHandler):
+    def _read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def _send_json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self) -> None:
+        path = self.path.split("?")[0]
+        if path == "/api/fast-mode":
+            try:
+                from core.fast_mode_runtime import (
+                    FAST_MODE_PRESETS,
+                    apply_overrides,
+                    apply_preset,
+                    clear_runtime,
+                    read_runtime,
+                )
+
+                body = self._read_json_body()
+                action = str(body.get("action") or "preset").lower()
+                if action == "clear":
+                    clear_runtime()
+                    doc = read_runtime()
+                elif action == "overrides":
+                    overrides = dict(body.get("overrides") or {})
+                    if not overrides:
+                        self._send_json({"ok": False, "message": "overrides required"}, 400)
+                        return
+                    doc = apply_overrides(overrides, preset_id=body.get("preset"))
+                else:
+                    preset = str(body.get("preset") or "").lower()
+                    if preset not in FAST_MODE_PRESETS:
+                        self._send_json({"ok": False, "message": "unknown preset"}, 400)
+                        return
+                    doc = apply_preset(preset, extra=body.get("extra"))
+                self._send_json({
+                    "ok": True,
+                    "preset": doc.get("preset"),
+                    "label": doc.get("label"),
+                    "overrides": doc.get("overrides"),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+            return
+        self.send_response(404)
+        self.end_headers()
+
     def do_GET(self):
         path = self.path.split("?")[0]
         # WebSocket upgrade for the live-updating TUI stream.

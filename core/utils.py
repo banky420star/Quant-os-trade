@@ -90,6 +90,16 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
         if not performance_gates_active(config):
             config = sync_practice_gates(config)
         config = apply_config_overrides(config)
+        # Phase 2.4: apply bounded learning overrides ONLY in live_apply_limited
+        # mode so the review loop's safety-checked patches reach the decision
+        # path. observe_only/review_only/propose_only/shadow_apply never mutate
+        # the live config. Lazy import avoids a circular import at module load.
+        if (config.get("learning") or {}).get("mode") == "live_apply_limited":
+            try:
+                from core.learning_overrides import apply_learning_overrides
+                config, _applied = apply_learning_overrides(config)
+            except Exception:
+                pass
     return config
 
 

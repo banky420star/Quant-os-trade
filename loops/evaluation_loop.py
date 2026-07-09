@@ -10,6 +10,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.evaluation_policy import evaluate_batch, evaluation_enabled, evaluation_mode
+from core.fast_mode import fast_mode_enabled
+from core.fast_signal_cache import refresh_cache
 from core.state_store import (
     candidates_available,
     read_candidate_signals,
@@ -33,6 +35,27 @@ def run() -> dict | None:
         logger.info("Evaluation loop disabled — passthrough")
         return None
 
+    # Adaptive gate throttle (USER-AUTHORIZED 2026-07-08): tighten entry gates
+    # when the bot is losing, relax when winning, and auto-pause any symbol on
+    # a losing streak. Computed every cycle and surfaced to state for the UI.
+    from core.adaptive_gates import compute_adaptive_gates
+    ag = compute_adaptive_gates(config)
+    if ag.get("enabled"):
+        config = dict(config)
+        _ev = dict(config.get("evaluation") or {})
+        if ag.get("min_policy_score") is not None:
+            _ev["min_policy_score"] = ag["min_policy_score"]
+        _bl = list(_ev.get("symbol_blocklist") or [])
+        for _sym in (ag.get("blocked_symbols") or []):
+            if _sym not in _bl:
+                _bl.append(_sym)
+        _ev["symbol_blocklist"] = _bl
+        config["evaluation"] = _ev
+        logger.info(
+            "Adaptive gates: tier=%s min_score=%.1f blocked=%s (%s)",
+            ag.get("tier"), ag.get("min_policy_score"), ag.get("blocked_symbols"), ag.get("reason"),
+        )
+
     if not candidates_available(config) and fail_safe_missing("candidate_signals.json", logger):
         return None
     if fail_safe_missing("features.json", logger):
@@ -52,6 +75,8 @@ def run() -> dict | None:
         }
         write_json_state("evaluated_signals.json", doc)
         sync_store_from_doc(config, "evaluated", doc)
+        if fast_mode_enabled(config):
+            refresh_cache(config, evaluated_doc=doc, logger=logger)
         return doc
 
     features = read_json_state("features.json", default={})
@@ -83,6 +108,8 @@ def run() -> dict | None:
     }
     write_json_state("evaluated_signals.json", doc)
     sync_store_from_doc(config, "evaluated", doc)
+    if fast_mode_enabled(config):
+        refresh_cache(config, evaluated_doc=doc, logger=logger)
     logger.info(
         "Evaluated %d candidates → %d executable, %d skipped (mode=%s)",
         len(candidates),

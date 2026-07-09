@@ -119,3 +119,86 @@ def test_policy_score_penalizes_weak_volume():
     )
     assert score < 60
     assert any("volume_weak" in r for r in reasons)
+
+
+
+def _cold_recent_trades(symbol="UK100m", n=10):
+    return [{"symbol": symbol, "result": "loss", "pnl": -0.02} for _ in range(n)]
+
+
+def test_recent_cold_streak_skips_symbol(growth_profile):
+    """A symbol that lost its last 8+ trades (win<20%) is skipped despite high entry quality."""
+    from core.utils import load_config
+
+    config = load_config()
+    config["evaluation"]["recent_cold_skip_win_rate"] = 20
+    config["evaluation"]["recent_cold_skip_min_n"] = 8
+    feat = {"price": 2400.0, "atr": 4.0, "volume_ratio": 1.2}
+    out = evaluate_candidate(
+        _sample_signal(symbol="UK100m", entry_quality=99, confidence=80, within_reach=True, distance_atr=0.0),
+        feat,
+        config,
+        recent_trades=_cold_recent_trades("UK100m", 10),
+    )
+    assert out["evaluation"]["action"] == "skip"
+    assert "recent_cold_symbol" in out["evaluation"]["reason"]
+
+
+def test_symbol_blocklist_skips(growth_profile):
+    """Explicitly blocklisted symbols are skipped even with a perfect score."""
+    from core.utils import load_config
+
+    config = load_config()
+    config["evaluation"]["symbol_blocklist"] = ["UK100m"]
+    feat = {"price": 2400.0, "atr": 4.0, "volume_ratio": 1.2}
+    out = evaluate_candidate(
+        _sample_signal(symbol="UK100m", entry_quality=99, confidence=90, within_reach=True, distance_atr=0.0),
+        feat,
+        config,
+        recent_trades=[],
+    )
+    assert out["evaluation"]["action"] == "skip"
+    assert "symbol_blocklist" in out["evaluation"]["reason"]
+
+
+def test_global_edge_cold_blocks_known_bad_cell(growth_profile, monkeypatch):
+    """When the recent sample is thin, a historically-bad symbol+setup cell is blocked."""
+    from core.utils import load_config
+
+    config = load_config()
+    config["evaluation"]["global_edge_cold_win_rate"] = 20
+    config["evaluation"]["global_edge_cold_min_n"] = 6
+    monkeypatch.setattr(
+        "core.utils.read_json_state",
+        lambda name, default=None: (
+            {"setup_stats": {"by_symbol": {"UK100m": {"pullback": {"wins": 0, "losses": 23, "total": 23, "win_rate_pct": 0.0}}}}}
+            if name == "edge_scores.json"
+            else (default or {})
+        ),
+    )
+    feat = {"price": 2400.0, "atr": 4.0, "volume_ratio": 1.2}
+    out = evaluate_candidate(
+        _sample_signal(symbol="UK100m", setup_type="pullback", entry_quality=99, confidence=80, within_reach=True, distance_atr=0.0),
+        feat,
+        config,
+        recent_trades=[],  # thin recent sample -> global edge gate applies
+    )
+    assert out["evaluation"]["action"] == "skip"
+    assert "global_edge_cold" in out["evaluation"]["reason"]
+
+
+def test_warm_symbol_is_not_blocked_by_recent_gate(growth_profile):
+    """A profitable symbol with good recent trades still executes."""
+    from core.utils import load_config
+
+    config = load_config()
+    config["evaluation"]["symbol_blocklist"] = []
+    feat = {"price": 2400.0, "atr": 4.0, "volume_ratio": 1.2}
+    warm = [{"symbol": "USOILm", "result": "win", "pnl": 0.5} for _ in range(10)]
+    out = evaluate_candidate(
+        _sample_signal(symbol="USOILm", entry_quality=80, confidence=75, within_reach=True, distance_atr=0.1),
+        feat,
+        config,
+        recent_trades=warm,
+    )
+    assert out["evaluation"]["action"] == "execute"

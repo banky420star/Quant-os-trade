@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.fast_mode import fast_mode_enabled, fast_mode_live, fast_mode_settings
 from core.state_store import get_state_store, state_store_enabled
 from core.utils import load_config, read_json_state
 
@@ -61,6 +62,15 @@ def run_preflight() -> int:
     equity = float(account.get("equity") or account.get("balance") or 0)
     if equity <= 0 and config.get("execution", {}).get("mode") == "mt5":
         issues.append("Account equity is zero")
+
+    if fast_mode_enabled(config):
+        fm = fast_mode_settings(config)
+        mode = "LIVE orders" if fast_mode_live(config) else "observe-only"
+        print(f"  Fast mode: {mode} interval={fm.get('tick_interval_ms')}ms symbols={fm.get('symbols')}")
+        if fast_mode_live(config):
+            warnings.append("fast_mode.live_enabled=true — fast layer may place/modify orders")
+            if fm.get("require_verifier_approval", True):
+                print(f"  Fast verifier gate: ON (only approved signal_ids)")
 
     print("=== MT5 Quant OS Pre-flight ===")
     if warnings:

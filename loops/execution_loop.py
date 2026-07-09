@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.mt5_client import MT5Client, format_mt5_connection_error, log_session_alignment
+from core.market_hours import clear_backoff, in_backoff, is_market_closed_error, record_market_closed
 from core.mt5_connection_manager import MT5ConnectionManager
 from core.mt5_broker import MT5Broker
 from core.paper_broker import PaperBroker
@@ -114,6 +115,19 @@ def run() -> dict | None:
     approved_data = read_approved_signals(config) or {}
     approved = approved_data.get("approved", [])
 
+    # Market-closed back-off: skip symbols whose market is in a back-off window
+    # so we do not spam failed orders every cycle while oil/equities are closed.
+    if approved:
+        kept = []
+        for row in approved:
+            sig = row.get("signal", row) if isinstance(row, dict) else {}
+            sym = sig.get("symbol")
+            if sym and in_backoff(sym, config):
+                logger.info("Skipping %s order - market-closed back-off active", sym)
+                continue
+            kept.append(row)
+        approved = kept
+
     if not approved:
         logger.info("No approved signals to execute")
         return {"timestamp": None, "mode": mode, "placed": 0}
@@ -186,6 +200,12 @@ def run() -> dict | None:
                 msg = str(err.get("error") or err)
                 append_event("order.error", symbol=sym, details={"error": msg})
                 alert_execution_error(config, sym, msg)
+                if is_market_closed_error(err):
+                    record_market_closed(sym, config)
+                    logger.info("Market closed for %s - backing off %.0f min", sym, float((config.get('execution') or {}).get('market_closed_backoff_minutes', 5)))
+            for order in result.get("placed", []):
+                # a successful placement means the market reopened -> clear back-off
+                clear_backoff(order.get("symbol"))
             return result
         finally:
             connection.disconnect()

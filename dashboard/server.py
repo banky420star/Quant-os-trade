@@ -50,6 +50,12 @@ STATE_FILES = (
     "evaluated_signals.json",
     "policy_scores.json",
     "best_policies.json",
+    "fast_signal_cache.json",
+    "fast_mode_decisions.json",
+    "fast_mode_guard.json",
+    "fast_mode_runtime.json",
+    "learning_state.json",
+    "learning_config_overrides.json",
     "trade_log.json",
     "blue_guardian.json",
     "blue_guardian_actions.json",
@@ -678,6 +684,95 @@ def _build_evaluation_policy(
     }
 
 
+def _build_learning_status(config: dict, state: dict, decisions: list, reviews: list) -> dict:
+    """Dashboard snapshot for the Phase 2.4 normalized learning loop."""
+    from core.learning_logger import read_jsonl
+    proposals = read_jsonl("config_proposals", limit=10)
+    rejected = [p for p in proposals if p.get("rejected")]
+    active = [p for p in proposals if not p.get("rejected")]
+    return {
+        "enabled": bool((config.get("learning") or {}).get("enabled", False)),
+        "mode": (config.get("learning") or {}).get("mode", "observe_only"),
+        "auto_apply_disabled": (config.get("learning") or {}).get("mode", "observe_only") != "live_apply_limited",
+        "reviewed_count": state.get("reviewed_count", 0),
+        "rolling_win_rate_pct": state.get("rolling_win_rate_pct"),
+        "rolling_expectancy_r": state.get("rolling_expectancy_r"),
+        "avg_rating_by_symbol": state.get("avg_rating_by_symbol", {}),
+        "mistake_counts": state.get("mistake_counts", {}),
+        "last_decisions": decisions[-10:],
+        "last_reviews": reviews[-10:],
+        "active_proposals": active,
+        "rejected_proposals": rejected,
+        "updated_at": state.get("updated_at"),
+    }
+
+
+def _build_fast_mode_status(
+    config: dict,
+    cache: dict,
+    decisions: dict,
+    guard: dict,
+    supervisor: dict,
+    runtime: dict | None = None,
+) -> dict:
+    """Dashboard snapshot for the two-speed fast scalper layer."""
+    from core.fast_mode import fast_mode_settings
+    from core.fast_mode_runtime import preset_catalog
+
+    fm_cfg = fast_mode_settings(config)
+    yaml_cfg = config.get("fast_mode") or {}
+    enabled = bool(fm_cfg.get("enabled"))
+    live = bool(fm_cfg.get("live_enabled"))
+    rt = runtime if runtime is not None else read_json_state("fast_mode_runtime.json", default={})
+    svc = next(
+        (s for s in (supervisor.get("services") or []) if s.get("name") == "fast_mode"),
+        None,
+    )
+    cache_syms = dict(cache.get("symbols") or {})
+    cache_rows = []
+    for sym, row in cache_syms.items():
+        mgmt = row.get("management_profile") or {}
+        cache_rows.append({
+            "symbol": sym,
+            "side": row.get("side"),
+            "setup": row.get("setup_type"),
+            "anchor": row.get("anchor"),
+            "entry_zone": row.get("entry_zone"),
+            "entry_type": row.get("entry_type"),
+            "expires_at": row.get("expires_at"),
+            "be_trigger_r": mgmt.get("break_even_trigger_r"),
+            "trail_start_r": mgmt.get("trail_start_r"),
+        })
+    dec_list = list(decisions.get("decisions") or [])
+    guard_list = list(guard.get("actions") or [])
+    return {
+        "enabled": enabled,
+        "live_enabled": live,
+        "mode": "live" if live else "observe",
+        "tick_interval_ms": int(fm_cfg.get("tick_interval_ms") or 1000),
+        "symbols": list(fm_cfg.get("symbols") or []),
+        "active_preset": rt.get("preset"),
+        "preset_label": rt.get("label"),
+        "runtime_overrides": rt.get("overrides") or {},
+        "yaml_live_enabled": bool(yaml_cfg.get("live_enabled")),
+        "presets": preset_catalog(),
+        "tick_interval_note": (
+            "Tick interval changes apply after bot restart"
+            if rt.get("overrides", {}).get("tick_interval_ms")
+            != yaml_cfg.get("tick_interval_ms")
+            else ""
+        ),
+        "service_status": (svc or {}).get("status") or ("not_registered" if enabled else "disabled"),
+        "service_last_run": (svc or {}).get("last_run"),
+        "service_duration_ms": (svc or {}).get("last_duration_ms"),
+        "cache_symbol_count": cache.get("symbol_count") or len(cache_syms),
+        "cache_rows": cache_rows,
+        "decisions": dec_list[-12:],
+        "guard_actions": guard_list[-12:],
+        "timestamp": decisions.get("timestamp") or cache.get("timestamp") or guard.get("timestamp"),
+    }
+
+
 def _build_trading_status(
     kill_switch: dict,
     risk_state: dict,
@@ -879,6 +974,21 @@ def aggregate_state(*, lite: bool = False) -> dict:
         payload.get("best_policies", {}),
         config,
     )
+    payload["fast_mode"] = _build_fast_mode_status(
+        config,
+        payload.get("fast_signal_cache", {}),
+        payload.get("fast_mode_decisions", {}),
+        payload.get("fast_mode_guard", {}),
+        payload.get("supervisor", {}),
+        payload.get("fast_mode_runtime", {}),
+    )
+    from core.learning_logger import read_jsonl as _rl
+    payload["learning"] = _build_learning_status(
+        config,
+        payload.get("learning_state", {}) or {},
+        _rl("decisions", limit=10),
+        _rl("reviews", limit=10),
+    )
     payload["logs"] = _tail_log(50)
     # Surface the bot's MT5 connection state as a top-level `connection` field
     # so the SPA's "MT5 Connected/Offline" pill reflects reality. health.json
@@ -1048,6 +1158,87 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "message": "Session state reset — baselines, kill switch, and memory cleared",
                     "timestamp": utc_now_iso(),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/unblock-trades":
+            try:
+                # Clear all blocking gates so trades can flow immediately:
+                # 1. Kill switch -> off (trading enabled)
+                write_json_state("kill_switch.json", {
+                    "kill_switch": False,
+                    "reason": None,
+                    "activated_at": None,
+                    "cleared_at": utc_now_iso(),
+                })
+                # 2. Adaptive gates -> reset to normal tier, clear blocked symbols
+                write_json_state("adaptive_gates.json", {
+                    "timestamp": utc_now_iso(),
+                    "enabled": True,
+                    "tier": "normal",
+                    "min_policy_score": 35.0,
+                    "min_confidence": 50.0,
+                    "blocked_symbols": [],
+                    "lookback_n": 0,
+                    "recent_win_rate_pct": 50.0,
+                    "recent_net_pnl": 0.0,
+                    "consecutive_losses": 0,
+                    "reason": "manual unblock - all gates cleared",
+                })
+                # 3. Market-closed backoff -> clear all symbols
+                write_json_state("market_closed_backoff.json", {
+                    "timestamp": utc_now_iso(),
+                    "symbols": {},
+                })
+                # 4. Learning overrides -> clear any live-apply patches
+                write_json_state("learning_config_overrides.json", {
+                    "timestamp": utc_now_iso(),
+                    "patches": [],
+                })
+                self._send_json({
+                    "ok": True,
+                    "message": "All trade gates unblocked - kill switch cleared, adaptive gates reset to normal, market-closed backoff cleared",
+                    "timestamp": utc_now_iso(),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/fast-mode":
+            try:
+                from core.fast_mode_runtime import (
+                    FAST_MODE_PRESETS,
+                    apply_overrides,
+                    apply_preset,
+                    clear_runtime,
+                    read_runtime,
+                )
+
+                body = self._read_json_body()
+                action = str(body.get("action") or "preset").lower()
+                if action == "clear":
+                    clear_runtime()
+                    doc = read_runtime()
+                elif action == "overrides":
+                    overrides = dict(body.get("overrides") or {})
+                    if not overrides:
+                        self._send_json({"ok": False, "message": "overrides required"}, 400)
+                        return
+                    doc = apply_overrides(overrides, preset_id=body.get("preset"))
+                else:
+                    preset = str(body.get("preset") or "").lower()
+                    if preset not in FAST_MODE_PRESETS:
+                        self._send_json({
+                            "ok": False,
+                            "message": f"Unknown preset. Choose: {', '.join(FAST_MODE_PRESETS)}",
+                        }, 400)
+                        return
+                    doc = apply_preset(preset, extra=body.get("extra"))
+                self._send_json({
+                    "ok": True,
+                    "preset": doc.get("preset"),
+                    "label": doc.get("label"),
+                    "overrides": doc.get("overrides"),
+                    "timestamp": doc.get("timestamp"),
+                    "note": "Tick interval changes need a bot restart to take effect on the supervisor.",
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)

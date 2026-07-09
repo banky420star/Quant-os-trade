@@ -296,6 +296,10 @@ class MT5Broker:
         bid = float(tick.bid)
         ask = float(tick.ask)
 
+        order_kind = "market"
+        is_pending = False
+        requested_price = None
+
         if use_strategy and entry_mode == "limit" and strategy_entry > 0:
             if signal.get("within_reach") is False:
                 return {
@@ -303,6 +307,9 @@ class MT5Broker:
                     "error": f"entry_too_far_from_market:{signal.get('distance_atr')}atr",
                 }
             _type_id, type_name = resolve_mt5_pending_type(side, strategy_entry, bid, ask)
+            order_kind = type_name
+            is_pending = True
+            requested_price = strategy_entry
             type_map = {
                 "buy_limit": mt5.ORDER_TYPE_BUY_LIMIT,
                 "buy_stop": mt5.ORDER_TYPE_BUY_STOP,
@@ -351,11 +358,18 @@ class MT5Broker:
         if result is None:
             return {"success": False, "error": str(mt5.last_error())}
 
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
+        ok_retcodes = {mt5.TRADE_RETCODE_DONE}
+        placed_code = getattr(mt5, "TRADE_RETCODE_PLACED", None)
+        if placed_code is not None:
+            ok_retcodes.add(placed_code)
+        if result.retcode not in ok_retcodes:
             return {
                 "success": False,
                 "error": f"retcode={result.retcode} {result.comment}",
                 "retcode": result.retcode,
+                "order_kind": order_kind,
+                "pending": is_pending,
+                "requested_price": requested_price,
             }
 
         return {
@@ -365,6 +379,10 @@ class MT5Broker:
             "volume": volume,
             "price": result.price,
             "comment": result.comment,
+            "retcode": result.retcode,
+            "order_kind": order_kind,
+            "pending": is_pending,
+            "requested_price": requested_price,
         }
 
     def _calc_volume(
@@ -572,7 +590,8 @@ class MT5Broker:
         return {0: "demo", 1: "contest", 2: "real"}.get(int(account.trade_mode), "unknown")
 
     def _executed_signal_ids(self, orders: list[dict]) -> set[str]:
-        return {o["signal_id"] for o in orders if o.get("status") == "filled" and o.get("signal_id")}
+        submitted = {"filled", "pending", "placed"}
+        return {o["signal_id"] for o in orders if o.get("status") in submitted and o.get("signal_id")}
 
     def _build_order_record(
         self,
@@ -581,12 +600,15 @@ class MT5Broker:
         *,
         features_at_entry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        order_type = str(result.get("order_kind") or signal.get("entry_mode") or "market")
+        is_pending = bool(result.get("pending"))
+        status = "pending" if result.get("success") and is_pending else ("filled" if result.get("success") else "failed")
         return {
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
             "symbol": signal["symbol"],
             "side": signal["side"],
-            "type": "market",
+            "type": order_type,
             "entry": signal["entry"],
             "sl": signal["sl"],
             "tp1": signal["tp1"],
@@ -598,12 +620,14 @@ class MT5Broker:
                 features_at_entry=features_at_entry,
                 kelly=_json_safe_kelly(signal.get("kelly")),
             ),
-            "status": "filled" if result.get("success") else "failed",
+            "status": status,
             "mt5_ticket": result.get("ticket"),
             "mt5_deal": result.get("deal"),
-            "fill_price": result.get("price"),
+            "fill_price": None if is_pending else result.get("price"),
             "volume": result.get("volume"),
             "error": result.get("error"),
+            "requested_price": result.get("requested_price"),
+            "retcode": result.get("retcode"),
             "created_at": utc_now_iso(),
-            "filled_at": utc_now_iso() if result.get("success") else None,
+            "filled_at": utc_now_iso() if result.get("success") and not is_pending else None,
         }

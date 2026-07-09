@@ -42,3 +42,9 @@ Thumbs.db
 
 # Runtime / local overrides (keep config.yaml tracked for this VPS setup)
 config.local.yaml
+# Local pytest scratch basetemp dirs (created with restricted ACLs; not for commit)
+.pytest_bt/
+.pytest_tmp_fast/
+.pytest_tmp_fast_limit_review/
+pytest_tmp/
+manual_state_check/

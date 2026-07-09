@@ -114,6 +114,20 @@ def merge_best_policy(
     return merged
 
 
+def _global_edge_stats(symbol: str, setup: str) -> dict[str, Any] | None:
+    """Long-term win rate for a symbol+setup from edge_scores.json (all-time)."""
+    try:
+        from core.utils import read_json_state
+    except ImportError:
+        return None
+    doc = read_json_state("edge_scores.json", default={}) or {}
+    by_symbol = (doc.get("setup_stats") or {}).get("by_symbol") or {}
+    cell = (by_symbol.get(symbol) or {}).get(setup)
+    if isinstance(cell, dict):
+        return cell
+    return None
+
+
 def evaluate_candidate(
     signal: dict[str, Any],
     feat: dict[str, Any],
@@ -153,6 +167,42 @@ def evaluate_candidate(
         action = "skip"
     elif score < min_score:
         action = "skip"
+
+    # --- Profit-protection gates (USER-AUTHORIZED 2026-07-08) ---
+    # These block negative-edge trades the score alone was too lenient to catch.
+
+    # (1) Explicit symbol blocklist (e.g. a proven structural loser like UK100m
+    #     at 1.4% historical win rate). Works under any profile without touching
+    #     the scanned symbol universe.
+    blocklist = list(cfg.get("symbol_blocklist") or [])
+    if str(symbol) in blocklist:
+        action = "skip"
+        reason_parts.append(f"symbol_blocklist:{symbol}")
+
+    # (2) Recent cold-streak circuit breaker: a symbol that lost its last N
+    #     closes (win_rate < cold_wr) is skipped regardless of entry quality.
+    #     Uses the last 20 closed trades already computed as `recent`.
+    cold_wr = float(cfg.get("recent_cold_skip_win_rate") or 20.0)
+    cold_n = int(cfg.get("recent_cold_skip_min_n") or 8)
+    if int(recent.get("n", 0)) >= cold_n and float(recent.get("win_rate_pct", 50.0)) < cold_wr:
+        action = "skip"
+        reason_parts.append(
+            f"recent_cold_symbol_{recent.get('win_rate_pct'):.0f}%/{recent.get('n')}"
+        )
+
+    # (3) Global edge cold: when the in-session recent sample is still thin,
+    #     consult the all-time symbol+setup win rate so a known-bad cell is
+    #     blocked from trade #1 instead of needing 8 in-session losses first.
+    if int(recent.get("n", 0)) < cold_n:
+        edge = _global_edge_stats(str(symbol), setup)
+        if edge:
+            g_n = int(edge.get("total", 0))
+            g_wr = float(edge.get("win_rate_pct", 50.0))
+            g_min_n = int(cfg.get("global_edge_cold_min_n") or 6)
+            g_wr_thresh = float(cfg.get("global_edge_cold_win_rate") or 20.0)
+            if g_n >= g_min_n and g_wr < g_wr_thresh:
+                action = "skip"
+                reason_parts.append(f"global_edge_cold_{setup}_{g_wr:.0f}%/{g_n}")
 
     entry_type = _pick_entry_type(signal, feat, session_bias, score)
     if action != "skip" and entry_type == "limit" and signal.get("within_reach") is False:

@@ -164,6 +164,8 @@ def resolve_entry_mode(
     config: dict[str, Any],
 ) -> str:
     cfg = _cfg(config)
+    if cfg.get("use_limit_orders") is False:
+        return "market"
     within = float(cfg.get("market_if_within_atr", 0.15)) * atr
     if abs(market_price - entry) <= within:
         return "market"

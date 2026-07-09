@@ -276,6 +276,25 @@ class StateStore:
         variants = [json.loads(r[0]) for r in rows]
         return {**meta, "variants": variants, "variant_count": len(variants)}
 
+    def append_fast_decision(self, row: dict[str, Any]) -> None:
+        ts = row.get("timestamp") or utc_now_iso()
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO fast_mode_decisions (symbol, action, live, details_json, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(row.get("symbol") or ""),
+                        str(row.get("action") or "wait"),
+                        1 if row.get("live") else 0,
+                        json.dumps(row, default=str),
+                        ts,
+                    ),
+                )
+                conn.commit()
+
     def write_positions(self, doc: dict[str, Any]) -> None:
         ts = doc.get("timestamp") or utc_now_iso()
         positions = list(doc.get("positions") or [])

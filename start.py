@@ -190,6 +190,8 @@ def start(once: bool = False, profile: str | None = None) -> None:
     interval = float(app_cfg.get("loop_interval_seconds", 60))
     history_interval = float(sup_cfg.get("history_interval_seconds", 300))
     research_interval = float(sup_cfg.get("research_interval_seconds", 1800))
+    from core.fast_mode import fast_mode_enabled, tick_interval_seconds
+    fast_interval = tick_interval_seconds(config) if fast_mode_enabled(config) else 0.0
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -263,6 +265,44 @@ def start(once: bool = False, profile: str | None = None) -> None:
             research_interval,
             logger,
         ))
+
+    if fast_interval > 0:
+        def _fast_mode() -> dict:
+            from loops import fast_position_guard, fast_tick_loop
+            tick_result = fast_tick_loop.run(config) or {}
+            guard_result = fast_position_guard.run(config) or {}
+            return {"fast_tick_loop": "OK", "fast_position_guard": "OK", **tick_result, **guard_result}
+
+        supervisor.register(ManagedService(
+            "fast_mode",
+            "Fast Scalper",
+            _fast_mode,
+            fast_interval,
+            logger,
+        ))
+        logger.info("Fast mode service registered (interval=%.2fs)", fast_interval)
+
+    # Phase 2.4 normalized learning loop (observe-only by default). Never places
+    # trades; only records/scores/proposes. Enabled when learning.enabled=true.
+    learn_cfg = config.get("learning") or {}
+    if learn_cfg.get("enabled", False):
+        learn_interval = float(learn_cfg.get("loop_interval_seconds", 120))
+
+        def _learning_review() -> dict:
+            from loops import learning_review_loop
+            return learning_review_loop.run() or {}
+
+        supervisor.register(ManagedService(
+            "learning_review",
+            "Learning Review",
+            _learning_review,
+            learn_interval,
+            logger,
+        ))
+        logger.info(
+            "Learning review loop registered (interval=%.0fs, mode=%s)",
+            learn_interval, learn_cfg.get("mode", "observe_only"),
+        )
 
     supervisor.start_all()
 

@@ -151,9 +151,35 @@ class MT5TerminalManager:
         processes = self.list_processes()
         if not processes:
             return False
-        if path:
-            return any(p.get("exe") == path and p.get("session_id") not in (None, 0) for p in processes)
-        return any(p.get("session_id") not in (None, 0) for p in processes)
+
+        def _norm(p: str | None) -> str:
+            # psutil sometimes returns a process exe WITHOUT the drive letter
+            # (e.g. "\Users\Admin\MT5Agent\terminal64.exe") when reading
+            # another session's process, which broke an exact-string compare and
+            # caused a false "terminal_not_running" health alert. Normalize by
+            # stripping the drive, lower-casing, and using forward slashes.
+            if not p:
+                return ""
+            from pathlib import PurePath
+            pp = PurePath(p)
+            return "/".join(pp.parts[1:]).lower() if len(pp.parts) > 1 and PurePath(p).anchor else str(p).lower().replace("\\", "/")
+
+        target = _norm(path)
+        target_base = Path(path).name.lower() if path else ""
+        for p in processes:
+            if p.get("session_id") in (None, 0):
+                continue
+            exe = p.get("exe")
+            if not exe:
+                continue
+            n = _norm(exe)
+            if (target and n == target) or (target_base and Path(exe).name.lower() == target_base):
+                return True
+        # No path given, or path didn't match: an interactive terminal process
+        # existing at all is enough to consider the terminal alive.
+        if not path:
+            return any(p.get("session_id") not in (None, 0) for p in processes)
+        return False
 
     def launch_interactive(self) -> bool:
         """Launch MT5 via interactive scheduled task script."""

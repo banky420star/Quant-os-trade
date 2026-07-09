@@ -906,6 +906,42 @@ def _loops_section(
     return "\n".join(lines)
 
 
+def _fast_mode_section(runtime, decisions, sup) -> str:
+    """Fast scalper runtime status (presets controlled via dashboard / web TUI)."""
+    rt = runtime if isinstance(runtime, dict) else {}
+    dec = decisions if isinstance(decisions, dict) else {}
+    overrides = rt.get("overrides") or {}
+    if not overrides and not rt.get("preset"):
+        preset = "(profile yaml)"
+        label = ""
+    else:
+        preset = rt.get("preset") or "custom"
+        label = rt.get("label") or ""
+    live = bool(overrides.get("live_enabled"))
+    enabled = overrides.get("enabled", True)
+    mode_col = YELLOW if live else CYAN
+    mode_txt = "LIVE" if live else ("observe" if enabled else "off")
+    syms = overrides.get("symbols") or []
+    tick = overrides.get("tick_interval_ms")
+    svc = next(
+        (s for s in (sup.get("services") or []) if s.get("name") == "fast_mode"),
+        {},
+    ) if isinstance(sup, dict) else {}
+    svc_st = str(svc.get("status", "—"))
+    svc_col = GREEN if svc_st.lower() in ("ok", "healthy") else YELLOW
+    last_dec = (dec.get("decisions") or [None])[-1] if dec.get("decisions") else None
+    act = last_dec.get("action", "—") if isinstance(last_dec, dict) else "—"
+    lines = [
+        f"{B}fast scalper{R}  preset={B}{preset}{R}"
+        + (f" ({label})" if label else ""),
+        f"  mode={mode_col}{mode_txt}{R}  tick={tick or '—'}ms  "
+        f"symbols={','.join(syms) if syms else '—'}  "
+        f"service={svc_col}{svc_st}{R}  last={act}",
+        f"  {DIM}presets: dashboard :8080 or terminal web :8083 buttons{R}",
+    ]
+    return "\n".join(lines)
+
+
 def _services_section(sup) -> str:
     services = sup.get("services", []) if isinstance(sup, dict) else []
     if not services:
@@ -1004,6 +1040,8 @@ def render_frame() -> str:
     cand = _load("candidate_signals.json") or {}
     tlog = _load("trade_log.json") or {}
     features = _load("features.json") or {}
+    fm_rt = _load("fast_mode_runtime.json") or {}
+    fm_dec = _load("fast_mode_decisions.json") or {}
 
     # Visual dividers between every section so the whole TUI reads as separated
     # blocks (USER request 2026-07-01: "tui needs to be in split in a divider
@@ -1035,10 +1073,11 @@ def render_frame() -> str:
             mctx=mctx,
             rejected=rejected,
         ),
+        _fast_mode_section(fm_rt, fm_dec, sup),
         _services_section(sup),
         _market_section(mctx),
         _mt5_section(hlt),
-        f"{GREY}read-only · reads state/*.json every refresh · bot untouched · "
+        f"{GREY}reads state/*.json every refresh · fast presets on dashboard/TUI web · "
         f"Ctrl+C to quit{R}",
     ]
     blocks = [title] + [s for s in body if s and s.strip()]

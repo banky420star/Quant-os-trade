@@ -382,6 +382,8 @@
     .btn:hover { opacity: .88; }
     .btn:disabled { opacity: .4; cursor: not-allowed; }
     .btn.secondary { background: var(--surface3); color: var(--text); border: 1px solid var(--border); }
+    .btn.preset-btn.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--glow-blue); color: var(--blue); }
+    .preset-bar .btn { padding: 8px 14px; font-size: 12px; }
 
     .input-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
     select, input[type=number] {
@@ -774,6 +776,20 @@
             </div>
             <div id="evaluationPolicyPanel"><p class="empty">Waiting for evaluation_loop…</p></div>
           </div>
+          <div class="card" id="fastModeCard">
+            <div class="section-head">
+              <div class="card-title">Fast Scalper</div>
+              <span class="hint">Tick-reactive layer — use presets below to switch modes</span>
+            </div>
+            <div id="fastModePanel"><p class="empty">Fast mode disabled or waiting for cache…</p></div>
+          </div>
+          <div class="card" id="learningCard">
+            <div class="section-head">
+              <div class="card-title">Learning Loop</div>
+              <span class="hint">Phase 2.4 ? normalized review & bounded proposals (observe-only by default)</span>
+            </div>
+            <div id="learningPanel"><p class="empty">Learning loop waiting?</p></div>
+          </div>
           <div class="card" id="culturingCard">
             <div class="card-title">Culturing Ledger — Data-Driven Veto</div>
             <div id="culturingPanel"><p class="empty">Waiting for forward_test_loop…</p></div>
@@ -926,6 +942,15 @@
             <div class="card-title">Configuration</div>
             <div id="configInfo"></div>
           </div>
+          <div class="card" id="fastModeSettingsCard">
+            <div class="card-title">Fast Scalper Presets</div>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+              Switch observe / safe / aggressive / sprint modes without editing YAML.
+              Live and symbol changes apply on the next fast tick. Tick interval changes need a bot restart.
+            </p>
+            <div id="fastModeSettingsControls"></div>
+            <div id="fastModeSettingsStatus" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
+          </div>
           <div class="card">
             <div class="card-title">Session Reset</div>
             <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
@@ -934,6 +959,8 @@
             </p>
             <button type="button" class="btn secondary" id="resetSessionBtn">Reset session state</button>
             <div id="resetSessionStatus" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
+            <button type="button" class="btn" id="unblockTradesBtn" style="margin-top:12px;background:var(--orange);color:#fff;border:none;padding:10px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">UNBLOCK ALL TRADES</button>
+            <div id="unblockStatus" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
           </div>
         </div>
 
@@ -1923,7 +1950,13 @@
         <span>Uptime <strong>${uptime}</strong></span>
         <span>CPU <strong>${cpu}%</strong></span>
         <span>Session <strong style="color:${runtimeColor}">${runtimeLabel}</strong></span>
-        <span>Exec <strong>${cfg.mode||"—"}</strong></span>`;
+        <span>Exec <strong>${cfg.mode||"—"}</strong></span>
+        ${(() => {
+          const fm = data.fast_mode || {};
+          if (!fm.enabled) return "";
+          const col = fm.live_enabled ? "var(--orange)" : "var(--blue)";
+          return `<span>Fast <strong style="color:${col}">${fm.mode||"observe"}</strong> @${fm.tick_interval_ms||"—"}ms</span>`;
+        })()}`;
 
       const cards = getSymbolCards(data);
       if (!selectedSymbol && cards.length) selectedSymbol = cards[0].symbol;
@@ -1957,7 +1990,164 @@
         </tbody></table>` : '<p class="empty">No trades</p>';
 
       renderEvaluationPolicy(data);
+      renderFastMode(data);
+      renderLearning(data);
       renderCulturing(data);
+    }
+
+    function renderLearning(data) {
+      const el = document.getElementById("learningPanel");
+      if (!el) return;
+      const lg = data.learning || {};
+      if (!lg.enabled) { el.innerHTML = '<p class="empty">Learning loop disabled (learning.enabled in config).</p>'; return; }
+      const modeCls = lg.auto_apply_disabled ? "ok" : "warn";
+      const mistakes = lg.mistake_counts || {};
+      const mistRows = Object.entries(mistakes).sort((a,b)=>b[1]-a[1]).slice(0,8)
+        .map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+      const dec = (lg.last_decisions || []).slice().reverse();
+      const decRows = dec.map(d=>`<tr><td>${(d.symbol||"?").replace("m","")}</td><td style="color:var(--blue)">${d.decision||"?"}</td><td style="color:var(--muted);font-size:10px">${(d.reason||"?").slice(0,40)}</td></tr>`).join("");
+      const rev = (lg.last_reviews || []).slice().reverse();
+      const revRows = rev.map(r=>`<tr><td>${(r.symbol||"?").replace("m","")}</td><td style="color:${(r.rating_total||0)>=55?'var(--green)':'var(--orange)'}">${r.rating_total||"?"}</td><td style="color:var(--muted);font-size:10px">${(r.mistake_categories||[]).join(", ")||"?"}</td></tr>`).join("");
+      const prop = lg.active_proposals || [];
+      const rej = lg.rejected_proposals || [];
+      const propRows = prop.map(p=>`<tr><td>${p.symbol||"?"}</td><td>${p.kind||"?"}</td><td style="color:var(--muted);font-size:10px">${(p.reason||"").slice(0,40)}</td></tr>`).join("");
+      const rejRows = rej.map(p=>`<tr><td>${p.symbol||(p.proposal_id||"?")}</td><td style="color:var(--red)">rejected</td><td style="color:var(--muted);font-size:10px">${p.rejection_reason||p.reason||""}</td></tr>`).join("");
+      el.innerHTML = `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)">
+          <span>mode <strong><span class="badge ${modeCls}">${lg.mode||"observe_only"}</span></strong></span>
+          <span>auto-apply <strong style="color:${lg.auto_apply_disabled?'var(--green)':'var(--orange)'}">${lg.auto_apply_disabled?'disabled':'ENABLED'}</strong></span>
+          <span>reviewed <strong style="color:var(--text)">${lg.reviewed_count||0}</strong></span>
+          <span>win <strong style="color:var(--text)">${lg.rolling_win_rate_pct!=null?fmt(lg.rolling_win_rate_pct,1)+'%':'?'}</strong></span>
+          <span>exp <strong style="color:var(--text)">${lg.rolling_expectancy_r!=null?fmt(lg.rolling_expectancy_r,3)+'R':'?'}</strong></span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Last decisions</div>
+            <table style="font-size:11px"><thead><tr><th>Sym</th><th>Dec</th><th>Reason</th></tr></thead><tbody>${decRows||'<tr><td colspan=3 class=empty>none</td></tr>'}</tbody></table></div>
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Last trade reviews</div>
+            <table style="font-size:11px"><thead><tr><th>Sym</th><th>Rating</th><th>Mistakes</th></tr></thead><tbody>${revRows||'<tr><td colspan=3 class=empty>none</td></tr>'}</tbody></table></div>
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Mistake counts</div>
+            <table style="font-size:11px"><thead><tr><th>Mistake</th><th>Count</th></tr></thead><tbody>${mistRows||'<tr><td colspan=2 class=empty>none</td></tr>'}</tbody></table></div>
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Proposals (active / rejected)</div>
+            <table style="font-size:11px"><thead><tr><th>Sym</th><th>Kind</th><th>Reason</th></tr></thead><tbody>${propRows||'<tr><td colspan=3 class=empty>none</td></tr>'}${rejRows}</tbody></table></div>
+        </div>`;
+    }
+
+    function renderFastMode(data) {
+      const el = document.getElementById("fastModePanel");
+      if (!el) return;
+      const fm = data.fast_mode || {};
+      if (!fm.enabled) {
+        el.innerHTML = `<p class="empty">Fast mode disabled — set fast_mode.enabled in profile config.</p>`;
+        return;
+      }
+      const modeCls = fm.live_enabled ? "warn" : "ok";
+      const svcCls = fm.service_status === "ok" ? "ok" : fm.service_status === "not_registered" ? "bad" : "warn";
+      const actColor = (a) => {
+        if (!a) return "var(--muted)";
+        if (a.startsWith("would_enter") || a === "enter_limit" || a === "enter_market") return "var(--green)";
+        if (a === "cancel") return "var(--orange)";
+        if (a === "blocked") return "var(--red)";
+        return "var(--text)";
+      };
+      const buildPresetControls = (statusId) => {
+        const presets = fm.presets || [];
+        const active = fm.active_preset || "";
+        return `<div class="preset-bar" style="margin-bottom:12px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Presets ${fm.preset_label ? `· <strong style="color:var(--text)">${fm.preset_label}</strong>` : "· profile YAML"}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${presets.map(p => `<button type="button" class="btn secondary preset-btn${active===p.id?" active":""}" data-preset="${p.id}" title="${(p.description||"").replace(/"/g,"&quot;")}">${p.label}</button>`).join("")}
+            <button type="button" class="btn secondary" data-preset="clear" title="Remove runtime overrides">Profile default</button>
+          </div>
+          <div id="${statusId}" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
+          ${fm.tick_interval_note ? `<div style="margin-top:4px;font-size:11px;color:var(--orange)">${fm.tick_interval_note}</div>` : ""}
+        </div>`;
+      };
+      const controls = buildPresetControls("fastModeApplyStatus");
+      const settingsEl = document.getElementById("fastModeSettingsControls");
+      if (settingsEl) settingsEl.innerHTML = buildPresetControls("fastModeSettingsApplyStatus");
+      const head = `<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)">
+        <span>mode <strong style="color:var(--text)"><span class="badge ${modeCls}">${fm.mode || "observe"}</span></strong></span>
+        <span>tick <strong style="color:var(--text)">${fm.tick_interval_ms || "—"}ms</strong></span>
+        <span>service <strong style="color:var(--text)"><span class="badge ${svcCls}">${fm.service_status || "—"}</span></strong></span>
+        <span>cache <strong style="color:var(--blue)">${fm.cache_symbol_count || 0}</strong> symbols</span>
+        ${fm.timestamp ? `<span>updated <strong style="color:var(--text)">${fm.timestamp}</strong></span>` : ""}
+      </div>`;
+      const cacheRows = fm.cache_rows || [];
+      const cacheTable = cacheRows.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Execution cache (slow brain → fast hands)</div>
+        <table style="font-size:11px"><thead><tr><th>Symbol</th><th>Side</th><th>Anchor</th><th>Zone</th><th>BE</th><th>Trail</th><th>Expires</th></tr></thead><tbody>
+        ${cacheRows.map(r => `<tr>
+          <td><strong>${(r.symbol||"—").replace("m","")}</strong></td>
+          <td>${r.side||"—"}</td>
+          <td>${r.anchor!=null?fmt(r.anchor,2):"—"}</td>
+          <td>${Array.isArray(r.entry_zone)?r.entry_zone.map(v=>fmt(v,2)).join("–"):"—"}</td>
+          <td>${r.be_trigger_r!=null?fmt(r.be_trigger_r,2)+"R":"—"}</td>
+          <td>${r.trail_start_r!=null?fmt(r.trail_start_r,2)+"R":"—"}</td>
+          <td style="color:var(--muted)">${(r.expires_at||"—").slice(11,19)}</td>
+        </tr>`).join("")}
+        </tbody></table></div>` : `<p class="empty" style="margin-bottom:10px">No cached signals — evaluation_loop must approve a setup first.</p>`;
+      const decisions = fm.decisions || [];
+      const decTable = decisions.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Latest tick decisions</div>
+        <table style="font-size:11px"><thead><tr><th>Symbol</th><th>Action</th><th>Mid</th><th>Dist ATR</th><th>Spread</th><th>Reasons</th></tr></thead><tbody>
+        ${decisions.slice().reverse().map(d => `<tr>
+          <td>${(d.symbol||"—").replace("m","")}</td>
+          <td style="color:${actColor(d.action)};font-weight:600">${d.action||"—"}</td>
+          <td>${d.mid!=null?fmt(d.mid,2):"—"}</td>
+          <td>${d.distance_atr!=null?fmt(d.distance_atr,3):"—"}</td>
+          <td>${d.spread_points!=null?fmt(d.spread_points,1):"—"}</td>
+          <td style="color:var(--muted);font-size:10px">${(d.reasons||[]).join(", ")||"—"}</td>
+        </tr>`).join("")}
+        </tbody></table></div>` : "";
+      const guardAction = (g) => {
+        if (typeof g.action === "string") return g.action;
+        if (Array.isArray(g.actions)) return g.actions.join(", ");
+        if (g.action && typeof g.action === "object" && Array.isArray(g.action.actions)) return g.action.actions.join(", ");
+        return "—";
+      };
+      const guard = fm.guard_actions || [];
+      const guardTable = guard.length ? `<div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Position guard</div>
+        <table style="font-size:11px"><thead><tr><th>Symbol</th><th>Action</th><th>R</th><th>Ticket</th></tr></thead><tbody>
+        ${guard.slice().reverse().map(g => `<tr>
+          <td>${(g.symbol||"—").replace("m","")}</td>
+          <td style="color:var(--purple)">${guardAction(g)}</td>
+          <td>${g.r_mult!=null?fmt(g.r_mult,2):"—"}</td>
+          <td style="color:var(--muted)">${g.ticket||"—"}</td>
+        </tr>`).join("")}
+        </tbody></table></div>` : "";
+      el.innerHTML = controls + head + cacheTable + decTable + guardTable;
+    }
+
+    async function setFastModePreset(presetId, triggerEl) {
+      const statusIds = ["fastModeApplyStatus", "fastModeSettingsApplyStatus", "fastModeSettingsStatus"];
+      const setStatus = (msg, ok) => {
+        statusIds.forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = `<span style="color:${ok ? "var(--green)" : "var(--red)"}">${msg}</span>`;
+        });
+      };
+      if (triggerEl) {
+        triggerEl.disabled = true;
+      }
+      try {
+        const body = presetId === "clear"
+          ? { action: "clear" }
+          : { action: "preset", preset: presetId };
+        const res = await fetch("/api/fast-mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const out = await res.json();
+        if (!res.ok || !out.ok) {
+          setStatus(out.message || "Preset failed", false);
+        } else {
+          setStatus(`${out.label || presetId} applied${out.note ? " — " + out.note : ""}`, true);
+          if (typeof safeRender === "function") safeRender();
+        }
+      } catch (err) {
+        setStatus("Could not reach dashboard API", false);
+      } finally {
+        if (triggerEl) triggerEl.disabled = false;
+      }
     }
 
     function renderEvaluationPolicy(data) {
@@ -2414,8 +2604,38 @@
       }
     }
 
+    document.addEventListener("click", (e) => {
+      const presetBtn = e.target.closest("[data-preset]");
+      if (!presetBtn || !presetBtn.closest("#fastModeCard, #fastModeSettingsCard")) return;
+      e.preventDefault();
+      setFastModePreset(presetBtn.dataset.preset, presetBtn);
+    });
+
     document.getElementById("resetSessionBtn")?.addEventListener("click", (e) => {
       resetSessionState(e.currentTarget);
+    });
+
+    async function unblockTrades(triggerEl) {
+      const statusEl = document.getElementById("unblockStatus");
+      if (triggerEl) triggerEl.disabled = true;
+      try {
+        const res = await fetch("/api/unblock-trades", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const out = await res.json();
+        if (out.ok) {
+          if (statusEl) statusEl.textContent = "All gates cleared - trades unblocked";
+          if (typeof safeRender === "function") safeRender();
+        } else {
+          if (statusEl) statusEl.textContent = out.message || "Failed to unblock";
+        }
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "API error: " + err.message;
+      } finally {
+        if (triggerEl) triggerEl.disabled = false;
+      }
+    }
+
+    document.getElementById("unblockTradesBtn")?.addEventListener("click", (e) => {
+      unblockTrades(e.currentTarget);
     });
     document.getElementById("resetSessionLink")?.addEventListener("click", (e) => {
       e.preventDefault();
