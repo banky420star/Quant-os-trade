@@ -89,7 +89,8 @@ def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:
     micro_trailing = micro.get("trailing")
     if isinstance(micro_trailing, dict) and micro_trailing:
         trading["trailing"] = _deep_merge(dict(trading.get("trailing") or {}), micro_trailing)
-        trading["trailing"]["enabled"] = True
+        if "enabled" not in micro_trailing:
+            trading["trailing"]["enabled"] = True
 
     micro_exits = micro.get("exits")
     if isinstance(micro_exits, dict) and micro_exits:

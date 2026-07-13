@@ -74,7 +74,7 @@ policy_optimizer:
 # are always rejected. See docs/PHASE2.4_LEARNING_LOOP.md.
 learning:
   enabled: true
-  mode: review_only
+  mode: live_apply_limited
   loop_interval_seconds: 120
   review_lookback: 25
   proposal_min_sample: 3
@@ -384,7 +384,7 @@ trading:
         lock_profit_usd: 2
         trigger_atr_mult: 0.5
   trailing:
-    enabled: true
+    enabled: false  # disabled per user request 2026-07-12
     activation_profit_usd: 3
     activation_atr_mult: 0.75
     # Trail distance in MT5 broker points (× symbol_info.point), behind peak.
@@ -465,7 +465,7 @@ filters:
     US500m: 100
     US30m: 120
     NAS100m: 140
-    UK100m: 110
+    UK100m: 250
     FR40m: 120
     JP225m: 130
   min_atr_ratio: 0.0002
@@ -644,11 +644,11 @@ practice:
     regime_flip_window_sec: 90
     break_even:
       trigger_profit_usd: 2
-      lock_profit_usd: 1
+      lock_profit_usd: 3   # was 1 ? lock $3 profit above entry
       per_symbol:
         XAUUSDm:
           trigger_profit_usd: 2
-          lock_profit_usd: 1
+          lock_profit_usd: 3
         USOILm:
           trigger_profit_usd: 1.5
           lock_profit_usd: 0.75
@@ -673,10 +673,11 @@ practice:
           trail_points_atr_mult: 0.2
     exits:
       runner:
-        trail_tighten_mult: 0.35
+        trail_tighten_mult: 0.5    # was 0.35 ? looser runner trail
+        lock_profit_rr: 0.5       # was 0.35 ? lock more profit
       defer_trail_until:
         require_partial_or_rr: true
-        min_rr: 0.5
+        min_rr: 0.8   # was 0.5 ? don't trail until 0.8R reached (maximize profit)
     symbol_rules:
       XAUUSDm:
         preferred_setups: [pullback, trend_continuation]
@@ -752,7 +753,7 @@ performance:
   projection_capital_usd: 1000000
   target_monthly_pnl_usd: 50000
   default_risk_percent: 0.45
-  min_confidence: 62
+  min_confidence: 40
   min_risk_reward: 1.15
   min_volume_ratio: 0.35
   regime_veto_enabled: true
@@ -786,7 +787,7 @@ optimizer:
   - 1.0
   - 1.1
 signals:
-  min_confidence: 64
+  min_confidence: 40
   min_risk_reward: 1.20
   default_risk_percent: 0.35
   max_candidates_per_run: 0
@@ -803,23 +804,23 @@ signals:
     fallback_fraction: 2.5
   regime_overrides:
     strong_trend:
-      min_confidence: 66
+      min_confidence: 40
       min_risk_reward: 1.30
       bias_aligned: true
     weak_trend:
-      min_confidence: 62
+      min_confidence: 40
       min_risk_reward: 1.20
       bias_aligned: true
     compression:
-      min_confidence: 64
+      min_confidence: 40
       min_risk_reward: 1.25
       bias_aligned: true
     expansion:
-      min_confidence: 64
+      min_confidence: 40
       min_risk_reward: 1.25
       bias_aligned: true
     range:
-      min_confidence: 66
+      min_confidence: 40
       min_risk_reward: 1.10
     transitional:
       skip: false

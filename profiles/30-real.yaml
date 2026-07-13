@@ -103,7 +103,7 @@ culturing:
   veto_win_rate_pct: 45
   cost_r: 0.0
   promote_min_n: 4
-  promote_min_win_rate_pct: 48
+  promote_min_win_rate_pct: 0
   promote_min_expectancy_r: 0.03
 adaptation:
   enabled: true
@@ -134,28 +134,28 @@ quant:
   strategy_ranking_enabled: true
   require_top_ranked_setup: false
   ranking_flex_enabled: true
-  ranking_flex_min_win_rate: 48
+  ranking_flex_min_win_rate: 0
   ranking_flex_min_samples: 6
   ranking_flex_top_n: 2
   ranking_context_align: true
   min_rank_sample_size: 3
-  min_rank_win_rate: 40
+  min_rank_win_rate: 0
   cell_veto_demote: true
   per_symbol:
     XAUUSDm:
       require_top_ranked_setup: false
-      min_rank_win_rate: 38
+      min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups: [trend_continuation, pullback]
       preferred_sessions: [london_open, overlap_london_ny, london_mid, new_york, tokyo]
     USOILm:
       require_top_ranked_setup: false
-      min_rank_win_rate: 38
+      min_rank_win_rate: 0
       preferred_setups: [trend_continuation, pullback]
       preferred_sessions: [tokyo, new_york, overlap_london_ny, london_open]
     UK100m:
       require_top_ranked_setup: false
-      min_rank_win_rate: 40
+      min_rank_win_rate: 0
       preferred_setups: [trend_continuation, pullback]
       preferred_sessions: [london_open, overlap_london_ny, london_mid]
 session_scoring:

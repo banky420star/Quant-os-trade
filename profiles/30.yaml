@@ -4,6 +4,9 @@ description: "Aggressive edge sessions on XAUUSDm/USOILm/UK100m, 0.01 lot, $10 m
 mode: growth
 trading:
   aggressive_mode: true
+  # USER request 2026-07-12: disable trailing stop for now
+  trailing:
+    enabled: false
 practice:
   relax_structure_checks: true
   relax_volume_check: true
@@ -46,6 +49,26 @@ practice:
     cap_loss_to_balance: true
     reentry_cooldown_seconds: 30
     entry_confirm_seconds: 30
+    trailing:
+      enabled: true   # trailing ON but tuned to maximize profit
+      # Activate later (trade well in profit before trailing starts)
+      # Trail looser (give winners room to breathe, don't get stopped on pullbacks)
+      activation_profit_usd: 2
+      activation_atr_mult: 0.75   # was 0.35 ? activate at 0.75 ATR profit
+      trail_points_atr_mult: 0.6  # was 0.28 ? looser trail so winners run
+      per_symbol:
+        XAUUSDm:
+          activation_profit_usd: 2
+          activation_atr_mult: 0.75
+          trail_points_atr_mult: 0.6  # was 0.28 ? let gold breathe
+        USOILm:
+          activation_profit_usd: 1.5
+          activation_points: 18    # was 8 ? activate later
+          trail_points: 25        # was 10 ? looser trail
+        UK100m:
+          activation_profit_usd: 2
+          activation_atr_mult: 0.6  # was 0.3
+          trail_points_atr_mult: 0.5  # was 0.2 ? let FTSE breathe
     regime_flip_replace_enabled: true
     regime_flip_min_confidence: 65
     regime_flip_window_sec: 90
