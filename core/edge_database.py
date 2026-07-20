@@ -9,6 +9,7 @@ from typing import Any
 
 from core.setup_library import SETUP_LIBRARY
 from core.utils import read_json_state, utc_now_iso, write_json_state
+from core.strategy_policy import normalize_setup_type
 
 MAX_RECORDS = 50_000
 
@@ -173,20 +174,45 @@ class EdgeDatabase:
             })
 
         if not rankings:
-            for setup in (
+            setups = (
                 "trend_continuation", "pullback", "breakout", "range_fade",
                 "liquidity_sweep", "mean_reversion", "false_breakout", "compression_breakout",
-            ):
-                global_stats = self.query_win_rate(setup_type=setup, market_regime=market_regime, min_samples=min_samples)
-                if global_stats["total"] >= min_samples:
+            )
+            # Symbol-isolated fallback: never pool stats across symbols (expanded
+            # watchlist was inheriting XAU/global win rates).
+            for setup in setups:
+                sym_stats = self.query_win_rate(
+                    setup_type=setup,
+                    symbol=symbol,
+                    market_regime=market_regime,
+                    session=session,
+                    min_samples=min_samples,
+                )
+                if sym_stats["total"] >= min_samples:
                     rankings.append({
                         "setup_type": setup,
-                        "score": global_stats["win_rate_pct"],
-                        "win_rate_pct": global_stats["win_rate_pct"],
-                        "total": global_stats["total"],
-                        "avg_rr": global_stats["avg_rr"],
+                        "score": sym_stats["win_rate_pct"],
+                        "win_rate_pct": sym_stats["win_rate_pct"],
+                        "total": sym_stats["total"],
+                        "avg_rr": sym_stats["avg_rr"],
                         "insufficient_data": False,
                     })
+            if not rankings:
+                for setup in setups:
+                    sym_stats = self.query_win_rate(
+                        setup_type=setup,
+                        symbol=symbol,
+                        min_samples=min_samples,
+                    )
+                    if sym_stats["total"] >= min_samples:
+                        rankings.append({
+                            "setup_type": setup,
+                            "score": sym_stats["win_rate_pct"],
+                            "win_rate_pct": sym_stats["win_rate_pct"],
+                            "total": sym_stats["total"],
+                            "avg_rr": sym_stats["avg_rr"],
+                            "insufficient_data": False,
+                        })
 
         rankings.sort(key=lambda x: (x["score"], x["total"]), reverse=True)
         return rankings
@@ -201,12 +227,18 @@ class EdgeDatabase:
     ) -> dict[str, Any]:
         symbol = trade.get("symbol")
         feat = (features or {}).get("symbols", {}).get(symbol, {})
+        ctx_root = context if isinstance(context, dict) else {}
         ctx = {}
-        if context:
-            ctx = context.get("symbols", {}).get(symbol, context.get("market_context", {}).get("symbols", {}).get(symbol, {}))
+        if ctx_root:
+            symbols_ctx = ctx_root.get("symbols", {}) if isinstance(ctx_root.get("symbols"), dict) else {}
+            market_ctx = ctx_root.get("market_context", {}) if isinstance(ctx_root.get("market_context"), dict) else {}
+            market_symbols = market_ctx.get("symbols", {}) if isinstance(market_ctx.get("symbols"), dict) else {}
+            ctx = symbols_ctx.get(symbol, market_symbols.get(symbol, {}))
 
         meta = signal or trade.get("signal_meta") or {}
         mctx = meta.get("market_context", trade.get("market_context", {}))
+        if not isinstance(mctx, dict):
+            mctx = {}
         regime = mctx.get("market_regime", {})
         entry = float(trade.get("entry") or meta.get("entry") or 0)
         exit_p = float(trade.get("exit") or 0)
@@ -216,6 +248,12 @@ class EdgeDatabase:
         reward = abs(tp1 - entry) if tp1 else abs(exit_p - entry)
         rr = round(reward / risk, 2) if risk > 0 else 0
 
+        setup_type = normalize_setup_type(
+            trade.get("setup_type") or meta.get("setup_type"),
+            meta=meta,
+            market_context=mctx if isinstance(mctx, dict) else {},
+        )
+
         return {
             "id": str(uuid.uuid4()),
             "trade_id": trade.get("trade_id"),
@@ -223,7 +261,7 @@ class EdgeDatabase:
             "source": source,
             "symbol": symbol,
             "side": trade.get("side"),
-            "setup_type": trade.get("setup_type") or meta.get("setup_type"),
+            "setup_type": setup_type,
             "market_regime": regime.get("primary") or mctx.get("regime") or ctx.get("regime"),
             "session": mctx.get("session") or ctx.get("session"),
             "volatility": feat.get("volatility_regime", "normal"),

@@ -9,7 +9,10 @@ from typing import Any
 from core.consensus_gates import ConsensusGates
 from core.evidence_engine import EvidenceEngine
 from core.explain_report import build_explain_report
+from core.entry_narrative import build_entry_narrative
 from core.setup_classifier import SetupClassifier
+from core.setup_triggers import describe_trigger, snapshot_trigger_context
+from core.strategy_arena import arena_enabled, arena_settings
 from core.strategy_ranker import StrategyRanker
 from core.strategy_entry import pin_strategy_entry, strategy_entries_enabled
 from core.trade_score import compute_trade_score
@@ -33,6 +36,7 @@ class DecisionEngine:
         from core.adaptive_weights import load_weights
 
         self._weights = load_weights(config)
+        self._weight_cache: dict[str, dict[str, float]] = {}
 
     def generate_candidates(
         self,
@@ -46,66 +50,92 @@ class DecisionEngine:
         max_candidates = max_candidates_per_run(self.config)
         min_confidence = int(self.config["signals"].get("min_confidence", 70))
 
+        arena_on = arena_enabled(self.config)
+        arena_cfg = arena_settings(self.config) if arena_on else {}
+        arena_min_conf = int(arena_cfg.get("min_confidence", 0)) if arena_on else 0
+
         for symbol, feat in features_data.get("symbols", {}).items():
             ctx = context_data.get("symbols", {}).get(symbol, {})
             ev = evidence_data.get("symbols", {}).get(symbol, {})
-            setup = self.setup_classifier.classify(feat, ctx, ev)
-            if not setup:
-                continue
+            if arena_on and arena_cfg.get("emit_all_setups"):
+                setups = self.setup_classifier.classify_all(feat, ctx, ev)
+            else:
+                single = self.setup_classifier.classify(feat, ctx, ev)
+                setups = [single] if single else []
 
-            allowed, rank_info = self.ranker.allow_setup(setup["setup_type"], symbol, ctx, feat)
-            if not allowed:
-                self.logger.info(
-                    "Strategy ranker blocked %s %s — %s (top: %s)",
-                    symbol,
-                    setup["setup_type"],
-                    rank_info.get("reason"),
-                    rank_info.get("top_setup"),
-                )
-                continue
+            for setup in setups:
+                if not setup:
+                    continue
 
-            votes = self._confidence_tree(feat, ctx, ev, setup)
-            final_confidence = self._combine_votes(votes, setup, symbol, edge_scores)
-            if final_confidence < min_confidence:
-                continue
+                only_setup = self.config.get("replay", {}).get("only_setup_type")
+                if only_setup and setup["setup_type"] != only_setup:
+                    continue
 
-            signal = self._build_signal(symbol, feat, setup, votes, final_confidence, ctx, ev)
-            regime = ctx.get("market_regime", {})
-            passed, vetoes = self.consensus.evaluate(signal, votes, edge_scores, regime)
-            signal["consensus_vetoes"] = vetoes
-            signal["consensus_passed"] = passed
-            if not passed:
-                self.logger.info(
-                    "Consensus blocked %s %s %s — %s",
-                    symbol,
-                    signal["side"],
-                    setup["setup_type"],
-                    vetoes,
-                )
-                continue
+                if arena_on:
+                    rank_info = {
+                        "allowed": True,
+                        "reason": "arena_all_setups",
+                        "rankings": self.ranker.rank_for_symbol(symbol, ctx, feat)[:5],
+                    }
+                else:
+                    allowed, rank_info = self.ranker.allow_setup(
+                        setup["setup_type"], symbol, ctx, feat,
+                    )
+                    if not allowed:
+                        self.logger.info(
+                            "Strategy ranker blocked %s %s — %s (top: %s)",
+                            symbol,
+                            setup["setup_type"],
+                            rank_info.get("reason"),
+                            rank_info.get("top_setup"),
+                        )
+                        continue
 
-            trade_score = compute_trade_score(symbol, feat, ctx, rank_info, self.config)
-            signal["trade_score"] = trade_score
-            if trade_score.get("enabled") and not trade_score.get("passed"):
-                self.logger.info(
-                    "Trade score blocked %s %s — %.1f < %.1f (session=%s)",
-                    symbol,
-                    setup["setup_type"],
-                    trade_score.get("total", 0),
-                    trade_score.get("threshold", 80),
-                    trade_score.get("session_detail", {}).get("session"),
-                )
-                continue
+                votes = self._confidence_tree(feat, ctx, ev, setup)
+                final_confidence = self._combine_votes(votes, setup, symbol, edge_scores)
+                floor = max(min_confidence, arena_min_conf) if arena_on else min_confidence
+                if final_confidence < floor:
+                    continue
 
-            signal["strategy_rank"] = rank_info
-            if trade_score.get("enabled"):
-                sess = trade_score.get("session_detail", {})
-                signal["reasons"].append(
-                    f"Trade score {trade_score['total']:.0f}/100 — "
-                    f"{sess.get('session', 'unknown').replace('_', ' ')} session ({sess.get('quality', 'n/a')})"
-                )
-            signal["explain"] = build_explain_report(signal, edge_scores)
-            candidates.append(signal)
+                signal = self._build_signal(symbol, feat, setup, votes, final_confidence, ctx, ev)
+                regime = ctx.get("market_regime", {})
+                passed, vetoes = self.consensus.evaluate(signal, votes, edge_scores, regime)
+                signal["consensus_vetoes"] = vetoes
+                signal["consensus_passed"] = passed
+                if not passed:
+                    self.logger.info(
+                        "Consensus blocked %s %s %s — %s",
+                        symbol,
+                        signal["side"],
+                        setup["setup_type"],
+                        vetoes,
+                    )
+                    continue
+
+                trade_score = compute_trade_score(symbol, feat, ctx, rank_info, self.config)
+                signal["trade_score"] = trade_score
+                if trade_score.get("enabled") and not trade_score.get("passed"):
+                    self.logger.info(
+                        "Trade score blocked %s %s — %.1f < %.1f (session=%s)",
+                        symbol,
+                        setup["setup_type"],
+                        trade_score.get("total", 0),
+                        trade_score.get("threshold", 80),
+                        trade_score.get("session_detail", {}).get("session"),
+                    )
+                    continue
+
+                signal["strategy_rank"] = rank_info
+                if arena_on:
+                    signal["arena_mode"] = True
+                if trade_score.get("enabled"):
+                    sess = trade_score.get("session_detail", {})
+                    signal["reasons"].append(
+                        f"Trade score {trade_score['total']:.0f}/100 — "
+                        f"{sess.get('session', 'unknown').replace('_', ' ')} session ({sess.get('quality', 'n/a')})"
+                    )
+                signal["explain"] = build_explain_report(signal, edge_scores)
+                candidates.append(signal)
 
         candidates.sort(key=lambda s: s["confidence"], reverse=True)
         trimmed = candidates if max_candidates is None else candidates[:max_candidates]
@@ -141,6 +171,13 @@ class DecisionEngine:
             "risk_engine": int((1 - ev["risk"]) * 100),
         }
 
+    def _weights_for(self, symbol: str) -> dict[str, float]:
+        if symbol not in self._weight_cache:
+            from core.adaptive_weights import load_weights
+
+            self._weight_cache[symbol] = load_weights(self.config, symbol=symbol)
+        return self._weight_cache[symbol]
+
     def _combine_votes(
         self,
         votes: dict[str, int],
@@ -148,7 +185,8 @@ class DecisionEngine:
         symbol: str,
         edge_scores: dict[str, Any],
     ) -> int:
-        weighted = sum(votes[k] * self._weights[k] for k in votes if k in self._weights)
+        weights = self._weights_for(symbol)
+        weighted = sum(votes[k] * weights[k] for k in votes if k in weights)
         setup_boost = int(setup.get("setup_confidence", 0.5) * 10)
         edge = edge_scores.get("setups", {}).get(symbol, {}).get(setup["setup_type"], 50)
         edge_adj = (edge - 50) * 0.15
@@ -169,7 +207,7 @@ class DecisionEngine:
         setup_type = setup["setup_type"]
 
         if strategy_entries_enabled(self.config):
-            levels = pin_strategy_entry(setup_type, side, feat, ctx, self.config)
+            levels = pin_strategy_entry(setup_type, side, feat, ctx, self.config, symbol)
             entry = levels["entry"]
             sl = levels["sl"]
             tp1 = levels["tp1"]
@@ -197,6 +235,20 @@ class DecisionEngine:
             reasons.append(entry_meta["entry_reason"])
         regime = ctx.get("market_regime", {})
 
+        market_context = {
+            "regime": ctx.get("regime"),
+            "phase": ctx.get("phase"),
+            "move_type": ctx.get("move_type"),
+            "market_intent": ctx.get("market_intent"),
+            "session": ctx.get("session"),
+            "market_regime": regime,
+        }
+        # Plain-English entry reason, composed only from indicators the
+        # FeatureEngine actually computes on this entry bar. Surfaces reason
+        # + (later) profitability per trade, per the user's request.
+        entry_narrative = build_entry_narrative(setup_type, side, feat, market_context)
+        trigger_ctx = snapshot_trigger_context(setup, feat, ctx, ev, self.config)
+
         return {
             "signal_id": str(uuid.uuid4()),
             "symbol": symbol,
@@ -211,21 +263,18 @@ class DecisionEngine:
             "entry_anchor": entry_meta.get("entry_anchor"),
             "entry_anchor_price": entry_meta.get("entry_anchor_price"),
             "entry_reason": entry_meta.get("entry_reason"),
+            "entry_narrative": entry_narrative,
             "market_price": entry_meta.get("market_price", feat.get("price")),
             "distance_atr": entry_meta.get("distance_atr"),
+            "within_reach": entry_meta.get("within_reach", True),
             "confidence": confidence,
             "confidence_tree": votes,
             "evidence": ev,
-            "market_context": {
-                "regime": ctx.get("regime"),
-                "phase": ctx.get("phase"),
-                "move_type": ctx.get("move_type"),
-                "market_intent": ctx.get("market_intent"),
-                "session": ctx.get("session"),
-                "market_regime": regime,
-            },
+            "market_context": market_context,
             "reason": setup["reason"],
             "reasons": reasons,
+            "trigger_summary": describe_trigger(setup_type, self.config),
+            "trigger_context": trigger_ctx,
             "created_at": utc_now_iso(),
         }
 

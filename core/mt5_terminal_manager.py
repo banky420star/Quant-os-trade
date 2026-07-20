@@ -123,15 +123,21 @@ class MT5TerminalManager:
                 seen.add(str(p))
                 ranked.append((priority, str(p)))
 
-        add(os.environ.get("MT5_PATH"), 0)
-        add(self.mt5_cfg.get("path"), 0)
+        use_logged_in = bool(self.mt5_cfg.get("use_logged_in_account", True))
 
         if psutil:
             for proc in self.list_processes():
                 if proc.get("session_id") == 0:
                     continue
-                priority = 1 if proc.get("session_id") == python_session else 3
+                if use_logged_in:
+                    priority = 0 if proc.get("session_id") == python_session else 4
+                else:
+                    priority = 1 if proc.get("session_id") == python_session else 3
                 add(proc.get("exe"), priority)
+
+        cfg_priority = 3 if use_logged_in else 0
+        add(os.environ.get("MT5_PATH"), cfg_priority)
+        add(self.mt5_cfg.get("path"), cfg_priority)
 
         for candidate in self.DEFAULT_CANDIDATES:
             add(candidate, 5)
@@ -145,9 +151,35 @@ class MT5TerminalManager:
         processes = self.list_processes()
         if not processes:
             return False
-        if path:
-            return any(p.get("exe") == path and p.get("session_id") not in (None, 0) for p in processes)
-        return any(p.get("session_id") not in (None, 0) for p in processes)
+
+        def _norm(p: str | None) -> str:
+            # psutil sometimes returns a process exe WITHOUT the drive letter
+            # (e.g. "\Users\Admin\MT5Agent\terminal64.exe") when reading
+            # another session's process, which broke an exact-string compare and
+            # caused a false "terminal_not_running" health alert. Normalize by
+            # stripping the drive, lower-casing, and using forward slashes.
+            if not p:
+                return ""
+            from pathlib import PurePath
+            pp = PurePath(p)
+            return "/".join(pp.parts[1:]).lower() if len(pp.parts) > 1 and PurePath(p).anchor else str(p).lower().replace("\\", "/")
+
+        target = _norm(path)
+        target_base = Path(path).name.lower() if path else ""
+        for p in processes:
+            if p.get("session_id") in (None, 0):
+                continue
+            exe = p.get("exe")
+            if not exe:
+                continue
+            n = _norm(exe)
+            if (target and n == target) or (target_base and Path(exe).name.lower() == target_base):
+                return True
+        # No path given, or path didn't match: an interactive terminal process
+        # existing at all is enough to consider the terminal alive.
+        if not path:
+            return any(p.get("session_id") not in (None, 0) for p in processes)
+        return False
 
     def launch_interactive(self) -> bool:
         """Launch MT5 via interactive scheduled task script."""
@@ -168,7 +200,7 @@ class MT5TerminalManager:
             self.logger.warning("Launch script exit=%s stderr=%s", result.returncode, result.stderr)
         return result.returncode == 0
 
-    def ensure_terminal(self, auto_launch: bool = True) -> dict[str, Any]:
+    def ensure_terminal(self, auto_launch: bool = False) -> dict[str, Any]:
         """Ensure an interactive MT5 terminal is running; optionally launch."""
         alignment = self.session_alignment()
         terminal_path = self.mt5_cfg.get("path") or alignment.get("recommended_terminal")
@@ -177,7 +209,7 @@ class MT5TerminalManager:
             alignment["status"] = "ok"
             return alignment
 
-        if auto_launch and self.mt5_cfg.get("auto_launch_terminal", True):
+        if auto_launch and self.mt5_cfg.get("auto_launch_terminal", False):
             self.logger.warning("MT5 not aligned — attempting interactive launch")
             self.launch_interactive()
             alignment = self.session_alignment()

@@ -1,0 +1,66 @@
+# $30 micro — Candidate-1 Culturing Evolution (positive expectancy only)
+label: "$30 Micro C1"
+description: "3 symbols, 0.01 lot, $10 max loss, positive-evolution gates, no pyramiding"
+mode: growth
+practice:
+  micro:
+    enabled: true
+    account_size_usd: 30
+    symbols: [XAUUSDm, USOILm, UK100m]
+    max_open_per_symbol: 1
+    max_open_per_setup: 1
+    allow_pyramiding: false
+    default_lot: 0.01
+    max_lot: 0.01
+    risk_percent_per_trade: 1.0
+    daily_target_pct: 20
+    max_daily_loss_pct: 10
+    max_drawdown_pct: 20
+    max_symbol_exposure_fraction: 0.40
+    max_total_exposure_fraction: 0.60
+    max_session_trades_per_symbol: 6
+    max_loss_per_trade_usd: 10
+    cap_loss_to_balance: true
+    reentry_cooldown_seconds: 30
+    entry_confirm_seconds: 30
+    regime_flip_replace_enabled: true
+    regime_flip_min_confidence: 65
+    regime_flip_window_sec: 90
+    positive_evolution_enabled: true
+    positive_evolution:
+      enabled: true
+      min_n: 6
+      min_expectancy_net_r: 0.0
+      edge_db_min_samples: 5
+      edge_db_min_win_rate_pct: 55
+culturing:
+  min_n: 6
+  veto_win_rate_pct: 45
+  cost_r: 0.0
+adaptation:
+  enabled: true
+  calibrate_be_trail: true
+  rebuild_trade_log: true
+  refresh_positive_evolution: true
+quant:
+  positive_evolution_enabled: true
+  positive_evolution:
+    enabled: true
+    min_n: 6
+    min_expectancy_net_r: 0.0
+  strategy_ranking_enabled: true
+  require_top_ranked_setup: true
+  ranking_flex_enabled: true
+  ranking_flex_min_win_rate: 52
+  ranking_flex_min_samples: 8
+  ranking_flex_top_n: 2
+  per_symbol:
+    XAUUSDm: { require_top_ranked_setup: true }
+    USOILm:  { require_top_ranked_setup: true }
+    UK100m:  { require_top_ranked_setup: true }
+execution:
+  starting_cash: 30
+research:
+  min_trades_for_research: 10
+  replay_bars: 300
+  replay_step: 12

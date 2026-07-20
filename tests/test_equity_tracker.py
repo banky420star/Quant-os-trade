@@ -36,3 +36,13 @@ def test_filter_curve_by_range_all():
 
 def test_equity_range_keys():
     assert set(EQUITY_RANGE_SECONDS) == {"1m", "1h", "1d", "7d", "30d", "all"}
+
+
+def test_range_stats_max_drawdown_from_period_start():
+    points = [
+        {"ts": "2026-06-25T10:00:00+00:00", "equity": 1000.0, "cash": 1000.0},
+        {"ts": "2026-06-25T11:00:00+00:00", "equity": 1050.0, "cash": 1050.0},
+        {"ts": "2026-06-25T12:00:00+00:00", "equity": 900.0, "cash": 900.0},
+    ]
+    result = filter_curve_by_range(points, [], "all", 1000.0)
+    assert result["range_stats"]["period_max_drawdown_pct"] == 14.29

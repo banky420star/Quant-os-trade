@@ -34,6 +34,19 @@ def record_snapshot(
     equity_val = round(float(equity), 2)
     unrealized = round(equity_val - cash_val, 2)
 
+    # Guard against transient bad MT5 reads (e.g. equity=100 on a $5k account)
+    # that spike the equity-graph y-axis and flatten the real line. Skip
+    # non-positive values and implausible >50% crashes from the last real
+    # point — a real account does not halve in one 20s tick.
+    if equity_val <= 0:
+        return history
+    prior = read_json_state("equity_history.json", default={"points": []})
+    prior_pts = prior.get("points") or []
+    if prior_pts:
+        last_eq = float(prior_pts[-1].get("equity", 0) or 0)
+        if last_eq > 0 and equity_val < last_eq * 0.5:
+            return history
+
     point = {
         "ts": now,
         "equity": equity_val,
@@ -51,7 +64,7 @@ def record_snapshot(
             now_dt = _parse_ts(now)
             elapsed = (now_dt - last_dt).total_seconds()
             unchanged = abs(float(last.get("equity", 0)) - equity_val) < 0.001
-            if elapsed < 30 and unchanged:
+            if elapsed < 10 and unchanged:
                 return history
         except ValueError:
             pass
@@ -76,6 +89,8 @@ def build_equity_curve(
     paper_trades: dict[str, Any] | None = None,
     account: dict[str, Any] | None = None,
     risk_state: dict[str, Any] | None = None,
+    *,
+    lite: bool = False,
 ) -> dict[str, Any]:
     """
     Build equity curve for dashboard.
@@ -89,6 +104,9 @@ def build_equity_curve(
     risk_state = risk_state or read_json_state("risk_state.json", default={})
     baseline = read_json_state("mt5_baseline.json", default={})
     history = read_json_state("equity_history.json", default={"points": []})
+    hist_points = history.get("points", [])
+    if lite and len(hist_points) > 180:
+        history = {**history, "points": hist_points[-180:]}
 
     balance = paper_orders.get("balance", {})
     order_account = paper_orders.get("account", {})
@@ -114,10 +132,10 @@ def build_equity_curve(
     )
     unrealized = round(current_equity - current_cash, 2)
 
-    trades = sorted(
-        paper_trades.get("trades", []),
-        key=lambda t: t.get("closed_at") or "",
-    )
+    trade_rows = paper_trades.get("trades", [])
+    if lite and len(trade_rows) > 40:
+        trade_rows = trade_rows[-40:]
+    trades = sorted(trade_rows, key=lambda t: t.get("closed_at") or "")
 
     trade_points: list[dict[str, Any]] = []
     equity = starting
@@ -207,6 +225,10 @@ def build_equity_curve(
     session_start = enriched[0]["equity"] if enriched else starting
     session_pnl = round(current_equity - session_start, 2)
 
+    if lite and len(enriched) > 120:
+        enriched = enriched[-120:]
+        markers = markers[-30:]
+
     curve = {
         "starting_equity": round(starting, 2),
         "current_equity": round(current_equity, 2),
@@ -222,7 +244,11 @@ def build_equity_curve(
         "points": enriched,
         "markers": markers,
         "range": _curve_range(enriched, starting),
-        "ranges": {key: filter_curve_by_range(enriched, markers, key, starting) for key in EQUITY_RANGE_SECONDS},
+        "ranges": (
+            {}
+            if lite
+            else {key: filter_curve_by_range(enriched, markers, key, starting) for key in EQUITY_RANGE_SECONDS}
+        ),
     }
     return curve
 
@@ -282,7 +308,7 @@ def _range_stats(points: list[dict[str, Any]], starting: float) -> dict[str, Any
     peak = max(equities)
     trough = min(equities)
     max_dd = 0.0
-    run_peak = peak
+    run_peak = equities[0]
     for eq in equities:
         run_peak = max(run_peak, eq)
         if run_peak > 0:

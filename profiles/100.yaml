@@ -1,0 +1,27 @@
+# $100 small account — room for 0.02 lot on best symbols
+label: "$100 Small"
+description: "4 symbols, up to 0.02 lot, $20 max loss, tight trail, no pyramiding"
+practice:
+  micro:
+    enabled: true
+    account_size_usd: 100
+    symbols: [XAUUSDm, USOILm, UK100m, US30m]
+    max_open_per_symbol: 1
+    max_open_per_setup: 1
+    allow_pyramiding: false
+    default_lot: 0.01
+    max_lot: 0.02
+    risk_percent_per_trade: 1.5
+    daily_target_pct: 15
+    max_daily_loss_pct: 8
+    max_drawdown_pct: 15
+    max_symbol_exposure_fraction: 0.35
+    max_total_exposure_fraction: 0.55
+    max_session_trades_per_symbol: 8
+    max_loss_per_trade_usd: 20
+    cap_loss_to_balance: true
+    reentry_cooldown_seconds: 30
+    entry_confirm_seconds: 30
+    regime_flip_replace_enabled: true
+    regime_flip_min_confidence: 60
+    regime_flip_window_sec: 90

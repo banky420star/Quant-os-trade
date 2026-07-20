@@ -212,7 +212,8 @@ def update_state_md(results: dict[str, str], cycle: int = 0, dashboard_url: str 
         if s.get("total", 0) > 0:
             lines.append(f"  - {setup}: win rate {s.get('win_rate_pct')}% ({s['wins']}/{s['total']})")
 
-    state_path = ROOT / "STATE.md"
+    state_path = ROOT / "docs" / "STATE.md"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

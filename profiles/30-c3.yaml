@@ -1,0 +1,139 @@
+# $30 micro — Candidate 3: Session Edge Specialist
+# Proven winners: XAU pullback@rollover/tokyo, USOIL pullback@tokyo, UK100 london_open
+label: "$30 Session Edge (c3)"
+description: "3-symbol micro bot — strict session×setup edges with quant ranking + culturing evolution"
+practice:
+  micro:
+    enabled: true
+    account_size_usd: 30
+    symbols: [XAUUSDm, USOILm, UK100m]
+    max_open_per_symbol: 1
+    max_open_per_setup: 1
+    allow_pyramiding: false
+    default_lot: 0.01
+    max_lot: 0.01
+    risk_percent_per_trade: 1.0
+    daily_target_pct: 20
+    max_daily_loss_pct: 10
+    max_drawdown_pct: 20
+    max_symbol_exposure_fraction: 0.40
+    max_total_exposure_fraction: 0.60
+    max_session_trades_per_symbol: 6
+    max_loss_per_trade_usd: 10
+    cap_loss_to_balance: true
+    reentry_cooldown_seconds: 30
+    entry_confirm_seconds: 30
+    regime_flip_replace_enabled: true
+    regime_flip_min_confidence: 65
+    regime_flip_window_sec: 90
+    symbol_rules:
+      XAUUSDm:
+        allowed_setups: [pullback]
+        preferred_setups: [pullback]
+        preferred_sessions: [rollover, tokyo]
+        strict_sessions: true
+      USOILm:
+        allowed_setups: [pullback]
+        preferred_setups: [pullback]
+        preferred_sessions: [tokyo]
+        strict_sessions: true
+      UK100m:
+        allowed_setups: [trend_continuation, pullback]
+        preferred_setups: [trend_continuation, pullback]
+        preferred_sessions: [london_open]
+        strict_sessions: true
+
+quant:
+  strategy_ranking_enabled: true
+  require_top_ranked_setup: true
+  ranking_flex_enabled: true
+  ranking_flex_min_win_rate: 48
+  ranking_flex_min_samples: 6
+  ranking_flex_top_n: 2
+  ranking_context_align: true
+  min_rank_sample_size: 3
+  min_rank_win_rate: 40
+  cell_veto_demote: true
+  per_symbol:
+    XAUUSDm:
+      require_top_ranked_setup: true
+      min_rank_win_rate: 38
+      min_rank_sample_size: 3
+      preferred_setups: [pullback]
+      preferred_sessions: [rollover, tokyo]
+    USOILm:
+      require_top_ranked_setup: true
+      min_rank_win_rate: 38
+      preferred_setups: [pullback]
+      preferred_sessions: [tokyo]
+    UK100m:
+      require_top_ranked_setup: true
+      min_rank_win_rate: 40
+      preferred_setups: [trend_continuation, pullback]
+      preferred_sessions: [london_open]
+
+culturing:
+  min_n: 5
+  veto_win_rate_pct: 42
+  cost_r: 0.0
+  promote_min_n: 4
+  promote_min_win_rate_pct: 48
+  promote_min_expectancy_r: 0.03
+
+adaptation:
+  enabled: true
+  calibrate_be_trail: true
+  rebuild_trade_log: true
+  refresh_positive_evolution: false
+  auto_evolve_cells: true
+  evolve_symbols: [XAUUSDm, USOILm, UK100m]
+  seed_edge_cells:
+    - symbol: XAUUSDm
+      setup: pullback
+      sessions: [rollover, tokyo]
+    - symbol: USOILm
+      setup: pullback
+      sessions: [tokyo]
+    - symbol: UK100m
+      setup: trend_continuation
+      sessions: [london_open]
+    - symbol: UK100m
+      setup: pullback
+      sessions: [london_open]
+
+session_scoring:
+  enabled: true
+  min_trade_score: 72
+  symbol_session_boost:
+    XAUUSDm:
+      tokyo: 2
+      rollover: 1
+    USOILm:
+      tokyo: 3
+    UK100m:
+      london_open: 3
+
+execution:
+  starting_cash: 30
+research:
+  min_trades_for_research: 10
+  replay_bars: 300
+  replay_step: 12
+  auto_deploy: false
+signals:
+  symbol_rules:
+    XAUUSDm:
+      allowed_setups: [pullback]
+      preferred_setups: [pullback]
+      preferred_sessions: [rollover, tokyo]
+      strict_sessions: true
+    USOILm:
+      allowed_setups: [pullback]
+      preferred_setups: [pullback]
+      preferred_sessions: [tokyo]
+      strict_sessions: true
+    UK100m:
+      allowed_setups: [trend_continuation, pullback]
+      preferred_setups: [trend_continuation, pullback]
+      preferred_sessions: [london_open]
+      strict_sessions: true

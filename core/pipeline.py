@@ -13,9 +13,14 @@ PIPELINE_LOOPS: list[tuple[str, Any]] = []
 
 def _init_loops() -> list[tuple[str, Any]]:
     from loops import (
+        blue_guardian_loop,
         data_loop,
+        evaluation_loop,
+        policy_detection_loop,
+        policy_optimizer_loop,
         execution_loop,
         feature_loop,
+        adaptation_loop,
         health_loop,
         market_context_loop,
         memory_loop,
@@ -23,6 +28,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         risk_loop,
         signal_loop,
         verifier_loop,
+        trade_log_loop,
     )
     return [
         ("data_loop", data_loop.run),
@@ -30,10 +36,21 @@ def _init_loops() -> list[tuple[str, Any]]:
         ("market_context_loop", market_context_loop.run),
         ("risk_loop", risk_loop.run),
         ("signal_loop", signal_loop.run),
+        ("evaluation_loop", evaluation_loop.run),
+        ("policy_detection_loop", policy_detection_loop.run),
         ("verifier_loop", verifier_loop.run),
         ("execution_loop", execution_loop.run),
+        ("blue_guardian_loop", blue_guardian_loop.run),
         ("position_manager_loop", position_manager_loop.run),
         ("memory_loop", memory_loop.run),
+        # Organic adaptation: culturing vetoes, BE/trail, edge shifts after new closes.
+        ("adaptation_loop", adaptation_loop.run),
+        # USER feature request 2026-07-01: comprehensive per-trade log
+        # (open/close times, win/loss, setup, drawdown, R-multiple, all fields).
+        # Throttled -- rebuilds state/trade_log.json only when paper_trades.json
+        # changed (a trade closed). Reuses the in-process MT5 connection.
+        ("trade_log_loop", trade_log_loop.run),
+        ("policy_optimizer_loop", policy_optimizer_loop.run),
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
 

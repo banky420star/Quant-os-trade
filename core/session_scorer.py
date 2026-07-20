@@ -31,6 +31,16 @@ SYMBOL_SESSION_BOOST: dict[str, dict[str, int]] = {
     "XAUUSDm": {"london_open": 2, "overlap_london_ny": 2, "london_mid": 1},
     "BTCUSDm": {"london_open": 1, "overlap_london_ny": 2, "new_york": 1},
     "USOILm": {"new_york": 2, "overlap_london_ny": 1},
+    "EURUSDm": {"london_open": 2, "overlap_london_ny": 2, "london_mid": 1},
+    "GBPUSDm": {"london_open": 2, "overlap_london_ny": 2, "london_mid": 1},
+    "USDJPYm": {"tokyo": 2, "london_open": 1, "new_york": 1},
+    "USDCHFm": {"london_open": 1, "overlap_london_ny": 1, "new_york": 1},
+    "AUDUSDm": {"sydney": 2, "tokyo": 1, "london_open": 1},
+    "US500m": {"new_york": 2, "overlap_london_ny": 1},
+    "US30m": {"new_york": 2, "overlap_london_ny": 1},
+    "NAS100m": {"new_york": 2, "overlap_london_ny": 1},
+    "UK100m": {"london_open": 2, "overlap_london_ny": 1},
+    "FR40m": {"london_open": 1, "overlap_london_ny": 1},
 }
 
 

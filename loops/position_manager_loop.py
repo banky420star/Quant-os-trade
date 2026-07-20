@@ -10,7 +10,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.mt5_connection_manager import MT5ConnectionManager
-from core.position_manager import manage_mt5_positions, manage_paper_positions
+from core.position_manager import (
+    manage_mt5_positions,
+    manage_paper_positions,
+    manage_partial_tp_mt5,
+    manage_partial_tp_paper,
+)
 from core.position_sync import fetch_mt5_agent_positions
 from core.utils import load_config, read_json_state, setup_logger, write_json_state
 
@@ -26,7 +31,11 @@ def run() -> dict:
         try:
             connection.connect()
             positions = fetch_mt5_agent_positions(config, logger)
+            partial_summary = manage_partial_tp_mt5(config, positions, features, logger)
+            if partial_summary.get("partial_closes"):
+                positions = fetch_mt5_agent_positions(config, logger)
             summary = manage_mt5_positions(config, positions, features, logger)
+            summary["partial_tp"] = partial_summary
             if positions:
                 write_json_state("paper_positions.json", {
                     "timestamp": summary["timestamp"],
@@ -54,13 +63,18 @@ def run() -> dict:
         for sym, feat in features.get("symbols", {}).items()
         if feat.get("price")
     }
+    positions, partial_trades, partial_summary = manage_partial_tp_paper(
+        config, positions, features, logger,
+    )
     updated, summary = manage_paper_positions(config, positions, features, logger)
     write_json_state("paper_positions.json", {
         "timestamp": summary["timestamp"],
         "mode": "paper",
         "positions": updated,
         "prices": prices,
+        "partial_trades": partial_trades,
     })
+    summary["partial_tp"] = partial_summary
     logger.info("Position manager paper: %d SL updates", summary.get("updated", 0))
     return summary
 

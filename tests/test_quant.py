@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,9 +13,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.adaptive_weights import AdaptiveWeightOptimizer, load_weights
+from core.account_mode import validate_runtime_profile
+from core.blue_guardian import blue_guardian_settings, max_lot_for_symbol
 from core.edge_database import EdgeDatabase
+from core.symbol_manager import SymbolManager
 from core.strategy_ranker import StrategyRanker
 from core.trade_enrichment import enrich_trade
+from core.session_scorer import session_score
 from loops.research_loop import _find_patterns, _replay_score
 
 
@@ -71,6 +76,41 @@ def test_edge_database_ingest_and_query(tmp_path, monkeypatch):
     stats = db.query_win_rate(setup_type="trend_continuation", session="London")
     assert stats["total"] == 1
     assert stats["win_rate_pct"] == 100.0
+
+
+def test_edge_ranking_symbol_isolated(tmp_path, monkeypatch):
+    """Symbol B rankings must not inherit symbol A pooled stats."""
+    from core import utils
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setattr(utils, "STATE_DIR", state_dir)
+
+    db = EdgeDatabase()
+    ctx_xau = {"symbols": {"XAUUSDm": {"session": "London"}}}
+    ctx_eur = {"symbols": {"EURUSDm": {"session": "London"}}}
+    tree = {"trend_engine": 70, "structure_engine": 70}
+
+    for i in range(10):
+        db.ingest_trade(_sample_trade(f"xau-w{i}", "win", tree), context=ctx_xau, source="test")
+    for i in range(4):
+        trade = _sample_trade(f"xau-l{i}", "loss", tree)
+        trade["setup_type"] = "range_fade"
+        db.ingest_trade(trade, context=ctx_xau, source="test")
+
+    eur_trade = _sample_trade("eur-w0", "win", tree)
+    eur_trade["symbol"] = "EURUSDm"
+    db.ingest_trade(eur_trade, context=ctx_eur, source="test")
+
+    xau_rank = db.rank_setups_for_context("XAUUSDm", "strong_trend", "London", min_samples=3)
+    eur_rank = db.rank_setups_for_context("EURUSDm", "strong_trend", "London", min_samples=3)
+
+    assert xau_rank
+    assert xau_rank[0]["setup_type"] == "trend_continuation"
+    assert xau_rank[0]["total"] >= 10
+    assert not eur_rank or eur_rank[0]["total"] < xau_rank[0]["total"]
+    if eur_rank:
+        assert eur_rank[0]["total"] <= 1
 
 
 def test_edge_database_rank_setups(tmp_path, monkeypatch):
@@ -139,7 +179,47 @@ def test_load_weights_defaults(config):
     assert sum(weights.values()) > 0.9
 
 
+def test_symbol_manager_discovers_expanded_symbols(config, monkeypatch):
+    from core import symbol_manager as smod
+
+    fake_names = [
+        SimpleNamespace(name="EURUSDm"),
+        SimpleNamespace(name="GBPUSDm"),
+        SimpleNamespace(name="USDJPYm"),
+        SimpleNamespace(name="US500m"),
+        SimpleNamespace(name="UK100m"),
+    ]
+
+    fake_mt5 = SimpleNamespace(
+        symbols_get=lambda: fake_names,
+        symbol_select=lambda symbol, enabled: True,
+        copy_rates_from_pos=lambda symbol, timeframe, pos, count: [1],
+        TIMEFRAME_M5=1,
+        last_error=lambda: (0, "ok"),
+    )
+    monkeypatch.setattr(smod, "mt5", fake_mt5)
+
+    config["mt5"]["symbols"] = ["EURUSDm", "US500m", "UK100m"]
+    manager = SymbolManager(config)
+    result = manager.discover()
+
+    assert result["resolved"]["EURUSDm"] == "EURUSDm"
+    assert result["resolved"]["US500m"] == "US500m"
+    assert result["resolved"]["UK100m"] == "UK100m"
+
+
+def test_session_scorer_boosts_expanded_symbols():
+    eur = session_score("london_open", "EURUSDm")
+    idx = session_score("new_york", "US500m")
+    aud = session_score("sydney", "AUDUSDm")
+
+    assert eur["boost"] > 0
+    assert idx["boost"] > 0
+    assert aud["boost"] > 0
+
+
 def test_strategy_ranker_allow_setup(config):
+    config["quant"]["strategy_ranking_enabled"] = True
     ranker = StrategyRanker(config)
     ctx = {"session": "London", "market_regime": {"primary": "strong_trend"}}
     allowed, info = ranker.allow_setup("trend_continuation", "XAUUSDm", ctx, {})
@@ -148,6 +228,13 @@ def test_strategy_ranker_allow_setup(config):
 
 
 def test_ranking_flex_allows_second_when_leader_is_weak(config):
+    # sync_practice_gates forces strategy_ranking_enabled=False while the
+    # aggressive growth plan is enabled (config.yaml practice.growth.enabled:
+    # true -> practice_session.py overwrites quant.strategy_ranking_enabled).
+    # These tests exercise the flex/context-align branches, which only run when
+    # ranking is ENABLED, so re-enable it explicitly here.
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_flex_min_win_rate"] = 55
     config["quant"]["ranking_flex_min_samples"] = 10
@@ -187,6 +274,10 @@ def test_ranking_flex_allows_second_when_leader_is_weak(config):
 
 
 def test_ranking_flex_strict_when_leader_is_strong(config):
+    # See note in test_ranking_flex_allows_second_when_leader_is_weak:
+    # re-enable ranking (forced off by sync_practice_gates under growth plan).
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_flex_min_win_rate"] = 55
     config["quant"]["ranking_flex_min_samples"] = 10
@@ -223,6 +314,10 @@ def test_ranking_flex_strict_when_leader_is_strong(config):
 
 
 def test_context_align_allows_pullback_in_pullback_market(config):
+    # See note in test_ranking_flex_allows_second_when_leader_is_weak:
+    # re-enable ranking (forced off by sync_practice_gates under growth plan).
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_context_align"] = True
     config["quant"]["ranking_flex_top_n"] = 2
@@ -336,6 +431,91 @@ def test_trade_enrichment():
     assert enriched["confidence"] == 82
     assert enriched["setup_type"] == "breakout"
     assert enriched["signal_meta"]["confidence_tree"]["trend_engine"] == 90
+
+
+def test_runtime_profile_guard_passes_real_live(config):
+    config["mt5"]["account_mode"] = "real"
+    config["performance"]["apply_when"] = "real"
+    config["practice"]["growth"]["enabled"] = False
+    result = validate_runtime_profile(config)
+    assert result["account_mode"] == "real"
+    assert result["performance_plan_active"] is True
+
+
+def test_blue_guardian_caps_new_fx_symbols(growth_profile):
+    from core.utils import load_config
+
+    config = copy.deepcopy(load_config())
+    config["blue_guardian"]["enabled"] = True
+    bg = blue_guardian_settings(config)
+    symbols = list((config.get("mt5") or {}).get("symbols") or [])
+    per_sym = int((config.get("blue_guardian") or {}).get("max_open_per_symbol", 1))
+    assert bg["max_total_open_positions"] == len(symbols) * per_sym
+    assert max_lot_for_symbol(config, "EURUSDm", 0.1) == 0.02
+    assert max_lot_for_symbol(config, "GBPUSDm", 0.1) == 0.02
+    assert max_lot_for_symbol(config, "USOILm", 0.1) == 0.03
+
+
+def test_cell_memory_veto_prefers_cell_over_global(config):
+    from core.consensus_gates import ConsensusGates
+
+    gates = ConsensusGates(config)
+    signal = {
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "setup_type": "trend_continuation",
+        "market_context": {"session": "london_open"},
+    }
+    votes = {"risk_engine": 80, "trend_engine": 70, "structure_engine": 70}
+    edge_scores = {
+        "setup_stats": {
+            "global": {
+                "trend_continuation": {"total": 100, "win_rate_pct": 62.0},
+            },
+            "by_symbol": {
+                "XAUUSDm": {
+                    "trend_continuation": {"total": 100, "win_rate_pct": 62.0},
+                }
+            },
+            "by_cell": {
+                "XAUUSDm|trend_continuation|strong_trend|london_open": {
+                    "trend_continuation": {"total": 12, "win_rate_pct": 33.3},
+                }
+            },
+        }
+    }
+    passed, vetoes = gates.evaluate(signal, votes, edge_scores=edge_scores, market_regime={"primary": "strong_trend"})
+    assert passed is False
+    assert any(v.startswith("cell_memory_veto") for v in vetoes)
+
+
+def test_memory_veto_requires_full_min_trades_for_global_fallback(config):
+    from core.consensus_gates import ConsensusGates
+
+    gates = ConsensusGates(config)
+    signal = {
+        "symbol": "XAUUSDm",
+        "side": "BUY",
+        "setup_type": "pullback",
+        "market_context": {"session": "london_open"},
+    }
+    votes = {"risk_engine": 80, "trend_engine": 70, "structure_engine": 70}
+    edge_scores = {
+        "setup_stats": {
+            "global": {
+                "pullback": {"total": 14, "win_rate_pct": 20.0},
+            },
+            "by_symbol": {
+                "XAUUSDm": {
+                    "pullback": {"total": 14, "win_rate_pct": 20.0},
+                }
+            },
+            "by_cell": {},
+        }
+    }
+    passed, vetoes = gates.evaluate(signal, votes, edge_scores=edge_scores, market_regime={"primary": "strong_trend"})
+    assert passed is True
+    assert not any(v.startswith("memory_veto") for v in vetoes)
 
 
 def test_replay_score_and_patterns(tmp_path, monkeypatch):

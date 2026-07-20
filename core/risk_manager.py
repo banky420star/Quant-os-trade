@@ -6,9 +6,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
+from core.daily_growth import evaluate_daily_growth
+from core.growth_campaign import update_campaign
 from core.exposure import exposure_from_positions, exposure_used_pct
+from core.micro_profile import independent_symbol_exposure
+from core.position_sizing import requires_executable_sizing, resolve_symbol_spec
 from core.trade_limits import unlimited_trades
-from core.utils import utc_now_iso
+from core.utils import read_json_state, utc_now_iso
 
 
 class RiskManager:
@@ -18,6 +23,20 @@ class RiskManager:
         self.config = config
         self.logger = logger or logging.getLogger("risk_manager")
 
+    def _resolve_position_specs(
+        self,
+        positions: list[dict[str, Any]],
+        symbol_specs: dict[str, dict[str, float]] | None = None,
+    ) -> dict[str, dict[str, float]] | None:
+        if not requires_executable_sizing(self.config):
+            return None
+        specs = dict(symbol_specs or {})
+        for pos in positions:
+            symbol = pos.get("symbol")
+            if symbol and symbol not in specs:
+                specs[symbol] = resolve_symbol_spec(symbol, self.config)
+        return specs or None
+
     def evaluate(
         self,
         positions: list[dict[str, Any]],
@@ -26,6 +45,7 @@ class RiskManager:
         trades: list[dict[str, Any]] | None = None,
         features_data: dict[str, Any] | None = None,
         existing_kill_switch: dict[str, Any] | None = None,
+        symbol_specs: dict[str, dict[str, float]] | None = None,
     ) -> dict[str, Any]:
         """Run all risk checks and produce risk state + kill switch update."""
         balance = balance or {}
@@ -35,9 +55,35 @@ class RiskManager:
 
         starting = float(balance.get("starting_cash", self.config["execution"]["starting_cash"]))
         equity = float(balance.get("equity", starting))
-        drawdown = max(0.0, (starting - equity) / starting * 100) if starting > 0 else 0.0
+        # USER-AUTHORIZED 2026-06-30 fix: ALWAYS evaluate daily growth so the
+        # max-daily-LOSS pause (a safety backstop) is enforced in EVERY mode —
+        # previously gated on growth_plan_enabled, which blinded the pause in
+        # conservative mode (apply_when=real) and let the bot stack positions
+        # into a news spike with no daily-loss circuit-breaker (-57.6% crash).
+        # daily_growth.enabled reflects growth-plan status; drawdown_base uses
+        # day_start only when enabled (conservative mode keeps the mt5_baseline
+        # drawdown base), but trading_paused/pause_reason now run regardless.
+        daily_growth = evaluate_daily_growth(equity, self.config)
+        # USER-AUTHORIZED 2026-07-01 fix: the 8% STATIC kill (prop-firm
+        # Max/Static Drawdown) is measured from the INITIAL account baseline
+        # (mt5_baseline.json starting_cash = $5,000), NOT from
+        # daily_growth.day_start_equity. day_start resets every UTC midnight,
+        # so across losing days the 8% floor drifted downward and the kill no
+        # longer matched the prop-firm "8% static from the $5,000 start" rule.
+        # The 4% DAILY-LOSS pause is a separate, daily concept and STILL uses
+        # day_start_equity (computed inside daily_growth.evaluate_daily_growth
+        # -> trading_paused), so that behaviour is unchanged. Only the static
+        # kill's drawdown base moved to the fixed rebaseline anchor.
+        baseline_state = read_json_state("mt5_baseline.json", default={})
+        drawdown_base = float(baseline_state.get("starting_cash") or starting)
+        drawdown = max(0.0, (drawdown_base - equity) / drawdown_base * 100) if drawdown_base > 0 else 0.0
 
-        symbol_exposure, total_exposure = exposure_from_positions(positions)
+        specs = self._resolve_position_specs(positions, symbol_specs)
+        symbol_exposure, total_exposure = exposure_from_positions(
+            positions,
+            config=self.config,
+            symbol_specs=specs,
+        )
         max_total = float(risk_cfg["max_total_exposure_usd"])
         exp_used = exposure_used_pct(total_exposure, max_total)
         risk_events: list[dict[str, Any]] = []
@@ -49,7 +95,7 @@ class RiskManager:
             risk_events.append({"type": "max_drawdown", "value": drawdown, "limit": risk_cfg["max_drawdown_pct"]})
             kill_triggers.append(f"Drawdown {drawdown:.2f}% exceeds limit")
 
-        if not unlimited_trades(self.config):
+        if not unlimited_trades(self.config) and not independent_symbol_exposure(self.config):
             if total_exposure > risk_cfg["max_total_exposure_usd"]:
                 risk_events.append({"type": "max_total_exposure", "value": total_exposure, "limit": risk_cfg["max_total_exposure_usd"]})
 
@@ -71,6 +117,24 @@ class RiskManager:
         if bad_vol:
             risk_events.append({"type": "bad_volatility", "symbols": bad_vol})
 
+        bg_state: dict[str, Any] | None = None
+        if blue_guardian_enabled(self.config):
+            cash = float(balance.get("cash", equity))
+            bg_state = evaluate_daily_state(
+                self.config,
+                balance=cash,
+                equity=equity,
+            )
+            if bg_state.get("trading_paused") and bg_state.get("pause_reason"):
+                kill_triggers.append(bg_state["pause_reason"])
+            trail_floor = float(bg_state.get("trailing_drawdown_floor", 0) or 0)
+            if trail_floor > 0 and equity <= trail_floor:
+                kill_triggers.append(
+                    f"Blue Guardian trailing DD floor (equity ${equity:.2f} <= ${trail_floor:.2f})"
+                )
+        elif daily_growth and daily_growth.get("trading_paused") and daily_growth.get("pause_reason"):
+            kill_triggers.append(daily_growth["pause_reason"])
+
         if kill_triggers:
             kill = self._activate_kill_switch(kill, kill_triggers[0])
         elif not risk_cfg.get("kill_switch", False):
@@ -91,6 +155,13 @@ class RiskManager:
             "equity": round(equity, 2),
             "cash": round(float(balance.get("cash", starting)), 2),
         }
+        if bg_state and bg_state.get("enabled"):
+            state["blue_guardian"] = bg_state
+        if daily_growth and daily_growth.get("enabled"):
+            state["daily_growth"] = daily_growth
+            campaign = update_campaign(equity, self.config)
+            if campaign.get("enabled"):
+                state["growth_campaign"] = campaign
 
         self.logger.info(
             "Risk check: exposure=%.2f (%.1f%%) drawdown=%.2f%% positions=%d events=%d kill=%s",

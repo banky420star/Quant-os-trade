@@ -6,6 +6,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+from core.strategy_policy import normalize_setup_type
 from core.utils import utc_now_iso
 
 
@@ -71,21 +72,29 @@ class MemoryEngine:
         by_symbol: dict[str, dict[str, dict[str, int]]] = defaultdict(
             lambda: defaultdict(lambda: {"wins": 0, "losses": 0, "total": 0})
         )
+        by_cell: dict[str, dict[str, dict[str, int]]] = defaultdict(
+            lambda: defaultdict(lambda: {"wins": 0, "losses": 0, "total": 0})
+        )
 
         for rec in records:
             setup = rec.get("setup_type", "unknown")
             symbol = rec.get("symbol", "unknown")
+            regime = rec.get("regime", "unknown")
+            session = rec.get("session", "unknown")
             result = rec.get("result")
             stats[setup]["total"] += 1
             by_symbol[symbol][setup]["total"] += 1
+            by_cell[f"{symbol}|{setup}|{regime}|{session}"][setup]["total"] += 1
             if result == "win":
                 stats[setup]["wins"] += 1
                 by_symbol[symbol][setup]["wins"] += 1
+                by_cell[f"{symbol}|{setup}|{regime}|{session}"][setup]["wins"] += 1
             elif result == "loss":
                 stats[setup]["losses"] += 1
                 by_symbol[symbol][setup]["losses"] += 1
+                by_cell[f"{symbol}|{setup}|{regime}|{session}"][setup]["losses"] += 1
 
-        output: dict[str, Any] = {"global": {}, "by_symbol": {}}
+        output: dict[str, Any] = {"global": {}, "by_symbol": {}, "by_cell": {}}
         for setup, s in stats.items():
             wr = round(s["wins"] / s["total"] * 100, 1) if s["total"] else 0
             output["global"][setup] = {**s, "win_rate_pct": wr}
@@ -95,6 +104,12 @@ class MemoryEngine:
             for setup, s in setups.items():
                 wr = round(s["wins"] / s["total"] * 100, 1) if s["total"] else 0
                 output["by_symbol"][symbol][setup] = {**s, "win_rate_pct": wr}
+
+        for cell_key, setups in by_cell.items():
+            output["by_cell"][cell_key] = {}
+            for setup, s in setups.items():
+                wr = round(s["wins"] / s["total"] * 100, 1) if s["total"] else 0
+                output["by_cell"][cell_key][setup] = {**s, "win_rate_pct": wr}
 
         return output
 
@@ -113,19 +128,30 @@ class MemoryEngine:
     ) -> dict[str, Any]:
         symbol = trade.get("symbol")
         feat = (features_data or {}).get("symbols", {}).get(symbol, {})
+        ctx_root = context_data if isinstance(context_data, dict) else {}
         ctx = {}
-        if context_data:
-            ctx = context_data.get("symbols", {}).get(symbol, context_data.get("market_context", {}).get("symbols", {}).get(symbol, {}))
+        if ctx_root:
+            symbols_ctx = ctx_root.get("symbols", {}) if isinstance(ctx_root.get("symbols"), dict) else {}
+            market_ctx = ctx_root.get("market_context", {}) if isinstance(ctx_root.get("market_context"), dict) else {}
+            market_symbols = market_ctx.get("symbols", {}) if isinstance(market_ctx.get("symbols"), dict) else {}
+            ctx = symbols_ctx.get(symbol, market_symbols.get(symbol, {}))
 
         meta = trade.get("signal_meta") or {}
         mctx = meta.get("market_context") or trade.get("market_context") or {}
+        if not isinstance(mctx, dict):
+            mctx = {}
         regime = mctx.get("market_regime", {})
+        setup_type = normalize_setup_type(
+            trade.get("setup_type") or meta.get("setup_type"),
+            meta=meta,
+            market_context=mctx if isinstance(mctx, dict) else {},
+        )
 
         return {
             "trade_id": trade.get("trade_id"),
-            "signal_id": trade.get("signal_id"),
+            "signal_id": trade.get("signal_id") or meta.get("signal_id"),
             "symbol": symbol,
-            "setup_type": trade.get("setup_type") or meta.get("setup_type"),
+            "setup_type": setup_type,
             "side": trade.get("side"),
             "entry": trade.get("entry"),
             "exit": trade.get("exit"),
@@ -139,12 +165,16 @@ class MemoryEngine:
             "confidence_tree": trade.get("confidence_tree") or meta.get("confidence_tree"),
             "evidence": trade.get("evidence") or meta.get("evidence"),
             "market_context": mctx,
-            "regime": regime.get("primary") or mctx.get("regime") or ctx.get("regime"),
-            "session": mctx.get("session") or ctx.get("session"),
-            "move_type": ctx.get("move_type"),
-            "market_intent": ctx.get("market_intent"),
-            "m5_trend": feat.get("m5_trend"),
-            "m15_trend": feat.get("m15_trend"),
+            "regime": regime.get("primary") or mctx.get("regime") or meta.get("regime_primary") or ctx.get("regime"),
+            "session": mctx.get("session") or meta.get("session") or ctx.get("session"),
+            "move_type": mctx.get("move_type") or meta.get("move_type") or ctx.get("move_type"),
+            "market_intent": mctx.get("market_intent") or ctx.get("market_intent"),
+            "trigger_summary": trade.get("trigger_summary") or meta.get("trigger_summary"),
+            "m5_trend": feat.get("m5_trend") or (meta.get("features_at_entry") or {}).get("m5_trend"),
+            "m15_trend": feat.get("m15_trend") or (meta.get("features_at_entry") or {}).get("m15_trend"),
+            "exit_narrative": trade.get("exit_narrative"),
+            "be_triggered": trade.get("be_triggered"),
+            "trail_active": trade.get("trail_active"),
             "recorded_at": utc_now_iso(),
         }
 
@@ -155,7 +185,7 @@ class MemoryEngine:
         context_data: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         symbol = trade.get("symbol")
-        setup = trade.get("setup_type", "unknown")
+        setup = normalize_setup_type(trade.get("setup_type"), market_context=trade.get("market_context") or {})
         result = trade.get("result")
         feat = (features_data or {}).get("symbols", {}).get(symbol, {})
 

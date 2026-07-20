@@ -11,10 +11,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.mt5_client import MT5Client, format_mt5_connection_error, log_session_alignment
+from core.position_sizing import symbol_spec_from_mt5
+from core.symbol_manager import broker_symbol
 from core.mt5_connection_manager import MT5ConnectionManager
 from core.position_sync import fetch_mt5_agent_positions
 from core.trade_limits import enrich_positions_with_orders
 from core.verifier import Verifier
+from core.evaluation_policy import evaluation_enabled
+from core.state_store import (
+    candidates_available,
+    evaluated_available,
+    read_verifier_candidates,
+    sync_store_from_doc,
+)
 from core.utils import (
     fail_safe_missing,
     load_config,
@@ -65,7 +74,15 @@ def _collect_spread_data(
         for symbol in symbols:
             spread_data[symbol] = client.get_spread_points(symbol)
         if not any(spread_data.values()):
-            raise ConnectionError("MT5 connected but returned zero spreads for all symbols")
+            fallback = _paper_spread_fallback(symbols, features, config)
+            if any(fallback.values()):
+                spread_data = fallback
+                source = "features_fallback"
+                logger.warning(
+                    "MT5 returned zero spreads for all symbols — using features.json fallback"
+                )
+            else:
+                raise ConnectionError("MT5 connected but returned zero spreads for all symbols")
     except (ConnectionError, OSError, RuntimeError) as exc:
         session_info = log_session_alignment(logger)
         err_msg = format_mt5_connection_error(exc, session_info) if isinstance(exc, ConnectionError) else str(exc)
@@ -74,12 +91,48 @@ def _collect_spread_data(
             source = "paper_fallback"
             logger.warning("MT5 spread fetch failed (%s) — using paper-mode spread fallback", err_msg)
         else:
-            logger.error("MT5 spread fetch failed (%s)", err_msg)
-            raise
+            fallback = _paper_spread_fallback(symbols, features, config)
+            if any(fallback.values()):
+                spread_data = fallback
+                source = "features_fallback"
+                logger.warning(
+                    "MT5 spread fetch failed (%s) — using features.json fallback",
+                    err_msg,
+                )
+            else:
+                logger.error("MT5 spread fetch failed (%s)", err_msg)
+                raise
     finally:
         client.disconnect()
 
     return spread_data, source
+
+
+def _collect_symbol_specs(
+    config: dict[str, Any],
+    logger,
+) -> dict[str, dict[str, float]]:
+    """Live broker contract specs for executable sizing (falls back in exposure layer)."""
+    if config.get("execution", {}).get("mode") != "mt5":
+        return {}
+    specs: dict[str, dict[str, float]] = {}
+    client = MT5Client(config, logger)
+    try:
+        import MetaTrader5 as mt5
+
+        client.connect()
+        for symbol in config["mt5"]["symbols"]:
+            broker = broker_symbol(symbol)
+            if not mt5.symbol_select(broker, True):
+                continue
+            info = mt5.symbol_info(broker)
+            if info is not None:
+                specs[symbol] = symbol_spec_from_mt5(info)
+    except (ConnectionError, OSError, RuntimeError) as exc:
+        logger.warning("Symbol spec fetch failed (%s) — using defaults", exc)
+    finally:
+        client.disconnect()
+    return specs
 
 
 def _collect_active_positions(
@@ -97,12 +150,14 @@ def _collect_active_positions(
     try:
         connection.connect()
         active = fetch_mt5_agent_positions(config, logger)
-        write_json_state("paper_positions.json", {
+        positions_doc = {
             "timestamp": utc_now_iso(),
             "mode": "mt5",
             "source": "mt5_sync",
             "positions": active,
-        })
+        }
+        write_json_state("paper_positions.json", positions_doc)
+        sync_store_from_doc(config, "positions", positions_doc)
         return active, "mt5"
     finally:
         connection.disconnect()
@@ -115,13 +170,21 @@ def run() -> dict | None:
     logger.info("Starting verifier loop (mode=%s)", config.get("execution", {}).get("mode", "paper"))
     log_session_alignment(logger)
 
-    if fail_safe_missing("candidate_signals.json", logger):
+    has_input = candidates_available(config) or (
+        evaluation_enabled(config) and evaluated_available(config)
+    )
+    if not has_input and fail_safe_missing("candidate_signals.json", logger):
         return None
     if fail_safe_missing("features.json", logger):
         return None
 
-    candidates_data = read_json_state("candidate_signals.json")
-    candidates = candidates_data.get("candidates", [])
+    candidates_data, candidates = read_verifier_candidates(config)
+    if evaluation_enabled(config):
+        logger.info(
+            "Verifier input: %d evaluated signals (mode=%s)",
+            len(candidates),
+            (candidates_data or {}).get("mode", "n/a"),
+        )
     features = read_json_state("features.json")
     active_positions, position_source = _collect_active_positions(config, logger)
     orders_data = read_json_state("paper_orders.json", default={"orders": []})
@@ -141,13 +204,37 @@ def run() -> dict | None:
     orders_data = read_json_state("paper_orders.json", default={"balance": {}})
     account_data = read_json_state("account.json", default={})
     balance = orders_data.get("balance", {})
-    equity = float(
-        balance.get("equity")
-        or account_data.get("equity")
-        or balance.get("cash")
-        or account_data.get("balance")
-        or config["execution"].get("starting_cash", 1000)
-    )
+    live_mt5 = config.get("execution", {}).get("mode") == "mt5"
+    if live_mt5:
+        # Prefer fresh MT5 account.json over stale paper_orders balance on live runs.
+        equity = float(
+            account_data.get("equity")
+            or account_data.get("balance")
+            or balance.get("equity")
+            or balance.get("cash")
+            or config["execution"].get("starting_cash", 1000)
+        )
+        acct_balance = float(
+            account_data.get("balance")
+            or balance.get("cash")
+            or equity
+        )
+    else:
+        equity = float(
+            balance.get("equity")
+            or account_data.get("equity")
+            or balance.get("cash")
+            or account_data.get("balance")
+            or config["execution"].get("starting_cash", 1000)
+        )
+        acct_balance = float(
+            account_data.get("balance")
+            or balance.get("cash")
+            or equity
+        )
+    symbol_specs = _collect_symbol_specs(config, logger)
+    if symbol_specs:
+        write_json_state("symbol_specs.json", {"timestamp": utc_now_iso(), "specs": symbol_specs})
 
     trades_data = read_json_state("paper_trades.json", default={"trades": []})
     closed_trades = list(trades_data.get("trades", []))
@@ -160,7 +247,9 @@ def run() -> dict | None:
         kill_switch=kill_data.get("kill_switch", False),
         spread_data=spread_data,
         equity=equity,
+        balance=acct_balance,
         closed_trades=closed_trades,
+        symbol_specs=symbol_specs or None,
     )
 
     meta = {
@@ -173,14 +262,43 @@ def run() -> dict | None:
         "equity": equity,
         "candidate_count": len(candidates),
     }
-    write_json_state(
-        "approved_signals.json",
-        {**meta, "count": len(approved), "approved": approved},
-    )
-    write_json_state(
-        "rejected_signals.json",
-        {**meta, "count": len(rejected), "rejected": rejected},
-    )
+    approved_doc = {**meta, "count": len(approved), "approved": approved}
+    rejected_doc = {**meta, "count": len(rejected), "rejected": rejected}
+    write_json_state("approved_signals.json", approved_doc)
+    write_json_state("rejected_signals.json", rejected_doc)
+    sync_store_from_doc(config, "approved", approved_doc)
+    sync_store_from_doc(config, "rejected", rejected_doc)
+    if approved:
+        from core.signal_archive import archive_signals
+
+        n = archive_signals(approved, source="verifier")
+        if n:
+            logger.info("Signal archive: +%d approved signals (durable for trade enrichment)", n)
+    from core.audit_log import append_event
+
+    for row in approved:
+        sym = row.get("symbol", "")
+        append_event(
+            "signal.approved",
+            symbol=sym,
+            details={
+                "side": row.get("side"),
+                "setup": row.get("setup_type"),
+                "confidence": row.get("confidence"),
+                "entry_quality": row.get("entry_quality"),
+            },
+        )
+    for row in rejected:
+        sym = row.get("symbol", "")
+        append_event(
+            "signal.rejected",
+            symbol=sym,
+            details={
+                "reason": row.get("rejection_reason"),
+                "failures": row.get("failure_codes"),
+            },
+        )
+
     logger.info("Approved %d, rejected %d (spread_source=%s)", len(approved), len(rejected), spread_source)
     return {"approved": approved, "rejected": rejected, "spread_source": spread_source}
 

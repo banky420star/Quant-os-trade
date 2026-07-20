@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -14,6 +15,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.equity_tracker import build_equity_curve
+from core.account_mode import runtime_mode_summary
+from core.remote_access import remote_access_info
 from core.utils import load_config, read_json_state, utc_now_iso, write_json_state
 
 STATE_FILES = (
@@ -42,7 +45,54 @@ STATE_FILES = (
     "adaptive_weights.json",
     "supervisor.json",
     "replay_job.json",
+    "forward_test_ledger.json",
+    "symbol_policy_live.json",
+    "evaluated_signals.json",
+    "policy_scores.json",
+    "best_policies.json",
+    "fast_signal_cache.json",
+    "fast_mode_decisions.json",
+    "fast_mode_guard.json",
+    "fast_mode_runtime.json",
+    "learning_state.json",
+    "learning_config_overrides.json",
+    "trade_log.json",
+    "blue_guardian.json",
+    "blue_guardian_actions.json",
 )
+
+# Mobile / Tailscale: skip multi-MB blobs on the default dashboard poll.
+LITE_SKIP_STATE = frozenset({
+    "edge_database.json",
+    "memory.json",
+    "equity_history.json",
+    "optimizer_results.json",
+    "paper_orders.json",
+    "replay_results.json",
+    "latest_candles.json",
+    "trade_log.json",
+})
+
+
+def _slim_state_file(name: str, data: dict) -> dict:
+    """Trim heavy state files for phone-friendly API responses."""
+    if name == "paper_orders.json":
+        orders = data.get("orders") or []
+        return {
+            **{k: v for k, v in data.items() if k != "orders"},
+            "orders": orders[-8:],
+            "order_count": len(orders),
+        }
+    if name == "paper_trades.json":
+        trades = data.get("trades") or []
+        return {**data, "trades": trades[-40:], "trade_count": len(trades)}
+    if name == "features.json":
+        symbols = data.get("symbols") or {}
+        slim_symbols = {}
+        for sym, feat in symbols.items():
+            slim_symbols[sym] = {k: v for k, v in feat.items() if k != "candles"}
+        return {**data, "symbols": slim_symbols}
+    return data
 
 HTML_PATH = Path(__file__).resolve().parent / "index.html"
 LOG_PATH = ROOT / "logs" / "system.log"
@@ -427,6 +477,25 @@ def _tail_log(lines: int = 40) -> list[str]:
         return []
 
 
+def _build_verdict(markdown: str) -> dict:
+    """Summarize VERDICT.md for the dashboard state payload (headline + sections).
+
+    Keeps the audited negative result visible on the dashboard so it cannot be
+    silently dropped from the UI. The full markdown is served via /api/verdict.
+    """
+    if not markdown:
+        return {"present": False, "headline": None, "sections": [], "markdown": ""}
+    lines = markdown.splitlines()
+    headline = next((ln.lstrip("# ").strip() for ln in lines if ln.startswith("# ")), None)
+    sections = [ln.lstrip("# ").strip() for ln in lines if ln.startswith("## ")]
+    return {
+        "present": True,
+        "headline": headline,
+        "sections": sections,
+        "char_count": len(markdown),
+    }
+
+
 def _run_replay_job(symbol: str | None, max_bars: int) -> None:
     try:
         write_json_state("replay_job.json", {
@@ -461,20 +530,289 @@ def _run_replay_job(symbol: str | None, max_bars: int) -> None:
         })
 
 
+def _policy_lookup_key(symbol: str, setup: str, session: str) -> str:
+    return f"{symbol}|{setup or ''}|{session or ''}"
+
+
+def _lookup_best_policy(
+    best_policies: dict,
+    symbol: str,
+    setup: str,
+    session: str,
+) -> dict | None:
+    """Resolve best policy for symbol/setup/session from flexible state shapes."""
+    if not best_policies:
+        return None
+    key = _policy_lookup_key(symbol, setup, session)
+    by_key = (
+        best_policies.get("by_key")
+        or best_policies.get("policies_by_key")
+        or best_policies.get("lookup")
+        or {}
+    )
+    if isinstance(by_key, dict) and key in by_key:
+        return by_key[key]
+
+    policies = best_policies.get("policies") or best_policies.get("best") or []
+    if isinstance(policies, list):
+        for row in policies:
+            if row.get("symbol") != symbol:
+                continue
+            if setup and row.get("setup") not in (setup, row.get("setup_type")):
+                continue
+            if session and row.get("session") not in (session, None, ""):
+                continue
+            return row
+
+    sym_block = (best_policies.get("symbols") or {}).get(symbol) or {}
+    if isinstance(sym_block, dict):
+        if setup and setup in sym_block:
+            cell = sym_block[setup]
+            return cell if isinstance(cell, dict) else None
+        if session and session in sym_block:
+            cell = sym_block[session]
+            return cell if isinstance(cell, dict) else None
+    return None
+
+
+def _build_evaluation_policy_row(
+    signal: dict,
+    *,
+    best_policy: dict | None = None,
+    fallback_mode: str = "shadow",
+) -> dict:
+    """Normalize one evaluated/skipped signal for the dashboard panel."""
+    ev = signal.get("evaluation") or {}
+    ep = signal.get("execution_policy") or {}
+    mgmt = signal.get("management_profile") or {}
+    ctx = signal.get("market_context") or {}
+    session = ctx.get("session") if isinstance(ctx, dict) else None
+    recent = ev.get("recent_symbol_stats") or {}
+    entry_type = ep.get("entry_type") or ev.get("entry_mode") or mgmt.get("entry_type")
+    trail_on = bool(mgmt.get("trailing_enabled", True))
+    trail_model = (
+        f"ATR×{mgmt.get('trail_atr_mult')}"
+        if trail_on and mgmt.get("trail_atr_mult") is not None
+        else ("off" if not trail_on else "atr")
+    )
+
+    row = {
+        "symbol": signal.get("symbol"),
+        "side": signal.get("side"),
+        "setup": signal.get("setup_type"),
+        "session": session,
+        "entry_type": entry_type,
+        "limit_offset_atr": (
+            ep.get("entry_offset_atr")
+            if entry_type == "limit"
+            else mgmt.get("limit_offset_atr")
+        ),
+        "sl_model": mgmt.get("sl_model"),
+        "sl_atr_mult": mgmt.get("sl_atr_mult"),
+        "tp_model": mgmt.get("tp_model"),
+        "tp1_r": mgmt.get("tp1_r"),
+        "be_trigger_r": mgmt.get("break_even_trigger_r"),
+        "trail_model": trail_model,
+        "trail_start_r": mgmt.get("trail_start_r"),
+        "policy_score": ev.get("policy_score"),
+        "reason": ev.get("reason"),
+        "sample_size": int(recent.get("n") or 0),
+        "mode": ev.get("mode") or fallback_mode,
+        "action": ev.get("action") or ep.get("action"),
+        "confidence": signal.get("confidence"),
+        "confidence_adjusted": ep.get("confidence_adjusted"),
+    }
+    if best_policy:
+        row["best_policy"] = {
+            "entry_type": best_policy.get("entry_type"),
+            "policy_score": best_policy.get("policy_score") or best_policy.get("score"),
+            "reason": best_policy.get("reason") or best_policy.get("label"),
+            "sample_size": best_policy.get("sample_size") or best_policy.get("n"),
+            "mode": best_policy.get("mode"),
+        }
+    return row
+
+
+def _build_evaluation_policy(
+    evaluated_data: dict,
+    policy_scores: dict,
+    best_policies: dict,
+    config: dict,
+) -> dict:
+    """Dashboard-friendly evaluation policy snapshot."""
+    eval_cfg = config.get("evaluation") or {}
+    fallback_mode = str(evaluated_data.get("mode") or eval_cfg.get("mode") or "shadow")
+    evaluated = list(evaluated_data.get("evaluated") or [])
+    skipped = list(evaluated_data.get("skipped") or [])
+
+    rows: list[dict] = []
+    for signal in evaluated + skipped:
+        ctx = signal.get("market_context") or {}
+        session = ctx.get("session") if isinstance(ctx, dict) else None
+        setup = str(signal.get("setup_type") or "")
+        symbol = str(signal.get("symbol") or "")
+        best = _lookup_best_policy(best_policies, symbol, setup, str(session or ""))
+        rows.append(
+            _build_evaluation_policy_row(
+                signal,
+                best_policy=best,
+                fallback_mode=fallback_mode,
+            )
+        )
+
+    scores_block = {}
+    if policy_scores:
+        scores_block = (
+            policy_scores.get("scores")
+            or policy_scores.get("summary")
+            or policy_scores.get("by_symbol")
+            or policy_scores
+        )
+
+    return {
+        "timestamp": evaluated_data.get("timestamp"),
+        "mode": fallback_mode,
+        "enabled": bool(eval_cfg.get("enabled", True)),
+        "min_policy_score": float(eval_cfg.get("min_policy_score") or 35),
+        "skip_below_score": float(eval_cfg.get("skip_below_score") or 25),
+        "count": len(evaluated),
+        "skipped_count": evaluated_data.get("skipped_count", len(skipped)),
+        "candidate_count": evaluated_data.get("candidate_count"),
+        "rows": rows,
+        "policy_scores": scores_block if isinstance(scores_block, dict) else {},
+        "best_policies_present": bool(best_policies),
+    }
+
+
+def _build_learning_status(config: dict, state: dict, decisions: list, reviews: list) -> dict:
+    """Dashboard snapshot for the Phase 2.4 normalized learning loop."""
+    from core.learning_logger import read_jsonl
+    proposals = read_jsonl("config_proposals", limit=10)
+    rejected = [p for p in proposals if p.get("rejected")]
+    active = [p for p in proposals if not p.get("rejected")]
+    return {
+        "enabled": bool((config.get("learning") or {}).get("enabled", False)),
+        "mode": (config.get("learning") or {}).get("mode", "observe_only"),
+        "auto_apply_disabled": (config.get("learning") or {}).get("mode", "observe_only") != "live_apply_limited",
+        "reviewed_count": state.get("reviewed_count", 0),
+        "rolling_win_rate_pct": state.get("rolling_win_rate_pct"),
+        "rolling_expectancy_r": state.get("rolling_expectancy_r"),
+        "avg_rating_by_symbol": state.get("avg_rating_by_symbol", {}),
+        "mistake_counts": state.get("mistake_counts", {}),
+        "last_decisions": decisions[-10:],
+        "last_reviews": reviews[-10:],
+        "active_proposals": active,
+        "rejected_proposals": rejected,
+        "updated_at": state.get("updated_at"),
+    }
+
+
+def _build_fast_mode_status(
+    config: dict,
+    cache: dict,
+    decisions: dict,
+    guard: dict,
+    supervisor: dict,
+    runtime: dict | None = None,
+) -> dict:
+    """Dashboard snapshot for the two-speed fast scalper layer."""
+    from core.fast_mode import fast_mode_settings
+    from core.fast_mode_runtime import preset_catalog
+
+    fm_cfg = fast_mode_settings(config)
+    yaml_cfg = config.get("fast_mode") or {}
+    enabled = bool(fm_cfg.get("enabled"))
+    live = bool(fm_cfg.get("live_enabled"))
+    rt = runtime if runtime is not None else read_json_state("fast_mode_runtime.json", default={})
+    svc = next(
+        (s for s in (supervisor.get("services") or []) if s.get("name") == "fast_mode"),
+        None,
+    )
+    cache_syms = dict(cache.get("symbols") or {})
+    cache_rows = []
+    for sym, row in cache_syms.items():
+        mgmt = row.get("management_profile") or {}
+        cache_rows.append({
+            "symbol": sym,
+            "side": row.get("side"),
+            "setup": row.get("setup_type"),
+            "anchor": row.get("anchor"),
+            "entry_zone": row.get("entry_zone"),
+            "entry_type": row.get("entry_type"),
+            "expires_at": row.get("expires_at"),
+            "be_trigger_r": mgmt.get("break_even_trigger_r"),
+            "trail_start_r": mgmt.get("trail_start_r"),
+        })
+    dec_list = list(decisions.get("decisions") or [])
+    guard_list = list(guard.get("actions") or [])
+    return {
+        "enabled": enabled,
+        "live_enabled": live,
+        "mode": "live" if live else "observe",
+        "tick_interval_ms": int(fm_cfg.get("tick_interval_ms") or 1000),
+        "symbols": list(fm_cfg.get("symbols") or []),
+        "active_preset": rt.get("preset"),
+        "preset_label": rt.get("label"),
+        "runtime_overrides": rt.get("overrides") or {},
+        "yaml_live_enabled": bool(yaml_cfg.get("live_enabled")),
+        "presets": preset_catalog(),
+        "tick_interval_note": (
+            "Tick interval changes apply after bot restart"
+            if rt.get("overrides", {}).get("tick_interval_ms")
+            != yaml_cfg.get("tick_interval_ms")
+            else ""
+        ),
+        "service_status": (svc or {}).get("status") or ("not_registered" if enabled else "disabled"),
+        "service_last_run": (svc or {}).get("last_run"),
+        "service_duration_ms": (svc or {}).get("last_duration_ms"),
+        "cache_symbol_count": cache.get("symbol_count") or len(cache_syms),
+        "cache_rows": cache_rows,
+        "decisions": dec_list[-12:],
+        "guard_actions": guard_list[-12:],
+        "timestamp": decisions.get("timestamp") or cache.get("timestamp") or guard.get("timestamp"),
+    }
+
+
 def _build_trading_status(
     kill_switch: dict,
     risk_state: dict,
     candidates_data: dict,
     approved_data: dict,
     rejected_data: dict,
+    *,
+    live_trading_enabled: bool = False,
 ) -> dict:
-    """Why trades are or aren't opening — surfaced on dashboard."""
+    """Why trades are or aren't opening — surfaced on dashboard.
+
+    `live_trading_enabled` (config execution flag) is the hard guard against real-
+    money orders. When False, can_execute is forced False and a blocker is added,
+    even if kill_switch is off and approved signals exist. This keeps the UI honest
+    about the actual deploy-disable contract (kill_switch alone does not gate it).
+    """
     kill_on = bool(kill_switch.get("kill_switch") or risk_state.get("kill_switch"))
     candidates = candidates_data.get("candidates", [])
     approved = approved_data.get("approved", [])
     rejected = rejected_data.get("rejected", [])
 
     blockers: list[str] = []
+    daily = risk_state.get("daily_growth") or {}
+    if daily.get("enabled"):
+        pnl_pct = daily.get("daily_pnl_pct", 0)
+        target = daily.get("target_pct", 20)
+        blockers.insert(
+            0,
+            f"Daily growth: {pnl_pct:+.2f}% / +{target:.0f}% target "
+            f"(${daily.get('daily_pnl', 0):+.2f} today)",
+        )
+    campaign = risk_state.get("growth_campaign") or {}
+    if campaign.get("status") == "running":
+        blockers.insert(
+            0,
+            f"30-day run: Day {campaign.get('days_elapsed')}/{campaign.get('duration_days')} "
+            f"({campaign.get('campaign_pnl_pct', 0):+.2f}% since ${campaign.get('start_equity')})",
+        )
+        if daily.get("trading_paused") and daily.get("pause_reason"):
+            blockers.insert(0, daily["pause_reason"])
     if kill_on:
         blockers.append(f"Kill switch ON: {kill_switch.get('reason') or 'risk limit'}")
 
@@ -492,14 +830,30 @@ def _build_trading_status(
         else:
             blockers.append("Candidates generated but none approved")
 
-    can_execute = not kill_on and len(approved) > 0
-    status = "blocked" if kill_on else ("ready" if approved else ("scanning" if not candidates else "filtered"))
+    can_execute = not kill_on and len(approved) > 0 and live_trading_enabled
+    bg = read_json_state("blue_guardian.json", default={}) or {}
+    if bg.get("enabled"):
+        blockers.insert(
+            0,
+            f"Blue Guardian: day {bg.get('daily_pnl', 0):+.2f} / +${bg.get('daily_profit_target_usd', 300):.0f} "
+            f"({bg.get('daily_profit_target_pct', 6):.0f}%) · floating check -$35/-$45",
+        )
+        if bg.get("trading_paused") and bg.get("pause_reason"):
+            blockers.insert(0, bg["pause_reason"])
+
+    if not live_trading_enabled:
+        blockers.append("Live trading DISABLED (live_trading_enabled: false) — paper/research mode only")
+    status = (
+        "blocked" if kill_on or not live_trading_enabled
+        else ("ready" if approved else ("scanning" if not candidates else "filtered"))
+    )
 
     return {
         "status": status,
         "can_execute": can_execute,
         "kill_switch": kill_on,
         "kill_reason": kill_switch.get("reason"),
+        "live_trading_enabled": live_trading_enabled,
         "candidate_count": len(candidates),
         "approved_count": len(approved),
         "rejected_count": len(rejected),
@@ -515,19 +869,32 @@ def _build_trading_status(
     }
 
 
-def aggregate_state() -> dict:
+def aggregate_state(*, lite: bool = False) -> dict:
     config = load_config()
+    runtime_mode = runtime_mode_summary(config)
     payload: dict = {
         "config": {
             "mode": config["execution"].get("mode"),
+            "account_mode": config.get("mt5", {}).get("account_mode", "demo"),
+            "runtime_mode": runtime_mode["label"],
+            "performance_plan_active": runtime_mode["performance_plan_active"],
+            "runtime_detail": runtime_mode["detail"],
             "symbols": config["mt5"]["symbols"],
             "risk": config.get("risk", {}),
+            "blue_guardian": config.get("blue_guardian", {}),
             "version": config.get("app", {}).get("version", "1.0"),
             "os_name": config.get("app", {}).get("display_name", "MT5 Quant OS"),
         },
+        "runtime_mode": runtime_mode,
+        "remote_access": remote_access_info(
+            int(config.get("app", {}).get("dashboard", {}).get("port", 8080))
+        ),
     }
     for name in STATE_FILES:
-        payload[name.replace(".json", "")] = read_json_state(name, default={})
+        if lite and name in LITE_SKIP_STATE:
+            continue
+        raw = read_json_state(name, default={})
+        payload[name.replace(".json", "")] = _slim_state_file(name, raw) if lite else raw
 
     candidates = payload.get("candidate_signals", {}).get("candidates", [])
     top_signal = candidates[0] if candidates else None
@@ -585,10 +952,11 @@ def aggregate_state() -> dict:
     )
     payload["ai_decision"] = _build_ai_decision(top_signal, top_explain, payload["edge_insights"])
     payload["equity_curve"] = build_equity_curve(
-        payload.get("paper_orders"),
+        payload.get("paper_orders", {}) if lite else payload.get("paper_orders"),
         payload.get("paper_trades"),
         payload.get("account"),
         payload.get("risk_state"),
+        lite=lite,
     )
     payload["trading_status"] = _build_trading_status(
         payload.get("kill_switch", {}),
@@ -596,22 +964,85 @@ def aggregate_state() -> dict:
         payload.get("candidate_signals", {}),
         payload.get("approved_signals", {}),
         payload.get("rejected_signals", {}),
+        live_trading_enabled=bool(
+            config.get("execution", {}).get("live_trading_enabled", False)
+        ),
+    )
+    payload["evaluation_policy"] = _build_evaluation_policy(
+        payload.get("evaluated_signals", {}),
+        payload.get("policy_scores", {}),
+        payload.get("best_policies", {}),
+        config,
+    )
+    payload["fast_mode"] = _build_fast_mode_status(
+        config,
+        payload.get("fast_signal_cache", {}),
+        payload.get("fast_mode_decisions", {}),
+        payload.get("fast_mode_guard", {}),
+        payload.get("supervisor", {}),
+        payload.get("fast_mode_runtime", {}),
+    )
+    from core.learning_logger import read_jsonl as _rl
+    payload["learning"] = _build_learning_status(
+        config,
+        payload.get("learning_state", {}) or {},
+        _rl("decisions", limit=10),
+        _rl("reviews", limit=10),
     )
     payload["logs"] = _tail_log(50)
+    # Surface the bot's MT5 connection state as a top-level `connection` field
+    # so the SPA's "MT5 Connected/Offline" pill reflects reality. health.json
+    # (written by the bot's health loop) carries the authoritative
+    # {alive, logged_in, latency_ms, ping:{...}} block; without this mapping the
+    # SPA reads conn.logged_in=None and always shows "MT5 Offline" even when the
+    # bot is connected at ~2ms. Falls back to account.json's connected flag.
+    health_conn = (payload.get("health") or {}).get("connection") or {}
+    if not health_conn.get("logged_in"):
+        acc = payload.get("account") or {}
+        health_conn = {**health_conn, "logged_in": bool(acc.get("connected"))}
+    payload["connection"] = health_conn
+    # Surface the audited verdict (VERDICT.md) so the dashboard cannot hide the
+    # researched negative result. `verdict_summary` = headline + section headings;
+    # the full markdown is available via /api/verdict.
+    verdict_path = ROOT / "VERDICT.md"
+    verdict_markdown = verdict_path.read_text(encoding="utf-8") if verdict_path.exists() else ""
+    payload["verdict"] = _build_verdict(verdict_markdown)
     dash_cfg = config.get("app", {}).get("dashboard", {})
     payload["meta"] = {
         "refresh_seconds": int(dash_cfg.get("refresh_seconds", 2)),
         "replay_default_bars": int(config.get("replay", {}).get("max_bars", 800)),
+        "lite": lite,
     }
     return payload
 
 
+def _sanitize_json(obj):
+    """Replace non-finite floats (inf, -inf, nan) with None so the response is
+    spec-compliant JSON. Python's json.dumps emits bare `Infinity`/`-Infinity`/
+    `NaN` tokens by default (allow_nan=True); browsers' JSON.parse REJECT those
+    tokens (SyntaxError). That broke the SPA dashboard for ~hours: every
+    /api/summary fetch returned 200 but res.json() threw because the culturing
+    ledger cells carry profit_factor=Infinity, so safeRender never received
+    data and the page stayed "unpopulated". Sanitizing at serialization fixes
+    every API response in one place. Recursive over dict/list/float."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    return obj
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data: dict, status: int = 200) -> None:
-        body = json.dumps(data, default=str).encode("utf-8")
+        body = json.dumps(_sanitize_json(data), default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
@@ -620,6 +1051,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         body = HTML_PATH.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -645,8 +1078,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send_html()
-        elif path == "/api/state":
-            self._send_json(aggregate_state())
+        elif path in ("/api/state", "/api/summary"):
+            query = parse_qs(urlparse(self.path).query)
+            lite = path == "/api/summary" or query.get("lite", ["0"])[0] in ("1", "true", "yes")
+            self._send_json(aggregate_state(lite=lite))
         elif path.startswith("/api/state/"):
             filename = path.split("/api/state/", 1)[-1]
             if not filename.endswith(".json"):
@@ -655,12 +1090,159 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(read_json_state(filename, default={}))
             else:
                 self.send_error(404)
+        elif path.startswith("/api/trade_journal/symbol/"):
+            symbol = path.split("/api/trade_journal/symbol/", 1)[-1].strip("/")
+            safe_sym = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in symbol)
+            if not safe_sym or safe_sym in (".", ".."):
+                self.send_error(404)
+                return
+            data = read_json_state(f"trade_journal/symbols/{safe_sym}.json", default={})
+            if not data:
+                self.send_error(404)
+                return
+            self._send_json(data)
+        elif path.startswith("/api/trade_journal/"):
+            rest = path.split("/api/trade_journal/", 1)[-1].strip("/")
+            parts = [p for p in rest.split("/") if p]
+            if len(parts) == 2:
+                safe_sym = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in parts[0])
+                safe_tid = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in parts[1])
+                if not safe_sym or not safe_tid or safe_sym in (".", "..") or safe_tid in (".", ".."):
+                    self.send_error(404)
+                    return
+                data = read_json_state(f"trade_journal/symbols/{safe_sym}/{safe_tid}.json", default={})
+            else:
+                safe_tid = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in parts[0] if parts)
+                if not safe_tid or safe_tid in (".", ".."):
+                    self.send_error(404)
+                    return
+                data = read_json_state(f"trade_journal/{safe_tid}.json", default={})
+            if not data:
+                self.send_error(404)
+                return
+            self._send_json(data)
+        elif path.startswith("/api/culturing/"):
+            # Per-symbol culturing ledger drill-down (state/culturing/<sym>.json,
+            # written by forward_test_loop). Symbol names are alphanumeric but
+            # sanitize to block path traversal.
+            symbol = path.split("/api/culturing/", 1)[-1].strip("/")
+            safe = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "" for ch in symbol)
+            if not safe or safe in (".", ".."):
+                self.send_error(404)
+                return
+            data = read_json_state(f"culturing/{safe}.json", default={})
+            if not data:
+                self.send_error(404)
+                return
+            self._send_json(data)
+        elif path == "/api/verdict":
+            verdict_path = ROOT / "VERDICT.md"
+            if verdict_path.exists():
+                self._send_json({
+                    "present": True,
+                    "markdown": verdict_path.read_text(encoding="utf-8"),
+                })
+            else:
+                self._send_json({"present": False, "markdown": ""}, 404)
         else:
             self.send_error(404)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path == "/api/replay":
+        if path == "/api/reset-session":
+            try:
+                from scripts.reset_session_memory import reset_session_memory
+
+                reset_session_memory()
+                self._send_json({
+                    "ok": True,
+                    "message": "Session state reset — baselines, kill switch, and memory cleared",
+                    "timestamp": utc_now_iso(),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/unblock-trades":
+            try:
+                # Clear all blocking gates so trades can flow immediately:
+                # 1. Kill switch -> off (trading enabled)
+                write_json_state("kill_switch.json", {
+                    "kill_switch": False,
+                    "reason": None,
+                    "activated_at": None,
+                    "cleared_at": utc_now_iso(),
+                })
+                # 2. Adaptive gates -> reset to normal tier, clear blocked symbols
+                write_json_state("adaptive_gates.json", {
+                    "timestamp": utc_now_iso(),
+                    "enabled": True,
+                    "tier": "normal",
+                    "min_policy_score": 35.0,
+                    "min_confidence": 50.0,
+                    "blocked_symbols": [],
+                    "lookback_n": 0,
+                    "recent_win_rate_pct": 50.0,
+                    "recent_net_pnl": 0.0,
+                    "consecutive_losses": 0,
+                    "reason": "manual unblock - all gates cleared",
+                })
+                # 3. Market-closed backoff -> clear all symbols
+                write_json_state("market_closed_backoff.json", {
+                    "timestamp": utc_now_iso(),
+                    "symbols": {},
+                })
+                # 4. Learning overrides -> clear any live-apply patches
+                write_json_state("learning_config_overrides.json", {
+                    "timestamp": utc_now_iso(),
+                    "patches": [],
+                })
+                self._send_json({
+                    "ok": True,
+                    "message": "All trade gates unblocked - kill switch cleared, adaptive gates reset to normal, market-closed backoff cleared",
+                    "timestamp": utc_now_iso(),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/fast-mode":
+            try:
+                from core.fast_mode_runtime import (
+                    FAST_MODE_PRESETS,
+                    apply_overrides,
+                    apply_preset,
+                    clear_runtime,
+                    read_runtime,
+                )
+
+                body = self._read_json_body()
+                action = str(body.get("action") or "preset").lower()
+                if action == "clear":
+                    clear_runtime()
+                    doc = read_runtime()
+                elif action == "overrides":
+                    overrides = dict(body.get("overrides") or {})
+                    if not overrides:
+                        self._send_json({"ok": False, "message": "overrides required"}, 400)
+                        return
+                    doc = apply_overrides(overrides, preset_id=body.get("preset"))
+                else:
+                    preset = str(body.get("preset") or "").lower()
+                    if preset not in FAST_MODE_PRESETS:
+                        self._send_json({
+                            "ok": False,
+                            "message": f"Unknown preset. Choose: {', '.join(FAST_MODE_PRESETS)}",
+                        }, 400)
+                        return
+                    doc = apply_preset(preset, extra=body.get("extra"))
+                self._send_json({
+                    "ok": True,
+                    "preset": doc.get("preset"),
+                    "label": doc.get("label"),
+                    "overrides": doc.get("overrides"),
+                    "timestamp": doc.get("timestamp"),
+                    "note": "Tick interval changes need a bot restart to take effect on the supervisor.",
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/replay":
             body = self._read_json_body()
             config = load_config()
             symbol = body.get("symbol") or config.get("replay", {}).get("symbol")
@@ -679,14 +1261,41 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def log_message(self, format: str, *args) -> None:
-        return
+        # Temporarily enabled (2026-07-02) to diagnose "phone page loads, data
+        # not populated": capture each request the phone makes so we can see
+        # the path/status/size it actually receives. Append-only, one line.
+        try:
+            import time as _t
+            line = "%s %s\n" % (_t.strftime("%H:%M:%S"), (format % args))
+            with (ROOT / "state" / "dashboard_access.log").open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+        except Exception:
+            pass
 
 
-def run(host: str = "127.0.0.1", port: int = 8080) -> None:
+def run(host: str | None = None, port: int | None = None) -> None:
+    # Bind 0.0.0.0 by default so the dashboard is reachable over Tailscale/LAN.
+    # The prior 127.0.0.1-only default meant ONLY localhost-on-the-server could
+    # load it; phones over Tailscale hit the slow in-process bot on 0.0.0.0:8080
+    # instead and hung on the loading screen. Override via DASH_HOST/DASH_PORT
+    # env or --host/--port CLI.
+    import os as _os
+
+    if host is None:
+        host = _os.environ.get("DASH_HOST", "0.0.0.0")
+    if port is None:
+        port = int(_os.environ.get("DASH_PORT", "8082"))
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
     server.serve_forever()
 
 
 if __name__ == "__main__":
-    run()
+    import argparse as _ap
+
+    _p = _ap.ArgumentParser(description="MT5 Quant OS dashboard server (reads state files directly)")
+    _p.add_argument("--host", default=None, help="bind host (default 0.0.0.0, or DASH_HOST)")
+    _p.add_argument("--port", type=int, default=None, help="bind port (default 8082, or DASH_PORT)")
+    _a = _p.parse_args()
+    run(host=_a.host, port=_a.port)
