@@ -26,24 +26,94 @@ class RiskManager:
         trades: list[dict[str, Any]] | None = None,
         features_data: dict[str, Any] | None = None,
         existing_kill_switch: dict[str, Any] | None = None,
+        account_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run all risk checks and produce risk state + kill switch update."""
+        """Run all risk checks and produce risk state + kill switch update.
+
+        In mt5 mode, ``account_context`` is required to validate the live account
+        before any exposure or drawdown computation. Fail-safe behaviour:
+
+        * ``account_error`` set      -> drawdown forced to 100%, kill switch ON.
+        * ``actual != expected``     -> mode mismatch kill switch ON.
+        * ``equity <= 0`` on real   -> explicit zero-equity kill switch ON.
+
+        Paper mode ignores account_context entirely so existing tests are unaffected.
+        """
         balance = balance or {}
         trades = trades or []
         features_data = features_data or {}
         risk_cfg = self.config["risk"]
+        account_context = account_context or {}
+        mt5_mode = self.config.get("execution", {}).get("mode") == "mt5"
 
         starting = float(balance.get("starting_cash", self.config["execution"]["starting_cash"]))
         equity = float(balance.get("equity", starting))
-        drawdown = max(0.0, (starting - equity) / starting * 100) if starting > 0 else 0.0
+
+        risk_events: list[dict[str, Any]] = []
+        kill_triggers: list[str] = []
+        account_status = "ok"
+        account_error: str | None = None
+        expected_mode: str | None = None
+        actual_mode: str | None = None
+
+        if mt5_mode:
+            expected_mode = account_context.get("expected_account_mode")
+            actual_mode = account_context.get("actual_account_mode")
+            account_error = account_context.get("account_error")
+            account_status = account_context.get("status", "ok")
+
+            if account_error:
+                # Missing/stale/connection_failed: refuse to compute drawdown
+                # numbers from fake fallbacks. Force the kill switch on.
+                equity = 0.0
+                drawdown = 100.0
+                risk_events.append({
+                    "type": "mt5_account_error",
+                    "reason": account_error,
+                    "status": account_status,
+                })
+                kill_triggers.append(f"MT5 account unavailable: {account_error}")
+            elif actual_mode == "unknown":
+                # Defensive: caller reported status=ok but mode is unknown.
+                # Treat as zero-equity so we do not silently fall through to
+                # the normal-exposure branch.
+                drawdown = 100.0
+                risk_events.append({
+                    "type": "unknown_account_mode",
+                    "expected_mode": expected_mode,
+                })
+                kill_triggers.append("Unknown MT5 account mode")
+            elif (
+                expected_mode
+                and actual_mode
+                and expected_mode != actual_mode
+            ):
+                drawdown = max(0.0, (starting - equity) / starting * 100) if starting > 0 else 0.0
+                risk_events.append({
+                    "type": "account_mode_mismatch",
+                    "expected": expected_mode,
+                    "actual": actual_mode,
+                })
+                kill_triggers.append(
+                    f"Account mode '{actual_mode}' does not match expected '{expected_mode}'"
+                )
+            elif equity <= 0:
+                drawdown = 100.0
+                risk_events.append({
+                    "type": "zero_equity_real_account",
+                    "expected_mode": expected_mode or actual_mode,
+                })
+                kill_triggers.append("Zero equity on real MT5 account")
+            else:
+                drawdown = max(0.0, (starting - equity) / starting * 100) if starting > 0 else 0.0
+        else:
+            drawdown = max(0.0, (starting - equity) / starting * 100) if starting > 0 else 0.0
 
         symbol_exposure, total_exposure = exposure_from_positions(positions)
         max_total = float(risk_cfg["max_total_exposure_usd"])
         exp_used = exposure_used_pct(total_exposure, max_total)
-        risk_events: list[dict[str, Any]] = []
 
         kill = dict(existing_kill_switch or {"kill_switch": risk_cfg.get("kill_switch", False), "reason": None, "activated_at": None})
-        kill_triggers: list[str] = []
 
         if drawdown >= risk_cfg["max_drawdown_pct"]:
             risk_events.append({"type": "max_drawdown", "value": drawdown, "limit": risk_cfg["max_drawdown_pct"]})
@@ -76,6 +146,14 @@ class RiskManager:
         elif not risk_cfg.get("kill_switch", False):
             kill = self._clear_kill_switch(kill)
 
+        account_state = {
+            "mode": "mt5" if mt5_mode else "paper",
+            "status": account_status,
+            "expected_account_mode": expected_mode,
+            "actual_account_mode": actual_mode,
+            "error": account_error,
+        }
+
         state = {
             "timestamp": utc_now_iso(),
             "kill_switch": kill["kill_switch"],
@@ -90,6 +168,7 @@ class RiskManager:
             "consecutive_losses": consecutive_losses,
             "equity": round(equity, 2),
             "cash": round(float(balance.get("cash", starting)), 2),
+            "account_state": account_state,
         }
 
         self.logger.info(

@@ -1,9 +1,10 @@
-"""MT5 Connection Manager — attach to logged-in demo account, never place trades."""
+"""MT5 Connection Manager — attach to logged-in MT5 account, never place trades."""
 
 from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from core.mt5_terminal_manager import MT5TerminalManager, get_python_session_id
@@ -65,7 +66,11 @@ class MT5ConnectionManager:
         modes = (False,) if logged_in_only else (False, True)
 
         if logged_in_only:
-            self.logger.info("Attaching to logged-in MT5 demo account (no forced re-login)")
+            expected_mode = str(self.config.get("mt5", {}).get("account_mode", "unknown"))
+            self.logger.info(
+                "Attaching to logged-in MT5 account (expected_mode=%s, no forced re-login)",
+                expected_mode,
+            )
 
         last_error: Any = "no attempts"
         for path in paths:
@@ -179,3 +184,23 @@ class MT5ConnectionManager:
                 return f"{base} {alignment['warning']}"
             return f"{base} Ensure MT5 is running in the same Windows session as Python."
         return f"All connection attempts failed. Last error: {error}"
+
+    @staticmethod
+    def is_account_fresh(account: dict[str, Any] | None, max_age_seconds: int = 90) -> bool:
+        """True when an account.json dict has a timestamp within max_age_seconds.
+
+        Used by the risk loop to detect a stale on-disk snapshot before
+        overwriting it with a fresh MT5 read. Empty or missing snapshots are
+        never fresh.
+        """
+        if not account or not isinstance(account, dict):
+            return False
+        ts = account.get("timestamp")
+        if not ts:
+            return False
+        try:
+            then = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - then).total_seconds()
+            return age <= max_age_seconds
+        except Exception:
+            return False

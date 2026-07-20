@@ -64,6 +64,13 @@ def test_verifier_outputs():
 
 
 def test_paper_execution():
+    import pytest
+    from core.utils import load_config
+
+    config = load_config()
+    if config.get("execution", {}).get("mode") != "paper":
+        pytest.skip("paper_orders.json is only required in paper mode")
+
     assert (STATE / "paper_orders.json").exists()
     assert (STATE / "paper_positions.json").exists()
     assert (STATE / "paper_trades.json").exists()

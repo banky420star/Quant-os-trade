@@ -91,12 +91,19 @@ def utc_now_iso() -> str:
 
 
 def read_json_state(filename: str, default: Any = None) -> Any:
-    """Read JSON state file; return default if missing."""
+    """Read JSON state file; return ``default`` if missing or unreadable.
+
+    Malformed JSON (e.g. a corrupted ``state/*.json`` after a crash) is treated
+    the same as a missing file so callers can keep their fail-safe semantics.
+    """
     path = STATE_DIR / filename
     if not path.exists():
         return default
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (ValueError, json.JSONDecodeError):
+        return default
 
 
 def write_json_state(filename: str, data: Any) -> Path:
