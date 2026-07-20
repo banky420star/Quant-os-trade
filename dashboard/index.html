@@ -435,6 +435,7 @@
       <h1>MT5 Quant OS</h1>
       <span class="ver" id="osVersion">v1.0</span>
       <span class="status-pill" id="osStatus"><span class="dot"></span> Listening</span>
+      <span class="status-pill ok" id="accountPill" title="MT5 account state"></span>
     </div>
     <div class="topbar-stats" id="topStats"></div>
   </header>
@@ -1013,6 +1014,65 @@
       const lines = (status.blockers||[]).map(b => `• ${b}`).join("<br>");
       const counts = `${status.candidate_count||0} candidates · ${status.approved_count||0} approved · ${status.rejected_count||0} rejected`;
       el.innerHTML = `<strong>Trading: ${status.status.toUpperCase()}</strong> — ${counts}${lines ? "<br>"+lines : ""}`;
+    }      function escapeHtml(str) {
+        return String(str ?? "").replace(/[&<>"']/g, ch => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[ch]));
+      }
+
+      // Snapshots older than this are highlighted as STALE on the pill so
+      // operators can spot a stalled risk_loop even when status itself is ok.
+      const STALE_AFTER_SECONDS = 90;
+
+      function isoAgeSeconds(iso) {
+        if (!iso) return null;
+        const then = new Date(iso).getTime();
+        if (Number.isNaN(then)) return null;
+        return Math.floor((Date.now() - then) / 1000);
+      }
+
+    function accountAlertMessage(ac) {
+      // Returns { summary, detail } for the account_state fault, or null when
+      // everything is fine. Both fields are pre-escaped so callers can use
+      // innerHTML safely.
+      if (!ac || (ac.status || "ok") === "ok") return null;
+      let summary, detail;
+      if (ac.actual_account_mode && ac.expected_account_mode
+          && ac.actual_account_mode !== "unknown"
+          && ac.expected_account_mode !== ac.actual_account_mode) {
+        summary = "Account mode mismatch";
+        detail = `config expects <b>${escapeHtml(ac.expected_account_mode)}</b> but MT5 reports <b>${escapeHtml(ac.actual_account_mode)}</b>; trades refused.`;
+      } else if (ac.error) {
+        summary = "MT5 account unavailable";
+        detail = escapeHtml(ac.error);
+      } else {
+        summary = "MT5 account status";
+        detail = escapeHtml(ac.status || "unknown");
+      }
+      return { summary, detail };
+    }
+
+    function renderAccountBanner(ac) {
+      // When an MT5 fault forced the kill switch ON, surface the *reason* in
+      // the trade-alert banner. We append to the existing alert so unrelated
+      // candidate counts and blockers stay visible.
+      const el = document.getElementById("tradeAlert");
+      if (!el) return;
+      const msg = accountAlertMessage(ac);
+      if (!msg) return;
+
+      const accountLine = `<strong>${escapeHtml(msg.summary)}</strong> — ${msg.detail}`;
+
+      // If renderTradeAlert already populated el with content, append rather
+      // than replace so the operator still sees candidates/approved/blockers.
+      const existing = (el.innerHTML || "").trim();
+      if (existing) {
+        el.className = "trade-alert show blocked";
+        el.innerHTML = `${existing}<br>${accountLine}`;
+      } else {
+        el.className = "trade-alert show blocked";
+        el.innerHTML = accountLine;
+      }
     }
 
     function evBars(rows) {
@@ -1228,6 +1288,53 @@
 
     function renderBottom(data, live) {
       const risk = data.risk_state || {};
+
+      function renderAccountPill() {
+        const pill = document.getElementById("accountPill");
+        if (!pill) return;
+        const live = data.live_portfolio || {};
+        const ac = live.account_state || { mode: "paper", status: "ok" };
+        const mode = (ac.mode || "paper").toUpperCase();
+        const status = ac.status || (live.account_state ? "ok" : "stale");
+        const ageSeconds = isoAgeSeconds(live.account_last_refresh);
+        const modeLabel = (ac.actual_account_mode || "?").toUpperCase();
+        let label, klass, title;
+        if (status === "ok") {
+          // A negative age means server clock is ahead of the browser; we
+          // explicitly skip the staleness path so we don't false-positive
+          // STALE on perfectly fresh snapshots under skew.
+          const isStale = ageSeconds !== null && ageSeconds >= 0 && ageSeconds > STALE_AFTER_SECONDS;
+          label = isStale
+            ? `${mode} \u00b7 ${modeLabel} \u00b7 STALE`
+            : `${mode} \u00b7 ${modeLabel} \u00b7 OK`;
+          klass = isStale ? "status-pill warn" : "status-pill ok";
+          const ageText = ageSeconds !== null && ageSeconds >= 0 ? `${ageSeconds}s ago` : "—";
+          title = `MT5 account ${isStale ? "snapshot STALE" : "validated"} (refresh ${ageText}); threshold ${STALE_AFTER_SECONDS}s\nlogin=${live.account_login || ac.actual_account_mode || "?"} server=${live.account_server || "?"}\nlast refresh=${live.account_last_refresh || "—"}`;
+        } else if (status === "missing" || status === "unknown") {
+          label = `${mode} \u00b7 ${status.toUpperCase()}`;
+          klass = "status-pill warn";
+          title = `MT5 account snapshot incomplete: ${ac.error || status}`;
+        } else {
+          label = `${mode} \u00b7 ${status.toUpperCase()}`;
+          klass = "status-pill bad";
+          title = `MT5 account unavailable: ${ac.error || status}`;
+        }
+        if (
+          ac.expected_account_mode
+          && ac.actual_account_mode
+          && ac.actual_account_mode !== "unknown"
+          && ac.expected_account_mode !== ac.actual_account_mode
+        ) {
+          label = `${mode} \u00b7 ${ac.actual_account_mode.toUpperCase()} \u00b7 MISMATCH`;
+          klass = "status-pill bad";
+          title = `Config expects ${ac.expected_account_mode} but MT5 reports ${ac.actual_account_mode}`;
+        }
+        pill.className = klass;
+        pill.innerHTML = '<span class="dot"></span> ' + label;
+        pill.title = title;
+      }
+      renderAccountPill();
+      renderAccountBanner((data.live_portfolio || {}).account_state);
       const trades = ((data.paper_trades || {}).trades) || [];
       const wins = trades.filter(t => t.result === "win").length;
       const wr = trades.length ? Math.round(wins / trades.length * 100) : 0;

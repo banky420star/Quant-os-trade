@@ -152,6 +152,7 @@ def _build_live_portfolio(
     paper_positions: dict,
     paper_trades: dict,
     features: dict,
+    config: dict | None = None,
 ) -> dict:
     """Live balance, equity, and open-trade PnL — prefer account.json over stale orders."""
     order_acct = (paper_orders or {}).get("account", {})
@@ -203,6 +204,21 @@ def _build_live_portfolio(
     session_pnl = round(equity - starting, 2)
     session_pnl_pct = round((session_pnl / starting * 100) if starting else 0, 2)
 
+    # Account state snapshot (mode, status, expected vs actual). Drives the
+    # topbar pill + trade alert so operators can see the live MT5 connection
+    # status at a glance without re-reading risk_state.json.
+    risk_state = read_json_state("risk_state.json", default={})
+    account_state = risk_state.get("account_state") or {
+        "mode": config["execution"].get("mode"),
+        "status": "ok" if account else "missing",
+        "expected_account_mode": config.get("mt5", {}).get("account_mode"),
+        "actual_account_mode": account.get("account_mode"),
+        "error": None,
+    }
+    # Surface the most recent refresh timestamp so the UI can flag a stale
+    # account.json even when risk_state is unfortunately empty.
+    last_refresh = account.get("timestamp")
+
     return {
         "cash": round(cash, 2),
         "equity": round(equity, 2),
@@ -218,6 +234,8 @@ def _build_live_portfolio(
         "account_server": account.get("server"),
         "source": "account.json" if account.get("equity") else "paper_orders",
         "updated_at": account.get("timestamp") or paper_orders.get("timestamp"),
+        "account_state": account_state,
+        "account_last_refresh": last_refresh,
     }
 
 
@@ -553,6 +571,7 @@ def aggregate_state() -> dict:
         positions_data,
         payload.get("paper_trades", {}),
         features_data,
+        config,
     )
     payload["watchlist"] = _build_watchlist(candidates, features_data, market_ctx_data)
     if not payload["watchlist"] and payload["symbol_cards"]:
