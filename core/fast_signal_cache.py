@@ -65,9 +65,12 @@ def _build_cache_entry(signal: dict[str, Any], config: dict[str, Any]) -> dict[s
     mgmt = dict(signal.get("management_profile") or {})
     be_fast = cfg.get("break_even_fast") or {}
     trail_fast = cfg.get("trail_fast") or {}
+    be_per_sym = (be_fast.get("per_symbol") or {}).get(symbol) or {}
     if be_fast.get("enabled"):
-        mgmt["break_even_trigger_r"] = float(be_fast.get("trigger_r", mgmt.get("break_even_trigger_r", 0.4)))
-        mgmt["break_even_lock_r"] = float(be_fast.get("lock_r", mgmt.get("break_even_lock_r", 0.05)))
+        default_trigger = float(be_fast.get("trigger_r", mgmt.get("break_even_trigger_r", 0.4)))
+        default_lock = float(be_fast.get("lock_r", mgmt.get("break_even_lock_r", 0.05)))
+        mgmt["break_even_trigger_r"] = float(be_per_sym.get("trigger_r", default_trigger))
+        mgmt["break_even_lock_r"] = float(be_per_sym.get("lock_r", default_lock))
     if trail_fast.get("enabled"):
         mgmt["trail_start_r"] = float(trail_fast.get("start_r", mgmt.get("trail_start_r", 0.65)))
         mgmt["trail_atr_mult"] = float(trail_fast.get("atr_mult", mgmt.get("trail_atr_mult", 0.43)))

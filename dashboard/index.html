@@ -117,6 +117,42 @@
       border-radius: 99px;
       animation: load-progress 2.4s ease forwards;
     }
+    /* Profile selector and reset buttons on loading screen */
+    .loader-actions {
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      margin-top: 24px; min-width: 260px;
+    }
+    .loader-profile-row {
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+    }
+    .loader-profile-btn {
+      padding: 7px 16px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); font-size: 11px;
+      font-weight: 600; cursor: pointer; font-family: inherit;
+      transition: all .2s; white-space: nowrap;
+    }
+    .loader-profile-btn:hover {
+      border-color: var(--blue); color: var(--text);
+      background: rgba(41,151,255,.1);
+    }
+    .loader-profile-btn.active {
+      border-color: var(--blue); color: var(--blue);
+      background: rgba(41,151,255,.15); box-shadow: 0 0 12px var(--glow-blue);
+    }
+    .loader-profile-btn.danger {
+      border-color: rgba(255,69,58,.3); color: var(--red);
+    }
+    .loader-profile-btn.danger:hover {
+      border-color: var(--red); background: rgba(255,69,58,.15);
+    }
+    .loader-actions-label {
+      font-size: 10px; color: var(--muted2); text-transform: uppercase;
+      letter-spacing: .06em; font-weight: 600;
+    }
+    .loader-actions-status {
+      font-size: 11px; color: var(--orange); margin-top: 4px;
+      min-height: 18px; text-align: center;
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes pulse-core { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
     @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
@@ -239,7 +275,9 @@
       border-radius: var(--radius);
       padding: 20px;
       box-shadow: 0 4px 24px rgba(0,0,0,.25);
+      transition: border-color .2s, box-shadow .2s;
     }
+    .card:hover { border-color: rgba(255,255,255,.14); box-shadow: 0 6px 32px rgba(0,0,0,.3); }
     .section-head {
       display: flex; align-items: baseline; justify-content: space-between;
       margin-bottom: 12px;
@@ -454,6 +492,373 @@
       .right-panel { display: none; }
       :root { --right-w: 0px; }
     }
+    /* Better responsive at intermediate sizes — shrink sidebar & right panel before hiding */
+    @media (max-width: 1300px) {
+      :root { --sidebar-w: 180px; --right-w: 260px; }
+      .center { padding: 16px 18px; }
+    }
+    @media (max-width: 1200px) {
+      :root { --sidebar-w: 160px; --right-w: 240px; }
+      .center { padding: 14px 16px; gap: 12px; }
+      .hero-meta { gap: 14px; }
+    }
+    @media (max-width: 1100px) {
+      .right-panel { display: none; }
+      :root { --right-w: 0px; }
+      .sidebar { width: var(--sidebar-w); }
+    }
+    @media (max-width: 1000px) {
+      :root { --sidebar-w: 140px; }
+      .nav-item { padding: 6px 10px; font-size: 12px; }
+      .sidebar-section { padding: 12px 10px 6px; font-size: 9px; }
+    }
+    /* Living Parameters tile (2026-07-21) */
+    .lp-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 12px; }
+    @media (max-width: 900px) { .lp-wrap { grid-template-columns: 1fr; } }
+    .lp-section { min-width: 0; }
+    .lp-section-title { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .07em; font-weight: 700; margin-bottom: 8px; }
+    .lp-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .lp-table th { color: var(--muted2); font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+    .lp-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+    .lp-table tr:last-child td { border-bottom: none; }
+    .lp-table .sym { font-weight: 600; color: var(--text); }
+    .lp-table .trusted { color: var(--green); }
+    .lp-table .override { color: var(--orange); }
+    .lp-table .observe { color: var(--muted2); }
+    .lp-patch-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 11px; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    .lp-patch-row:last-child { border-bottom: none; }
+    .lp-patch-key { color: var(--muted); }
+    .lp-patch-val { color: var(--text); font-weight: 600; }
+    .lp-footer { grid-column: 1 / -1; font-size: 10px; color: var(--muted2); text-align: right; padding-top: 4px; border-top: 1px solid var(--border); }
+
+    /* Profit Quality Dashboard (exit-mode bleed) */
+    .profit-quality-card .pq-section { margin-top: 12px; }
+    .profit-quality-card .pq-section:first-of-type { margin-top: 0; }
+    .profit-quality-card .pq-section .pq-section-title {
+      font-size: 10px; color: var(--muted2); text-transform: uppercase;
+      letter-spacing: .07em; font-weight: 700; margin-bottom: 8px;
+    }
+    .profit-quality-card .bleed-row {
+      display: grid; grid-template-columns: 1fr auto auto auto;
+      gap: 10px; align-items: center; padding: 8px 10px;
+      border-bottom: 1px solid var(--border); font-size: 12px;
+    }
+    .profit-quality-card .bleed-row:last-child { border-bottom: none; }
+    .profit-quality-card .bleed-row .left { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .profit-quality-card .bleed-row .left .bucket { color: var(--text); font-weight: 600; }
+    .profit-quality-card .bleed-row .left .axis {
+      color: var(--muted2); font-size: 10px; text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .profit-quality-card .bleed-row .meta { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+    .profit-quality-card .bleed-row .net.pos { color: var(--green); font-weight: 700; }
+    .profit-quality-card .bleed-row .net.neg { color: var(--red); font-weight: 700; }
+    .profit-quality-card .pq-heatmap { display: flex; flex-direction: column; gap: 4px; }
+    .profit-quality-card .pq-axis-header {
+      display: grid; gap: 4px; font-size: 10px;
+      color: var(--muted2); text-transform: uppercase;
+      letter-spacing: .05em; font-weight: 700;
+      padding: 4px 0; align-items: stretch;
+    }
+    .profit-quality-card .pq-hcell {
+      padding: 10px 6px; border-radius: 7px; font-size: 11px;
+      text-align: center; border: 1px solid rgba(255,255,255,.04);
+    }
+    .profit-quality-card .pq-hcell.net.pos { background: rgba(50,215,75,.16); color: #b7f3c1; }
+    .profit-quality-card .pq-hcell.net.neg { background: rgba(255,69,58,.20); color: #ffb4af; }
+    .profit-quality-card .pq-hcell.zero { background: rgba(255,159,10,.10); color: #ffc46b; }
+    .profit-quality-card .pq-hcell.neutral { background: rgba(255,255,255,.04); color: var(--muted); }
+    .profit-quality-card .pq-axis-label { align-self: center; color: var(--muted); font-weight: 600; }
+    .profit-quality-card .pq-bucket-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .profit-quality-card .pq-bucket-table th {
+      color: var(--muted2); font-size: 10px; text-transform: uppercase;
+      letter-spacing: .05em; font-weight: 700; padding: 6px 8px;
+      border-bottom: 1px solid var(--border); text-align: left;
+    }
+    .profit-quality-card .pq-bucket-table td {
+      padding: 6px 8px; border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+    .profit-quality-card .pq-bucket-table tr:last-child td { border-bottom: none; }
+    .profit-quality-card .pq-bucket-table .n-neg { color: var(--red); font-weight: 700; }
+    .profit-quality-card .pq-bucket-table .n-pos { color: var(--green); font-weight: 700; }
+    .profit-quality-card .pq-data-quality {
+      font-size: 11px; color: var(--muted); line-height: 1.55;
+      margin-top: 14px; padding: 10px 12px;
+      background: rgba(255,255,255,.03); border-radius: 7px;
+      border: 1px solid var(--border);
+    }
+    .profit-quality-card .dq-pill {
+      display: inline-block; padding: 2px 9px; border-radius: 99px;
+      font-size: 10px; font-weight: 700; margin-right: 8px;
+      letter-spacing: .05em; text-transform: uppercase;
+    }
+    .profit-quality-card .dq-pill.ok { background: rgba(50,215,75,.15); color: var(--green); }
+    .profit-quality-card .dq-pill.warn { background: rgba(255,159,10,.15); color: var(--orange); }      .profit-quality-card .dq-pill.bad { background: rgba(255,69,58,.15); color: var(--red); }
+      .profit-quality-card .pq-live-badge {
+        display: inline-block; margin-left: 10px; padding: 3px 9px;
+        border-radius: 6px; font-size: 11px; font-weight: 700;
+        letter-spacing: .04em; background: rgba(15, 23, 42, .55);
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        text-transform: uppercase;
+      }
+      .profit-quality-card .pq-grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+
+      /* CLI Overrides diff tree (2026-07-21)
+       Layer (column) x Config Key (row) grid. Each cell is a chip whose colour
+       indicates the layer-vs-key verdict. Rows are ranked so the worst bleed
+       (hot_conflict > shadowed > introduced > in_sync) floats to the top. */
+      .cli-overrides-card .co-status-bar {
+        display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+        font-size: 11px; color: var(--muted); padding: 4px 0 12px;
+        border-bottom: 1px solid var(--border); margin-bottom: 12px;
+      }
+      .cli-overrides-card .co-status-bar .co-stat {
+        display: inline-flex; align-items: center; gap: 6px;
+      }
+      .cli-overrides-card .co-status-bar .co-stat strong {
+        font-variant-numeric: tabular-nums;
+      }
+      .cli-overrides-card .co-status-bar .co-profile {
+        margin-left: auto; padding: 3px 9px;
+        border-radius: 6px; background: rgba(41,151,255,.14);
+        color: #7ac0ff; font-weight: 600;
+        font-family: ui-monospace, monospace;
+      }
+      .cli-overrides-card .co-table-wrap {
+        overflow-x: auto; overflow-y: visible;
+        border: 1px solid var(--border); border-radius: 8px;
+        background: rgba(0,0,0,.18);
+      }
+      .cli-overrides-card table.co-table {
+        border-collapse: separate; border-spacing: 0;
+        width: 100%; min-width: 540px; font-size: 12px;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      }
+      .cli-overrides-card .co-table th,
+      .cli-overrides-card .co-table td {
+        padding: 0; border-bottom: 1px solid rgba(255,255,255,.04);
+        border-right: 1px solid rgba(255,255,255,.04);
+        vertical-align: middle;
+      }
+      .cli-overrides-card .co-table thead th {
+        position: sticky; top: 0; z-index: 2;
+        background: rgba(20,20,24,.96); backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        font-size: 10px; color: var(--muted2); font-weight: 700;
+        text-transform: uppercase; letter-spacing: .05em;
+        padding: 8px 10px; white-space: nowrap;
+      }
+      .cli-overrides-card .co-table .co-key-cell {
+        position: sticky; left: 0; z-index: 1;
+        background: rgba(20,20,24,.96);
+        font-size: 11.5px; font-weight: 600; color: var(--text);
+        padding: 8px 12px 8px 10px; min-width: 240px; max-width: 320px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .cli-overrides-card .co-table .co-key-cell .co-key-path {
+        display: inline-block; max-width: 280px;
+        overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
+      }
+      .cli-overrides-card .co-table .co-key-cell .co-row-tag {
+        display: inline-block; margin-left: 6px; padding: 1px 6px;
+        border-radius: 99px; font-size: 9.5px; letter-spacing: .05em;
+        font-weight: 700; text-transform: uppercase;
+        vertical-align: middle;
+      }
+      .cli-overrides-card .co-table .co-key-cell .co-row-tag.shadowed {
+        background: rgba(255,69,58,.18); color: #ffb4af;
+      }
+      .cli-overrides-card .co-table .co-key-cell .co-row-tag.introduced {
+        background: rgba(41,151,255,.18); color: #7ac0ff;
+      }
+      .cli-overrides-card .co-table .co-key-cell .co-row-tag.hot_conflict {
+        background: rgba(255,159,10,.22); color: #ffc46b;
+        box-shadow: 0 0 0 1px rgba(255,159,10,.45);
+      }
+      .cli-overrides-card .co-table .co-key-cell .co-row-tag.in_sync {
+        background: rgba(50,215,75,.16); color: #8ae99a;
+      }
+      .cli-overrides-card .co-table .co-layer {
+        font-weight: 700; letter-spacing: .04em;
+      }
+      .cli-overrides-card .co-table .co-layer .co-layer-dot {
+        display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+        margin-right: 5px; background: var(--muted2);
+      }
+      .cli-overrides-card .co-table .co-layer.base .co-layer-dot { background: #6e6e73; }
+      .cli-overrides-card .co-table .co-layer.local .co-layer-dot { background: #f5f5f7; }
+      .cli-overrides-card .co-table .co-layer.profile .co-layer-dot { background: #2997ff; }
+      .cli-overrides-card .co-table .co-layer.in_memory .co-layer-dot { background: #bf5af2; }
+      .cli-overrides-card .co-cell {
+        padding: 6px 10px; min-width: 90px; max-width: 200px;
+        text-align: left; white-space: nowrap;
+        cursor: default;
+        font-variant-numeric: tabular-nums;
+        border-bottom: 1px solid transparent;
+      }
+      .cli-overrides-card .co-cell .co-cell-val {
+        display: block; max-width: 180px;
+        overflow: hidden; text-overflow: ellipsis;
+      }
+      .cli-overrides-card .co-cell .co-cell-line {
+        display: block; font-size: 9px; color: var(--muted2);
+        margin-top: 1px; font-family: ui-monospace, monospace;
+        opacity: .55;
+      }
+      .cli-overrides-card .co-cell.shadowed {
+        background: rgba(255,69,58,.18); color: #ffb4af;
+      }
+      .cli-overrides-card .co-cell.shadowed .co-cell-line { color: #ffb4af; opacity: .6; }
+      .cli-overrides-card .co-cell.in_sync {
+        background: rgba(50,215,75,.10); color: #b7f3c1;
+      }
+      .cli-overrides-card .co-cell.introduced {
+        background: rgba(41,151,255,.16); color: #7ac0ff;
+      }
+      .cli-overrides-card .co-cell.introduced .co-cell-line { color: #7ac0ff; opacity: .6; }
+      .cli-overrides-card .co-cell.hot_conflict {
+        background: rgba(255,159,10,.22); color: #ffd99a;
+        box-shadow: inset 0 -2px 0 rgba(255,159,10,.55);
+      }
+      .cli-overrides-card .co-cell.empty {
+        color: var(--muted2); opacity: .35; background: transparent;
+      }
+      .cli-overrides-card .co-cell.winner {
+        outline: 1px solid rgba(255,255,255,.5);
+        outline-offset: -2px;
+      }
+      .cli-overrides-card .co-footer {
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: 10.5px; color: var(--muted2); padding-top: 10px;
+        font-family: ui-monospace, monospace;
+      }
+      .cli-overrides-card .co-footer .co-truncated-warn {
+        color: var(--orange); font-weight: 600;
+      }
+      .cli-overrides-card .co-legend {
+        display: flex; gap: 10px; flex-wrap: wrap; font-size: 10.5px;
+        color: var(--muted); margin-bottom: 8px;
+      }
+      .cli-overrides-card .co-legend .co-leg {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 2px 8px; border-radius: 99px; background: rgba(255,255,255,.03);
+        border: 1px solid var(--border);
+      }
+      .cli-overrides-card .co-legend .co-leg .co-leg-swatch {
+        display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+      }
+      .cli-overrides-card .co-legend .co-leg .co-leg-swatch.shadowed { background: rgba(255,69,58,.6); }
+      .cli-overrides-card .co-legend .co-leg .co-leg-swatch.in_sync { background: rgba(50,215,75,.5); }
+      .cli-overrides-card .co-legend .co-leg .co-leg-swatch.introduced { background: rgba(41,151,255,.6); }
+      .cli-overrides-card .co-legend .co-leg .co-leg-swatch.hot_conflict { background: rgba(255,159,10,.65); }
+      .cli-overrides-card .co-legend .co-leg .co-leg-swatch.empty { background: rgba(255,255,255,.08); }
+      .cli-overrides-card .co-status-bar .co-freshness {
+        padding: 2px 8px; border-radius: 99px; font-size: 10px;
+        font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+        font-family: ui-monospace, monospace;
+      }
+      .cli-overrides-card .co-status-bar .co-freshness.freshness-live {
+        background: rgba(50,215,75,.18); color: #8ae99a;
+        box-shadow: 0 0 0 1px rgba(50,215,75,.3);
+      }
+      .cli-overrides-card .co-status-bar .co-freshness.freshness-warm {
+        background: rgba(255,159,10,.18); color: #ffc46b;
+      }
+      .cli-overrides-card .co-status-bar .co-freshness.freshness-stale {
+        background: rgba(255,69,58,.18); color: #ffb4af;
+      }
+      .cli-overrides-card .co-row-pulse {
+        animation: co-row-pulse 1.6s ease-in-out 2;
+      }
+      @keyframes co-row-pulse {
+        0%   { background: rgba(255,159,10,.10); }
+        50%  { background: rgba(255,159,10,.32); }
+        100% { background: transparent; }
+      }
+      @media (max-width: 900px) {
+        .cli-overrides-card .co-table .co-key-cell { min-width: 180px; }
+      }
+    @media (max-width: 900px) { .profit-quality-card    .pq-grid-two { grid-template-columns: 1fr; }
+
+    /* Payoff Paradox Meter (2026-07-20) — live actionable intelligence tile
+       wired to the same /api/profit_quality/stream SSE channel as the rest of
+       the Profit Quality card. Four KPI tiles + one suggestion line. */
+    .pq-section-meter {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+    }
+    .pq-meter-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-top: 6px;
+    }
+    .pq-meter-tile {
+      padding: 9px 10px;
+      border-radius: 7px;
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(255,255,255,.06);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+    .pq-meter-tile .pq-meter-label {
+      font-size: 9.5px; color: var(--muted2);
+      text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+    }
+    .pq-meter-tile .pq-meter-value {
+      font-size: 16px; font-weight: 700; margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .pq-meter-tile.danger .pq-meter-value { color: var(--red); }
+    .pq-meter-tile.ok .pq-meter-value { color: var(--green); }
+    .pq-meter-tile.warn .pq-meter-value { color: #ffc46b; }
+    .pq-meter-suggestion {
+      font-size: 12.5px; line-height: 1.5; margin-top: 10px;
+      padding: 8px 10px; border-radius: 6px;
+      background: rgba(255,159,10,.08);
+      border-left: 2px solid #fbbf24;
+      color: var(--muted);
+    }
+    .pq-meter-suggestion .pq-meter-suggestion-strong {
+      color: var(--text); font-weight: 600;
+      font-family: ui-monospace, monospace;
+    }
+    .pq-meter-pulse { animation: pq-meter-pulse 1.2s ease-in-out 1; }
+    @keyframes pq-meter-pulse {
+      0%   { box-shadow: 0 0 0 2px rgba(48,209,88,.0); }
+      50%  { box-shadow: 0 0 0 2px rgba(48,209,88,.55); }
+      100% { box-shadow: 0 0 0 2px rgba(48,209,88,.0); }
+    }
+    .pq-meter-empty {
+      font-size: 11px; color: var(--muted); padding: 8px 0;
+    }
+    /* Phase 2.4 learning timeline heatmap */
+    .tl-wrap { font-size: 11px; margin-top: 6px; }
+    .tl-axis { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .tl-ax-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .tl-ax-total { font-size: 10px; color: var(--muted2); margin-left: auto; font-variant-numeric: tabular-nums; }
+    .tl-grid { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; align-items: end; height: 64px; }
+    .tl-col { display: flex; flex-direction: column; align-items: center; gap: 1px; height: 100%; justify-content: flex-end; }
+    .tl-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 0px; transition: height .4s ease; }
+    .tl-bar-dec { background: #2997ff; opacity: calc(0.25 + 0.75 * var(--td, 0) / 100); }
+    .tl-bar-rev { background: #32d74b; opacity: calc(0.2 + 0.8 * var(--tr, 0) / 100); }
+    .tl-bar-prop { background: #bf5af2; opacity: calc(0.2 + 0.8 * var(--tp, 0) / 100); }
+    .tl-hr-label { font-size: 8px; color: var(--muted2); font-variant-numeric: tabular-nums; line-height: 1; margin-top: 2px; }
+
+    .pq-meter-blind-note {
+      font-size: 11px; line-height: 1.5; margin-top: 6px;
+      padding: 6px 9px; border-radius: 5px;
+      background: rgba(255,69,58,.10);
+      border-left: 2px solid #ff453a;
+      color: #ffb4af;
+    }
+    @media (max-width: 700px) {
+      .pq-meter-row { grid-template-columns: 1fr 1fr; }
+    } }
 
     /* Phone layout */
     .mobile-summary, .mobile-symbols, .mobile-tab-bar, .mobile-ai-wrap, .mobile-empty { display: none; }
@@ -641,6 +1046,20 @@
       <div class="loader-step" data-step="3"><span class="loader-step-dot"></span>Rendering live view</div>
     </div>
     <div class="loader-bar"><i></i></div>
+    <div class="loader-actions">
+      <div class="loader-actions-label">Quick Actions</div>
+      <div class="loader-profile-row">
+        <button class="loader-profile-btn" data-profile="growth">Growth (14 sym)</button>
+        <button class="loader-profile-btn" data-profile="30-real">$30 Real</button>
+        <button class="loader-profile-btn" data-profile="30">$30 Demo</button>
+        <button class="loader-profile-btn" data-profile="100">$100 Real</button>
+      </div>
+      <div class="loader-profile-row">
+        <button class="loader-profile-btn danger" id="resetMemoryBtn">Reset Memory</button>
+        <button class="loader-profile-btn danger" id="unblockTradesBtn">Unblock Trades</button>
+      </div>
+      <div class="loader-actions-status" id="loaderActionsStatus"></div>
+    </div>
   </div>
 
   <!-- Independent loader failsafe. Self-contained: depends on NO function defined later,
@@ -656,15 +1075,135 @@
           if (ls && !ls.classList.contains("hidden") && !ls.classList.contains("hiding")) {
             ls.classList.add("hidden");
             var app = document.getElementById("appRoot");
+            // Reveal the empty app shell so users see SOMETHING on a true failure
+            // (otherwise appRoot stays opacity:0 and the screen looks broken).
             if (app) app.classList.add("ready");
             var b = document.createElement("div");
             b.id = "bootFailsafeBanner";
             b.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#1c1c1e;color:#f5f5f7;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 14px;font:13px system-ui,sans-serif;";
             b.innerHTML = "Dashboard load issue (main script did not finish). Open the no-JS mirror at <a style='color:#0a84ff' href='" + (location.protocol + '//' + location.hostname + ':8081/') + "'>:8081</a>, or press <b>F12 → Console</b> and send the red error.";
             document.body.appendChild(b);
+            // Watch for the main script to start rendering content into appRoot.
+            // MutationObserver fires instantly (no polling latency) and does not
+            // depend on the 'ready' class, which we ourselves just added.
+            if (app) {
+              var removed = false;
+              var observer = null;
+              var removeBanner = function () {
+                if (removed) return;
+                removed = true;
+                var existing = document.getElementById("bootFailsafeBanner");
+                if (existing) existing.remove();
+                if (observer) observer.disconnect();
+              };
+              // First mutation = main script is rendering. No need to inspect
+              // the DOM tree — the observer firing once is enough signal.
+              observer = new MutationObserver(removeBanner);
+              observer.observe(app, { childList: true });
+              // 30s safety net so the banner never lingers forever.
+              setTimeout(removeBanner, 30000);
+            }
           }
         } catch (e) { /* swallow */ }
       }, 10000);
+    })();
+  </script>
+
+  <!-- Profile selector + action buttons for the loading screen -->
+  <script>
+    (function () {
+      function setActionStatus(msg, isError) {
+        var el = document.getElementById("loaderActionsStatus");
+        if (el) el.textContent = msg;
+        if (isError) console.warn("Loader action:", msg);
+      }
+      function doPost(url, body, cb) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", url, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.onload = function () {
+          try {
+            var resp = JSON.parse(xhr.responseText);
+            cb(null, resp);
+          } catch (e) {
+            cb(e);
+          }
+        };
+        xhr.onerror = function () { cb(new Error("Network error")); };
+        xhr.send(JSON.stringify(body || {}));
+      }
+      // Wire profile buttons
+      document.querySelectorAll(".loader-profile-btn[data-profile]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var profile = this.getAttribute("data-profile");
+          var profileName = this.textContent.trim();
+          if (!confirm("Switch to " + profileName + " (" + profile + ")?\n\nThis will kill the current bot and restart with the new profile. Any open positions will be orphaned.")) return;
+          setActionStatus("Switching to " + profile + " — new bot starting, page will reload shortly...");
+          this.disabled = true;
+          this.textContent = "Switching...";
+          doPost("/api/switch_profile", { profile: profile }, function (err, resp) {
+            if (err || !resp || !resp.ok) {
+              setActionStatus("Switch failed: " + ((resp && resp.message) || (err && err.message) || "unknown"), true);
+              this.disabled = false;
+              this.textContent = profileName;
+            } else {
+              setActionStatus("New bot starting — page will auto-load when ready...");
+              // Don't force-reload. Instead, poll until the new bot answers.
+              (function pollBoot() {
+                var x = new XMLHttpRequest();
+                x.open("GET", "/api/state", true);
+                x.timeout = 8000;
+                x.onload = function () {
+                  if (x.status === 200) { location.reload(); }
+                  else { setTimeout(pollBoot, 3000); }
+                };
+                x.onerror = function () { setTimeout(pollBoot, 3000); };
+                x.ontimeout = function () { setTimeout(pollBoot, 3000); };
+                x.send();
+              })();
+            }
+          }.bind(this));
+        });
+      });
+      // Wire reset memory button
+      var resetBtn = document.getElementById("resetMemoryBtn");
+      if (resetBtn) {
+        resetBtn.addEventListener("click", function () {
+          if (!confirm("Reset all learning memory?\n\nThis clears the trade log, learning patches, and review state. The bot will restart with a blank slate.")) return;
+          setActionStatus("Resetting memory...");
+          this.disabled = true;
+          this.textContent = "Resetting...";
+          doPost("/api/reset_memory", {}, function (err, resp) {
+            if (err || !resp || !resp.ok) {
+              setActionStatus("Reset failed: " + ((resp && resp.message) || (err && err.message) || "unknown"), true);
+              this.disabled = false;
+              this.textContent = "Reset Memory";
+            } else {
+              setActionStatus("Memory reset — reloading...");
+              setTimeout(function () { location.reload(); }, 2000);
+            }
+          }.bind(this));
+        });
+      }
+      // Wire unblock trades button
+      var unblockBtn = document.getElementById("unblockTradesBtn");
+      if (unblockBtn) {
+        unblockBtn.addEventListener("click", function () {
+          setActionStatus("Unblocking trades...");
+          this.disabled = true;
+          this.textContent = "Unblocking...";
+          doPost("/api/unblock-trades", {}, function (err, resp) {
+            if (err || !resp || !resp.ok) {
+              setActionStatus("Unblock failed: " + ((resp && resp.message) || (err && err.message) || "unknown"), true);
+              this.disabled = false;
+              this.textContent = "Unblock Trades";
+            } else {
+              setActionStatus("Trades unblocked — reloading...");
+              setTimeout(function () { location.reload(); }, 2000);
+            }
+          }.bind(this));
+        });
+      }
     })();
   </script>
 
@@ -790,9 +1329,53 @@
             </div>
             <div id="learningPanel"><p class="empty">Learning loop waiting?</p></div>
           </div>
+          <div class="card lp-card living-params-card" id="livingParamsCard">
+            <div class="card-title">Living Parameters — Active Overrides</div>
+            <div id="livingParamsTileBody">
+              <p class="empty" style="grid-column:1/-1;margin:0;padding:16px 0">Living Params &mdash; waiting for data</p>
+            </div>
+          </div>
+          <div class="card profit-quality-card" id="profitQualityCard">
+            <div class="pq-section pq-section-meter" id="profitQualityMeterWrap" style="display:none">
+              <div class="pq-section-title">Payoff Paradox Meter — last 30 closes</div>
+              <div id="profitQualityMeter"><div class="pq-meter-empty">Awaiting SSE…</div></div>
+            </div>
+
+            <div class="section-head">
+              <div class="card-title">Profit Quality — Exit-Mode Bleed</div>
+              <span class="hint">Closed-trade buckets; worst bucket is highlighted in red</span>
+            </div>
+            <div class="pq-section" id="profitQualityBleed">
+              <div class="pq-section-title">Bleed Leaders — top 10 buckets bleeding the most $</div>
+            </div>
+            <div class="pq-section" id="profitQualityHeatmap">
+              <div class="pq-section-title">BE × Partial heatmap (net $)</div>
+            </div>
+            <div class="pq-section" id="profitQualityBuckets">
+              <div class="pq-section-title">Detailed buckets — by R-multiple and by Payoff</div>
+            </div>
+            <div class="pq-section" id="profitQualityExits">
+              <div class="pq-section-title">Exit-mode coverage — BE / Partial / Stale splits</div>
+            </div>
+            <div class="pq-data-quality" id="profitQualityDataQuality"></div>
+          </div>
+          <div class="card cli-overrides-card" id="cliOverridesCard">
+            <div class="section-head">
+              <div class="card-title">CLI Overrides &mdash; Layer &times; Key Diff Tree</div>
+              <span class="hint">Worst bleed on top &middot; click any cell for source line</span>
+            </div>
+            <div id="cliOverridesPanel"><p class="empty">CLI overrides &mdash; waiting for /api/cli_overrides</p></div>
+          </div>
           <div class="card" id="culturingCard">
             <div class="card-title">Culturing Ledger — Data-Driven Veto</div>
             <div id="culturingPanel"><p class="empty">Waiting for forward_test_loop…</p></div>
+          </div>
+          <div class="card" id="livingParamsCard" style="display:none">
+            <div class="section-head">
+              <div class="card-title">Living Parameters — Active Overrides</div>
+              <span class="hint">BE/Trail per symbol (left) + Learning-loop patches (right)</span>
+            </div>
+            <div id="livingParamsPanel"><p class="empty">Loading…</p></div>
           </div>
         </div>
 
@@ -1056,6 +1639,35 @@
       if (n == null || isNaN(n)) return "—";
       return Number(n).toLocaleString(undefined, {maximumFractionDigits: d});
     }
+    function fmtAxis(v) {
+      if (v == null || isNaN(v)) return "—";
+      var abs = Math.abs(v);
+      if (abs >= 1000000) return "$" + (v / 1000000).toFixed(1) + "M";
+      if (abs >= 1000) return "$" + (v / 1000).toFixed(1) + "K";
+      if (abs >= 10) return "$" + (v).toFixed(0);
+      if (abs >= 1) return "$" + (v).toFixed(1);
+      return "$" + (v).toFixed(2);
+    }
+    function niceScale(min, max, maxTicks) {
+      if (min === max) { min -= 1; max += 1; }
+      var range = max - min;
+      if (range <= 0) range = 1;
+      var roughStep = range / maxTicks;
+      if (roughStep <= 0) roughStep = 1;
+      var mag = Math.pow(10, Math.floor(Math.log10(roughStep)));
+      if (mag <= 0) mag = 1;
+      var norm = roughStep / mag;
+      var step;
+      if (norm < 1.5) step = mag;
+      else if (norm < 3.5) step = 2 * mag;
+      else if (norm < 7.5) step = 5 * mag;
+      else step = 10 * mag;
+      if (step <= 0) step = mag || 1;
+      var niceMin = Math.floor(min / step) * step;
+      var niceMax = Math.ceil(max / step) * step;
+      if (niceMax === niceMin) niceMax = niceMin + step;
+      return { min: niceMin, max: niceMax, step: step, ticks: Math.round((niceMax - niceMin) / step) };
+    }
 
     function activateView(view) {
       document.querySelectorAll(".nav-item[data-view], .mobile-tab[data-view]").forEach(b => {
@@ -1084,6 +1696,7 @@
     let chartMetaFull = null;
     let equityCurveRaw = null;
     let chartRange = "1d";
+    let liveEquityBuffer = []; // client-side real-time equity samples for short ranges
 
     const RANGE_LABELS = { "1m": "Last 1 minute", "15m": "Last 15 minutes", "1h": "Last 1 hour", "4h": "Last 4 hours", "1d": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "all": "Full history" };
 
@@ -1191,7 +1804,11 @@
       const points = curve.points || [];
       if (seconds == null) return { points, markers: curve.markers || [], range_stats: {} };
       const cutoff = Date.now() - seconds * 1000;
-      const sliced = points.filter(p => new Date(p.ts).getTime() >= cutoff);
+      let sliced = points.filter(p => new Date(p.ts).getTime() >= cutoff);
+      if (liveEquityBuffer.length && seconds <= 3600) {
+        const lp = liveEquityBuffer.filter(p => new Date(p.ts).getTime() >= cutoff);
+        if (lp.length) sliced = sliced.concat(lp).sort((a,b) => new Date(a.ts) - new Date(b.ts));
+      }
       return { points: sliced.length ? sliced : [points[points.length - 1]], markers: (curve.markers || []).filter(m => new Date(m.ts).getTime() >= cutoff), range_stats: {} };
     }
 
@@ -1253,19 +1870,24 @@
       ctx.fillStyle = bgGrad;
       ctx.fillRect(pad.left, pad.top, pW, pH);
 
-      const yTicks = 7;
+      const yTicks = Math.max(4, Math.min(9, Math.round(pH / 55)));
+      const yScale = niceScale(minV, maxV, yTicks);
       ctx.font = "10px -apple-system,sans-serif";
-      for (let t = 0; t <= yTicks; t++) {
-        const v = minV + (maxV - minV) * (t / yTicks);
+      const tickCount = yScale.ticks;
+      for (let t = 0; t <= tickCount; t++) {
+        const v = yScale.min + t * yScale.step;
         const y = yAt(v);
+        if (y < pad.top - 5 || y > H - pad.bottom + 5) continue;
         ctx.strokeStyle = t % 2 === 0 ? "rgba(255,255,255,.07)" : "rgba(255,255,255,.03)";
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
-        const label = "$" + fmt(v, v > 500 ? 0 : 2);
         ctx.fillStyle = "#636366";
-        ctx.fillText(label, 6, y + 3);
-        ctx.fillText(label, W - pad.right + 8, y + 3);
+        ctx.textAlign = "right";
+        ctx.fillText(fmtAxis(v), pad.left - 8, y + 3);
+        ctx.textAlign = "left";
+        ctx.fillText(fmtAxis(v), W - pad.right + 8, y + 3);
       }
+      ctx.textAlign = "start";
 
       const xTickCount = Math.min(9, Math.max(4, Math.floor(pW / 100)));
       for (let i = 0; i <= xTickCount; i++) {
@@ -1989,10 +2611,633 @@
         ${trades.slice(-6).reverse().map(t=>`<tr><td>${t.symbol}</td><td><span class="badge ${t.result==="win"?"ok":"bad"}">${t.result}</span></td><td>$${fmt(t.pnl)}</td></tr>`).join("")}
         </tbody></table>` : '<p class="empty">No trades</p>';
 
-      renderEvaluationPolicy(data);
-      renderFastMode(data);
-      renderLearning(data);
-      renderCulturing(data);
+      renderEvaluationPolicy(data);        renderFastMode(data);
+        renderLearning(data);
+        renderLearningTimelineTile();
+        renderLivingParamsTile();
+        // Profit Quality tile is owned by the SSE stream (/api/profit_quality/stream)
+        // once it has pushed its first snapshot. The 2s /api/state poll skips this
+        // render so a stale read cannot overwrite a fresh server push. On SSE
+        // failure the 'error' listener clears the flag so the poll takes over.
+        if (!window.__pqSSEOwned) {
+        renderProfitQuality(data);
+        if (typeof renderPayoffParadoxMeter === "function") renderPayoffParadoxMeter(data);
+      }
+        renderCulturing(data);
+    }
+
+    function _pqEscape(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function _pqDataQuality(dq) {
+      if (!dq) return "";
+      const pct = dq.pct_complete_be_and_r || 0;
+      const pillCls = pct >= 80 ? "ok" : pct >= 30 ? "warn" : "bad";
+      return `<span class="dq-pill ${pillCls}">${pct}% mgmt+R complete</span>
+        <span>${dq.trades_with_r_multiple}/${dq.n_total} with R-multiple</span>
+        · <span>${dq.trades_with_mgmt_joined} with live mgmt join</span>
+        · <span>${dq.trades_stale_flagged} stale-closed</span>
+        <div style="margin-top:6px;color:var(--muted2);font-size:10.5px;line-height:1.5">${_pqEscape(dq.note || "")}</div>`;
+    }
+
+    function renderPayoffParadoxMeter(data) {
+      // Live tile at the top of profitQualityCard. Reads data.meter which the
+      // server computes inside _build_profit_quality and pushes 1x per SSE tick.
+      // Defensive: the meter may be absent during cold-start, in which case
+      // we hide the section wrapper so the Bleed Leaders / Heatmap / Buckets
+      // sections slide up without leaving a visible blank tile.
+      const wrap = document.getElementById("profitQualityMeterWrap");
+      if (!wrap) return;
+      const m = data && data.meter;
+      if (!m || typeof m !== "object") {
+        wrap.style.display = "none";
+        return;
+      }
+      wrap.style.display = "";
+      const inner = document.getElementById("profitQualityMeter");
+      if (!inner) return;
+
+      if (m.error) {
+        inner.innerHTML = '<div class="pq-meter-empty">⚠ Meter: ' + _pqEscape(m.error) + '</div>';
+        return;
+      }
+
+      const wr = Number(m.incremental_WR || 0);
+      const wrCls = wr >= 50 ? "ok" : (wr >= 30 ? "warn" : "danger");
+      const payoffRaw = m.payoff;
+      const payoff = (payoffRaw === Infinity || payoffRaw === null)
+        ? "∞"
+        : (Number(payoffRaw) || 0).toFixed(2);
+      const suppressed = Number(m.BE_floor_suppressed_count || 0);
+      const supCls = suppressed > 0 ? "warn" : "ok";
+      const delta = Number(m.suggested_delta || 0);
+      const suggCls = delta > 0 ? "ok" : "warn";
+      const sugg = (Number(m.suggested_next_floor || m.current_floor || 0.4)).toFixed(2);
+      const cur = (Number(m.current_floor_resolved || m.current_floor || 0.4)).toFixed(2);
+      const nWindow = Number(m.n_window || 0);
+      const review = Number(m.review_window || 30);
+      const suggestionText = m.suggestion_text || "—";
+      // HIGH #1 reviewer fix (2026-07-20): when priced_sl_coverage_pct is
+      // low (paper broker pattern: trades lack entry/sl/size), show a
+      // visible "fitter blind" diagnostic so the operator knows the green
+      // "unchanged" tile isn't a logic bug.
+      const pricedPct = Number(m.priced_sl_coverage_pct || 0);
+      const pricedPctWinner = Number(m.priced_sl_winner_coverage_pct || 0);
+      const fitterBlind = pricedPct < 25 && nWindow >= 5;
+      const blindNote = fitterBlind
+        ? '<div class="pq-meter-blind-note">⚠ Fitter blind: only '
+          + pricedPct.toFixed(1) + '% of all trades / '
+          + pricedPctWinner.toFixed(1) + '% of winners have priced SL — '
+          + 'bot appears to be in paper-broker mode or BE-extracting before close.</div>'
+        : '';
+
+      inner.innerHTML = ''
+        + '<div class="pq-meter-row">'
+        +   '<div class="pq-meter-tile ' + wrCls + '">'
+        +     '<div class="pq-meter-label">Win Rate (window)</div>'
+        +     '<div class="pq-meter-value">' + wr.toFixed(1) + '%</div>'
+        +   '</div>'
+        +   '<div class="pq-meter-tile">'
+        +     '<div class="pq-meter-label">Payoff</div>'
+        +     '<div class="pq-meter-value">' + payoff + '</div>'
+        +   '</div>'         +   '<div class="pq-meter-tile ' + supCls + '" title="Proxy: mgmt_winners with realised_R &lt; current floor (no per-trade BE-suppressed flag yet)">'
+        +     '<div class="pq-meter-label">BE-Floor Suppressed (proxy)</div>'
+        +     '<div class="pq-meter-value">' + suppressed + '</div>'
+        +   '</div>'
+        +   '<div class="pq-meter-tile ' + suggCls + '">'
+        +     '<div class="pq-meter-label">Next Floor ' + (delta > 0 ? '↑' : '·') + '</div>'
+        +     '<div class="pq-meter-value">' + sugg + 'R</div>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="pq-meter-suggestion">'
+        +   _pqEscape(suggestionText)
+        +   ' <span class="pq-meter-suggestion-strong">· window '
+        +    nWindow + '/' + review
+        +    (cur ? ' · current ' + cur + 'R' : '')
+        +    (m.proposal_written ? ' · proposal written' : '')
+        +    ' · priced-SL ' + pricedPct.toFixed(1) + '% all / '
+        +    pricedPctWinner.toFixed(1) + '% winners'
+        +   '</span>'
+        + '</div>'
+        + blindNote;
+
+      // Quick visual confirmation that a new proposal was just written this tick.
+      if (m.proposal_written && window.__pqMeterLastPulse !== m.proposal_id) {
+        window.__pqMeterLastPulse = m.proposal_id;
+        const tiles = inner.querySelectorAll('.pq-meter-tile.ok');
+        if (tiles.length) {
+          tiles.forEach(t => {
+            t.classList.add('pq-meter-pulse');
+            setTimeout(() => t.classList.remove('pq-meter-pulse'), 1400);
+          });
+        }
+      }
+    }
+
+    let livingParamsCache = null;
+
+    async function fetchLivingParams() {
+      try {
+        const resp = await fetch('/api/living_params');
+        if (!resp.ok) return;
+        livingParamsCache = await resp.json();
+        const el = document.getElementById('livingParamsTileBody');
+        if (el && typeof renderLivingParamsTile === 'function') renderLivingParamsTile(livingParamsCache);
+      } catch (e) { /* swallow */ }
+    }
+
+    // ---------- CLI Overrides (Layer x Key Diff Tree) ----------
+    let cliOverridesCache = null;
+    let _cliOverridesLastRender = '';
+
+    async function fetchCliOverrides(force) {
+      try {
+        const url = '/api/cli_overrides' + (force ? '?force=1' : '');
+        const resp = await fetch(url);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        cliOverridesCache = data;
+        renderCliOverridesTile();
+      } catch (e) { /* swallow */ }
+    }
+
+    function _coFmtVal(v) {
+      if (v === null || v === undefined) return String(v);
+      if (typeof v === 'number') {
+        if (!isFinite(v)) return String(v);
+        if (Math.abs(v) >= 1000) return v.toFixed(0);
+        if (Math.abs(v) >= 1)    return v.toFixed(3).replace(/\.?0+$/, '');
+        return v.toFixed(4).replace(/\.?0+$/, '');
+      }
+      if (typeof v === 'boolean') return v ? 'true' : 'false';
+      if (typeof v === 'object') {
+        try {
+          const s = JSON.stringify(v);
+          return s.length > 36 ? '{' + s.slice(1, 33).replace(/[,\]}\s]*$/, '') + '\u2026}' : s;
+        } catch (e) { return '[object]'; }
+      }
+      const s = String(v);
+      return s.length > 36 ? s.slice(0, 33) + '\u2026' : s;
+    }
+
+    function _coRowStatus(override, hotKeysSet) {
+      if (hotKeysSet && hotKeysSet.has(override.key)) {
+        return 'hot_conflict';
+      }
+      if (override.shadowed) return 'shadowed';
+      // introduced_by_overlay: history has only one layer (the overlay added it;
+      // base never declared the key). Detect by checking that the first (lowest
+      // layer) history entry is NOT the "base" layer.
+      const hist = Array.isArray(override.history) ? override.history : [];
+      const hasBase = hist.some(h => h && h.layer === 'base');
+      if (!hasBase && hist.length > 0) return 'introduced';
+      return 'in_sync';
+    }
+
+    function _coRowSortKey(status, override) {
+      const histLen = (override.history || []).length;
+      // Aggregate "cost" for the row: how much the table disagreement costs you.
+      // We approximate by history length first, distinct value count second.
+      const distinct = new Set((override.history || []).map(h => JSON.stringify(h.value)));
+      return {
+        // Primary rank: worst bleed first. Lower number = higher priority.
+        rank: ({ hot_conflict: 0, shadowed: 1, introduced: 2, in_sync: 3 })[status] ?? 4,
+        historyLen: histLen,
+        distinctCount: distinct.size,
+        key: override.key || '',
+      };
+    }
+
+    function renderCliOverridesTile() {
+      const el = document.getElementById('cliOverridesPanel');
+      if (!el) return;
+      const sup = cliOverridesCache;
+      if (!sup || !Array.isArray(sup.overrides)) {
+        el.innerHTML = '<p class="empty" style="margin:0;padding:16px 0">CLI overrides &mdash; waiting for /api/cli_overrides</p>';
+        return;
+      }
+
+      const layers = Array.isArray(sup.layers) ? sup.layers : [];
+      const overrides = sup.overrides;
+      const summary = sup.summary || {};
+      const hotKeys = new Set((sup.hot_conflicts || []).map(h => h && h.key).filter(Boolean));
+
+      // Build row priority list. Use only the top N most-interesting rows so the
+      // table stays scannable; padded with rows by shadowed->introduced->in_sync.
+      const TOP_N = 32;
+      const ranked = overrides.map(o => {
+        const status = _coRowStatus(o, hotKeys);
+        const s = _coRowSortKey(status, o);
+        return { o, status, s };
+      });
+      ranked.sort((a, b) => {
+        if (a.s.rank !== b.s.rank) return a.s.rank - b.s.rank;
+        if (a.s.distinctCount !== b.s.distinctCount) return b.s.distinctCount - a.s.distinctCount;
+        if (a.s.historyLen !== b.s.historyLen) return b.s.historyLen - a.s.historyLen;
+        return a.s.key.localeCompare(b.s.key);
+      });
+      const topRows = ranked.slice(0, TOP_N);
+      const truncated = overrides.length > TOP_N;
+
+      // Build the per-layer column lookup keyed by layer.name
+      const layerByName = {};
+      layers.forEach(l => { if (l && l.name) layerByName[l.name] = l; });
+
+      // Order columns: base, local, profile:* first, then in_memory:* sorted by enabled then name.
+      const ymlCols = ['base', 'local'].concat(
+        layers.filter(l => l.name && l.name.startsWith('profile:')).map(l => l.name)
+      );
+      const inMemCols = layers.filter(l => l.name && l.name.startsWith('in_memory:')).map(l => l.name);
+      inMemCols.sort((a, b) => {
+        const ea = !!(layerByName[a] && layerByName[a].enabled);
+        const eb = !!(layerByName[b] && layerByName[b].enabled);
+        if (ea !== eb) return eb ? -1 : 1;
+        return a.localeCompare(b);
+      });
+      const colOrder = ymlCols.concat(inMemCols);
+      const colKind = (name) => name.startsWith('in_memory:') ? 'in_memory'
+                       : name === 'base' ? 'base'
+                       : name === 'local' ? 'local'
+                       : name.startsWith('profile:') ? 'profile'
+                       : 'base';
+      // Pre-compute winner-value per overlay column for shadow-display consistency
+      const winnerValByCol = {};
+      colOrder.forEach(name => {
+        const hist = (topRows.length > 0) ? topRows[0].o.history.find(h => h.layer === name) : null;
+        winnerValByCol[name] = hist ? hist.value : undefined;
+      });
+
+      // Header HTML
+      const headerHtml = colOrder.map(name => {
+        const meta = layerByName[name] || {};
+        const cssKind = name.startsWith('in_memory:') ? 'in_memory'
+                       : name === 'base' ? 'base'
+                       : name === 'local' ? 'local'
+                       : name.startsWith('profile:') ? 'profile'
+                       : 'base';
+        const enabledBadge = (meta.enabled === false)
+          ? ' <span style="color:var(--muted2);font-size:9px">(off)</span>'
+          : '';
+        return `<th class="co-layer ${cssKind}"><span class="co-layer-dot"></span>${name}${enabledBadge}</th>`;
+      }).join('');
+
+      // Per-row HTML
+      const rowHtml = topRows.map(({ o, status }) => {
+        const tagClass = status;
+        const statusLabel = status === 'hot_conflict' ? 'hot'
+                          : status === 'shadowed' ? 'shadow'
+                          : status === 'introduced' ? 'new'
+                          : 'sync';
+        const tag = `<span class="co-row-tag ${tagClass}">${statusLabel}</span>`;
+        const keyCell = `<td class="co-key-cell"><span class="co-key-path" title="${(o.key || '').replace(/"/g,'&quot;')}">${o.key || ''}</span>${tag}</td>`;
+        const cells = colOrder.map(name => {
+          const hist = (o.history || []).find(h => h && h.layer === name);
+          if (!hist) {
+            return `<td class="co-cell empty" title="not set in ${name}"><span class="co-cell-val">&mdash;</span></td>`;
+          }
+          const isWinner = (o.winning_layer === name);
+          const kind = colKind(name);
+          const valStr = _coFmtVal(hist.value);
+          const lineStr = (hist.line_number != null) ? `L${hist.line_number}` : '';
+          const srcShort = (hist.source_path || '').split(/[\\/]/).pop() || '';
+          const tip = (hist.source_path || 'in-memory') +
+                      (hist.line_number != null ? ':' + hist.line_number : '') +
+                      (hist.in_memory ? ' (in-memory)' : '') +
+                      (isWinner ? ' \u2605 winning' : '');
+          let cls = 'co-cell';
+          // Coloring policy:
+          //  - hot_conflict = strictly-worse shadowed row. Use the SAME shadowed cell
+          //    coloring (base + winner red, inner green) so the underlying divergence
+          //    stays legible, and reserve the row-level HOT tag + pulse for the rank.
+          //  - shadowed base + winner red, inner cells green.
+          //  - introduced: only overlay cells paint blue; base is empty (handled above).
+          //  - in_sync: everything green.
+          if (status === 'hot_conflict' || status === 'shadowed') {
+            if (kind === 'base' || isWinner) cls += ' shadowed';
+            else cls += ' in_sync';
+          } else if (status === 'introduced') {
+            cls += ' introduced';
+          } else {
+            cls += ' in_sync';
+          }
+          // Winner outline is suppressed for the disagreement rows so the red base +
+          // red winner do not visually compete with a third outline; for in_sync rows
+          // the outline marks the column that authored the value.
+          if (isWinner && status === 'in_sync') cls += ' winner';
+          return `<td class="${cls}" title="${tip.replace(/"/g,'&quot;')}"><span class="co-cell-val">${valStr}</span>${lineStr ? `<span class="co-cell-line">${srcShort} ${lineStr}</span>` : ''}</td>`;
+        }).join('');
+        return `<tr class="co-row-pulse">${keyCell}${cells}</tr>`;
+      }).join('');
+
+      // Status bar
+      const total = overrides.length;
+      const shadowCount = overrides.filter(o => o.shadowed).length;
+      const hotCount = hotKeys.size;
+      const introducedCount = ranked.filter(r => r.status === 'introduced').length;
+      const inSyncCount = ranked.filter(r => r.status === 'in_sync').length;
+      const profile = sup.active_profile ? `profile: ${sup.active_profile}` : 'profile: (none)';
+      const updated = (sup.updated_at || '').slice(0, 19);
+      // Freshness pill: green if updated_at within 10s, orange if 10-60s, red beyond.
+      let freshnessCls = 'freshness-stale';
+      let freshnessLbl = 'stale';
+      const updIso = sup.updated_at;
+      if (updIso) {
+        const ms = Date.now() - new Date(updIso).getTime();
+        if (!isNaN(ms)) {
+          if (ms < 10_000) { freshnessCls = 'freshness-live'; freshnessLbl = 'live'; }
+          else if (ms < 60_000) { freshnessCls = 'freshness-warm'; freshnessLbl = 'warm'; }
+          else { freshnessCls = 'freshness-stale'; freshnessLbl = 'stale'; }
+        }
+      }
+
+      el.innerHTML = `
+        <div class="co-status-bar">
+          <span class="co-stat"><strong>${total}</strong> keys tracked</span>
+          <span class="co-stat" style="color:#ffb4af"><strong>${shadowCount}</strong> shadowed</span>
+          <span class="co-stat" style="color:#ffc46b"><strong>${hotCount}</strong> hot conflicts</span>
+          <span class="co-stat" style="color:#7ac0ff"><strong>${introducedCount}</strong> introduced</span>
+          <span class="co-stat" style="color:#8ae99a"><strong>${inSyncCount}</strong> in sync</span>
+          <span class="co-freshness ${freshnessCls}">${freshnessLbl}</span>
+          <span class="co-profile">${profile}</span>
+        </div>
+        <div class="co-legend">
+          <span class="co-leg"><span class="co-leg-swatch shadowed"></span>shadowed</span>
+          <span class="co-leg"><span class="co-leg-swatch in_sync"></span>in sync</span>
+          <span class="co-leg"><span class="co-leg-swatch introduced"></span>introduced by overlay</span>
+          <span class="co-leg"><span class="co-leg-swatch hot_conflict"></span>hot conflict</span>
+          <span class="co-leg"><span class="co-leg-swatch empty"></span>not set in layer</span>
+        </div>
+        <div class="co-table-wrap">
+          <table class="co-table">
+            <thead>
+              <tr>
+                <th class="co-key-cell">Config key (dot path)</th>
+                ${headerHtml}
+              </tr>
+            </thead>
+            <tbody>${rowHtml}</tbody>
+          </table>
+        </div>
+        <div class="co-footer">
+          <span>${truncated ? `<span class="co-truncated-warn">showing top ${TOP_N} of ${total}</span> &middot; ranked by bleed` : `showing all ${total}`}</span>
+          <span>updated ${updated || '?'}</span>
+        </div>`;
+
+      _cliOverridesLastRender = JSON.stringify({
+        n: total, shadow: shadowCount, hot: hotCount, intro: introducedCount, sync: inSyncCount,
+        up: updated, profile: sup.active_profile || '',
+      });
+    }
+    // Emit a heartbeat so other parts of the dashboard can confirm the renderer ran
+    if (typeof window !== 'undefined') {
+      window.__cliOverridesLastRenderAt = () => _cliOverridesLastRender;
+    }
+
+    function renderLivingParamsTile(_ignored) {
+      const sup = livingParamsCache;
+      const el = document.getElementById('livingParamsTileBody');
+      if (!el) return;
+      if (!sup) {
+        el.innerHTML = '<p class="empty" style="grid-column:1/-1;margin:0;padding:16px 0">Living Params &mdash; waiting for data</p>';
+        return;
+      }
+
+      const beSection = sup.symbol_be || {};
+      const symbols = beSection.symbols || [];
+      const patchesSection = sup.config_patches || {};
+      const cumState = sup.cumulative_patch_state || {};
+      const patchCount = patchesSection.patch_count || 0;
+
+      // Build BE symbols section
+      let beRows = symbols.map(s => {
+        const trigger = s.be_trigger_r != null ? s.be_trigger_r : '?';
+        const label = s.trusted ? '<span class="badge ok">trusted</span>' : '<span class="badge warn">observe</span>';
+        const nInfo = s.n > 0 ? ` (n=${s.n})` : '';
+        const reason = s.reason ? `<span style="color:var(--muted2);font-size:10px">${s.reason.slice(0,50)}</span>` : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <span><strong>${s.symbol}</strong>${nInfo} ${label}</span>
+          <span style="font-variant-numeric:tabular-nums">BE @ ${trigger}R</span>
+        </div>`;
+      }).join('');
+      if (!beRows) beRows = '<p class="empty" style="margin:0;padding:8px 0">No BE overrides active</p>';
+
+      // Build config patches section from cumulative state (ops array)
+      let ops = Array.isArray(cumState.ops) ? cumState.ops : [];
+      let patchRows = ops.slice(0, 12).map(op => {
+        const pathStr = Array.isArray(op.path) ? op.path.join('.') : (op.path || '?');
+        const val = op.value != null ? op.value : '?';
+        const prev = op.prev != null ? ` (was ${op.prev})` : '';
+        return `<div style="padding:5px 0;border-bottom:1px solid var(--border);font-size:11px">
+          <span class="lp-patch-key">${pathStr}</span>
+          <span class="lp-patch-val">${val}</span>
+          <span style="color:var(--muted2);font-size:10px;margin-left:4px">${prev}</span>
+        </div>`;
+      }).join('');
+      if (!patchRows) patchRows = '<p class="empty" style="margin:0;padding:8px 0">Waiting for learning proposals</p>';
+
+      const beUpdated = beSection.updated_at || '';
+      const patchUpdated = patchesSection.updated_at || '';
+      el.innerHTML = `<div class="lp-wrap">
+        <div class="lp-section">
+          <div class="lp-section-title">Break-Even Overrides</div>
+          <div style="margin-top:6px">${beRows}</div>
+          <div class="lp-footer">${symbols.length} symbol(s) &middot; ${beUpdated.slice(0,19) || '?'}</div>
+        </div>
+        <div class="lp-section">
+          <div class="lp-section-title">Config Patches</div>
+          <div style="margin-top:6px">${patchRows}</div>
+          <div class="lp-footer">${patchCount} patches applied &middot; ${patchUpdated.slice(0,19) || '?'}</div>
+        </div>
+      </div>`;
+    }
+
+    function renderProfitQuality(data) {
+      const card = document.getElementById("profitQualityCard");
+      if (!card) return;
+      const d = data && data.profit_quality;
+      const bleedEl = document.getElementById("profitQualityBleed");
+      const heatEl = document.getElementById("profitQualityHeatmap");
+      const bucketsEl = document.getElementById("profitQualityBuckets");
+      const exitsEl = document.getElementById("profitQualityExits");
+      const dqEl = document.getElementById("profitQualityDataQuality");
+
+      if (!d) {
+        bleedEl.innerHTML = bleedEl.querySelector(".pq-section-title").outerHTML
+          + '<p class="empty">Profit Quality payload missing. Wait for /api/profit_quality to populate.</p>';
+        heatEl.innerHTML = heatEl.querySelector(".pq-section-title").outerHTML;
+        bucketsEl.innerHTML = bucketsEl.querySelector(".pq-section-title").outerHTML;
+        exitsEl.innerHTML = exitsEl.querySelector(".pq-section-title").outerHTML;
+        dqEl.innerHTML = "";
+        return;
+      }
+
+      // ----- 1) Bleed Leaders -----
+      const bleeds = (d.bleed_top || []).filter(r => r.net_pnl !== 0);
+      const bleedRows = bleeds.map(r => {
+        const cls = r.net_pnl < 0 ? "neg" : "pos";
+        const sign = r.net_pnl > 0 ? "+" : "";
+        return `<div class="bleed-row">
+          <div class="left">
+            <span class="bucket">${_pqEscape(r.bucket)}</span>
+            <span class="axis">${_pqEscape(r.axis)}</span>
+          </div>
+          <div class="meta">n=${r.n}</div>
+          <div class="meta">WR ${r.wr_pct}%</div>
+          <div class="meta net ${cls}">${sign}$${Math.abs(r.net_pnl).toFixed(2)}</div>
+        </div>`;
+      }).join("");
+      bleedEl.innerHTML =
+        `<div class="pq-section-title">Bleed Leaders — top ${bleeds.length} buckets bleeding the most $</div>` +
+        (bleedRows || '<p class="empty">No bucket with n&ge;3 and net losses yet.</p>');
+
+      // ----- 2) Heatmap (BE × Partial) -----
+      const x = d.cross_be_partial;
+      if (x && x.rows && x.rows.length && x.axis_b && x.axis_b.length) {
+        const cols = x.axis_b;
+        const colDefs = `80px repeat(${cols.length}, 1fr)`;
+        const header = `<div class="pq-axis-header" style="grid-template-columns:${colDefs}">
+          <div></div>
+          ${cols.map(c => `<div style="text-align:center">${_pqEscape(c)}</div>`).join("")}
+        </div>`;
+        const dataRows = x.rows.map(row => {
+          const a = row.axis_a;
+          const cells = row.cells.map(c => {
+            let cls = "neutral";
+            if (c.n === 0) cls = "neutral";
+            else if (c.net_pnl > 0.5) cls = "pos";
+            else if (c.net_pnl < -0.5) cls = "neg";
+            else cls = "zero";
+            const amt = Math.abs(c.net_pnl);
+            const sign = c.net_pnl > 0 ? "+$" : c.net_pnl < 0 ? "-$" : "$";
+            const cell = `<div class="pq-hcell ${cls}" title="${_pqEscape(a)} × ${_pqEscape(c.axis_b)} | n=${c.n} | net $${c.net_pnl.toFixed(2)} | WR ${c.wr_pct}% | avg R ${c.avg_r.toFixed(2)}">
+              <div style="font-weight:700;font-size:13px">${sign}${amt.toFixed(2)}</div>
+              <div style="font-size:9.5px;opacity:.72;margin-top:2px">n=${c.n} · WR ${c.wr_pct}%</div>
+            </div>`;
+            return cell;
+          }).join("");
+          return `<div class="pq-axis-header" style="grid-template-columns:${colDefs}">
+            <div class="pq-axis-label">${_pqEscape(a)}</div>
+            ${cells}
+          </div>`;
+        }).join("");
+        heatEl.innerHTML =
+          `<div class="pq-section-title">${_pqEscape(x.axis_a_name)} × ${_pqEscape(x.axis_b_name)} heatmap (net $)</div>${header}${dataRows}`;
+      } else {
+        heatEl.innerHTML =
+          heatEl.querySelector(".pq-section-title").outerHTML +
+          '<p class="empty">Insufficient data for the BE &times; Partial heatmap.</p>';
+      }
+
+      // ----- 3) Detailed R + Payoff tables -----
+      const rRows = (d.r_buckets || []).filter(r => r.n > 0).map(r => {
+        const cls = r.net_pnl > 0 ? "n-pos" : r.net_pnl < 0 ? "n-neg" : "";
+        const sign = r.net_pnl > 0 ? "+" : "";
+        return `<tr><td>${_pqEscape(r.bucket)}</td><td>${r.n}</td><td>${r.wr_pct}%</td><td>${r.avg_r.toFixed(2)}R</td><td class="${cls}">${sign}$${Math.abs(r.net_pnl).toFixed(2)}</td></tr>`;
+      }).join("");
+      const payRows = (d.payoff_buckets || []).filter(r => r.n > 0).map(r => {
+        const cls = r.net_pnl > 0 ? "n-pos" : r.net_pnl < 0 ? "n-neg" : "";
+        const sign = r.net_pnl > 0 ? "+" : "";
+        return `<tr><td>${_pqEscape(r.bucket)}</td><td>${r.n}</td><td>${r.wr_pct}%</td><td>${r.avg_r.toFixed(2)}R</td><td class="${cls}">${sign}$${Math.abs(r.net_pnl).toFixed(2)}</td></tr>`;
+      }).join("");
+      bucketsEl.innerHTML = `<div class="pq-section-title">Detailed buckets — by R-multiple and by Payoff</div>
+        <div class="pq-grid-two">
+          <div>
+            <table class="pq-bucket-table">
+              <thead><tr><th>R-multiple</th><th>n</th><th>WR</th><th>Avg R</th><th>Net $</th></tr></thead>
+              <tbody>${rRows || '<tr><td colspan="5" class="empty">No data</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div>
+            <table class="pq-bucket-table">
+              <thead><tr><th>Payoff ($)</th><th>n</th><th>WR</th><th>Avg R</th><th>Net $</th></tr></thead>
+              <tbody>${payRows || '<tr><td colspan="5" class="empty">No data</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>`;
+
+      // ----- 4) Exit-mode coverage (3-way splits) -----
+      function _exitRows(rows) {
+        return rows.map(r => {
+          const cls = r.net_pnl > 0 ? "n-pos" : r.net_pnl < 0 ? "n-neg" : "";
+          const sign = r.net_pnl > 0 ? "+" : "";
+          return `<tr><td>${_pqEscape(r.bucket)}</td><td>${r.n}</td><td>${r.wr_pct}%</td><td>${r.avg_r.toFixed(2)}R</td><td class="${cls}">${sign}$${Math.abs(r.net_pnl).toFixed(2)}</td></tr>`;
+        }).join("");
+      }
+      exitsEl.innerHTML = `<div class="pq-section-title">Exit-mode coverage — BE / Partial / Stale splits</div>
+        <div class="pq-grid-two">
+          <div>
+            <table class="pq-bucket-table">
+              <thead><tr><th>BE triggered</th><th>n</th><th>WR</th><th>Avg R</th><th>Net $</th></tr></thead>
+              <tbody>${_exitRows(d.be || [])}</tbody>
+            </table>
+          </div>
+          <div>
+            <table class="pq-bucket-table">
+              <thead><tr><th>Partial TP</th><th>n</th><th>WR</th><th>Avg R</th><th>Net $</th></tr></thead>
+              <tbody>${_exitRows(d.partial_tp || [])}</tbody>
+            </table>
+          </div>
+          <div style="grid-column: 1 / -1">
+            <table class="pq-bucket-table">
+              <thead><tr><th>Stale close</th><th>n</th><th>WR</th><th>Avg R</th><th>Net $</th></tr></thead>
+              <tbody>${_exitRows(d.stale || [])}</tbody>
+            </table>
+          </div>
+        </div>`;
+
+      // ----- 5) Data quality banner -----
+      dqEl.innerHTML = _pqDataQuality(d.data_quality);
+    }
+
+    let learningTimelineCache = { total_events_24h: 0, max_hourly: 1 };
+
+    async function fetchLearningTimeline() {
+      try {
+        const resp = await fetch('/api/learning/timeline');
+        if (!resp.ok) return;
+        learningTimelineCache = await resp.json();
+        renderLearningTimelineTile();
+      } catch (e) { /* swallow */ }
+    }
+
+    function renderLearningTimelineTile() {
+      const el = document.getElementById('learningTimeline');
+      if (!el) return;
+      const tl = learningTimelineCache;
+      if (!tl.timeline || !tl.timeline.length) {
+        el.innerHTML = '<p class="empty" style="padding:8px">No timeline data yet</p>';
+        return;
+      }
+      const maxDec = Math.max(1, ...tl.timeline.map(r => r.decisions));
+      const maxRev = Math.max(1, ...tl.timeline.map(r => r.reviews));
+      const maxProp = Math.max(1, ...tl.timeline.map(r => r.proposals));
+      // Bar color intensity: scale from 0.25 (bg) to 1.0 (full)
+      const barPct = (v, max) => Math.round((v / max) * 100);
+
+      const rows = tl.timeline.map(r => {
+        const pDec = barPct(r.decisions, maxDec);
+        const pRev = barPct(r.reviews, maxRev);
+        const pProp = barPct(r.proposals, maxProp);
+        return `<div class="tl-col" style="--td:${pDec};--tr:${pRev};--tp:${pProp}" title="Hour ${r.label}: ${r.decisions} decisions, ${r.reviews} reviews, ${r.proposals} proposals">
+          <div class="tl-bar tl-bar-dec" style="height:${pDec}%"></div>
+          <div class="tl-bar tl-bar-rev" style="height:${pRev}%"></div>
+          <div class="tl-bar tl-bar-prop" style="height:${pProp}%"></div>
+          <div class="tl-hr-label">${r.hour.slice(-2)}</div>
+        </div>`;
+      }).join('');
+
+      el.innerHTML = `<div class="tl-wrap">
+        <div class="tl-axis">
+          <span class="tl-ax-label" style="color:#2997ff">■ Dec</span>
+          <span class="tl-ax-label" style="color:#32d74b">■ Rev</span>
+          <span class="tl-ax-label" style="color:#bf5af2">■ Prop</span>
+          <span class="tl-ax-total">${tl.total_events_24h} events / 24h</span>
+        </div>
+        <div class="tl-grid">${rows}</div>
+      </div>`;
     }
 
     function renderLearning(data) {
@@ -2029,7 +3274,8 @@
             <table style="font-size:11px"><thead><tr><th>Mistake</th><th>Count</th></tr></thead><tbody>${mistRows||'<tr><td colspan=2 class=empty>none</td></tr>'}</tbody></table></div>
           <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Proposals (active / rejected)</div>
             <table style="font-size:11px"><thead><tr><th>Sym</th><th>Kind</th><th>Reason</th></tr></thead><tbody>${propRows||'<tr><td colspan=3 class=empty>none</td></tr>'}${rejRows}</tbody></table></div>
-        </div>`;
+        </div>
+        <div id="learningTimeline"></div>`;
     }
 
     function renderFastMode(data) {
@@ -2458,6 +3704,15 @@
       const cfg = data.config||{};
       const live = data.live_portfolio || {};
       try {
+        const eq = (data.account && data.account.equity != null) ? data.account.equity : (live.equity ?? null);
+        if (eq != null) {
+          const t = Date.now();
+          liveEquityBuffer.push({ ts: new Date(t).toISOString(), equity: Number(eq), event: "live" });
+          const cutoff = t - 6*60*1000;
+          while (liveEquityBuffer.length && new Date(liveEquityBuffer[0].ts).getTime() < cutoff) liveEquityBuffer.shift();
+        }
+      } catch (e) {}
+      try {
         drawChart(data.equity_curve||{}, live);
       } catch (err) {
         console.error("chart render failed", err);
@@ -2714,8 +3969,9 @@
         bootDone = true;
         firstLoad = false;
         await revealApp();
-        ensurePolling();
       }
+      ensurePolling();
+      if (bootDone) { fetchLearningTimeline(); fetchLivingParams(); fetchCliOverrides(true); }
     }
 
     function showOffline(msg) {
@@ -2762,22 +4018,119 @@
         }
       } finally {
         refreshInFlight = false;
-        ensurePolling();
       }
+      ensurePolling();
+      if (bootDone) {
+    fetchLearningTimeline();
+    fetchLivingParams();
+    // cli_overrides is server-cached for 5s and rarely mutates between restarts
+    if (!_coNextTickAt || Date.now() >= _coNextTickAt) {
+      _coNextTickAt = Date.now() + 20000;
+      fetchCliOverrides(false);
+    }
+        ensureLearningTimelinePolling();
+        ensureLivingParamsPolling();
+      }
+    }
+
+    // Start fetching learning timeline every 10s after boot
+    let _tlTimer = null;
+    let _lpTimer = null;
+
+    function ensureLivingParamsPolling() {
+      if (_lpTimer) return;
+      _lpTimer = setInterval(() => { fetchLivingParams(); }, 12000);
+    _coNextTickAt = Date.now() + 20000;
+    }
+
+    function ensureLearningTimelinePolling() {
+      if (_tlTimer) return;
+      _tlTimer = setInterval(() => { fetchLearningTimeline(); }, 10000);
     }
 
     // Boot setup is fault-isolated so a throw here cannot prevent the loader watchdog
     // (startLoaderWatchdog) or the first refresh() from arming — which would otherwise
     // leave the loading screen up forever.
-    try { setupNav(); } catch(e) { console.error("setupNav failed", e); }
-    try { initChartInteractions(); } catch(e) { console.error("initChartInteractions failed", e); }
-    document.getElementById("mobileRetryBtn")?.addEventListener("click", () => refresh(true));
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) refresh(true);
-    });
-    startLoaderWatchdog();
-    refresh();
-    window.addEventListener("resize", () => { if (equityCurveRaw) drawChart(equityCurveRaw, lastData?.live_portfolio); });
-  </script>
+    try { setupNav(); } catch(e) { console.error("setupNav failed", e); }      try { initChartInteractions(); } catch(e) { console.error("initChartInteractions failed", e); }
+      document.getElementById("mobileRetryBtn")?.addEventListener("click", () => refresh(true));
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) refresh(true);
+      });
+      startLoaderWatchdog();
+      refresh();
+      window.addEventListener("resize", () => { if (equityCurveRaw) drawChart(equityCurveRaw, lastData?.live_portfolio); });
+
+      // ---- Profit Quality SSE stream ----
+      // Server-pushed updates the moment a trade closes (or position_mgmt flag
+      // flips) instead of the operator waiting up to 2s for the next /api/state
+      // poll. Window.__pqSSEOwned is consulted by renderExtras() above to make
+      // the polling path the fallback so a stale read cannot race-overwrite a
+      // fresh server snapshot. EventSource auto-reconnects on transient drops.
+      (function connectProfitQualityStream() {
+        if (typeof EventSource === "undefined") {
+          if (typeof console !== "undefined") console.info("[pq-stream] EventSource unavailable; tile falls back to polling only");
+          return;
+        }
+        if (window.__pqEventSource) {
+          try { window.__pqEventSource.close(); } catch (e) { /* tolerate */ }
+        }
+        const setBadge = (text, color) => {
+          const card = document.getElementById("profitQualityCard");
+          if (!card) return;
+          let badge = document.getElementById("profitQualityLiveBadge");
+          if (!badge) {
+            const host = card.querySelector(".card-header") || card.firstElementChild || card;
+            badge = document.createElement("span");
+            badge.id = "profitQualityLiveBadge";
+            badge.className = "pq-live-badge";
+            host && host.appendChild(badge);
+          }
+          badge.textContent = text;
+          badge.style.color = color;
+        };
+        const ev = new EventSource("/api/profit_quality/stream");
+        window.__pqEventSource = ev;
+        setBadge("○ SSE connecting", "#9ca3af");
+        ev.addEventListener("open", () => {
+          // Set __pqSSEOwned=true on 'open' too (not just 'snapshot') so a
+          // reconnecting SSE takes over immediately and the 2s polling render
+          // can't race over fresh server pushes between 'error' clearing the
+          // flag and the next 'snapshot' setting it again.
+          window.__pqSSEOwned = true;
+          setBadge("● SSE live", "#34d399");
+        });
+        ev.addEventListener("snapshot", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            window.__pqSSEOwned = true;
+            window.__pqLastSnapshotTs = Date.now();
+          if (typeof renderProfitQuality === "function") renderProfitQuality(data);
+          if (typeof renderPayoffParadoxMeter === "function") renderPayoffParadoxMeter(data);
+          const hh = String(new Date().getHours()).padStart(2, "0");
+            const mm = String(new Date().getMinutes()).padStart(2, "0");
+            const ss = String(new Date().getSeconds()).padStart(2, "0");
+            setBadge(`● SSE live ${hh}:${mm}:${ss}`, "#34d399");
+          } catch (err) {
+            if (typeof console !== "undefined") console.warn("[pq-stream] snapshot parse failed", err);
+          }
+        });
+        ev.addEventListener("error", () => {
+          window.__pqSSEOwned = false;  // hand control back to the polling path
+          setBadge("○ SSE reconnecting", "#fbbf24");
+          // EventSource auto-reconnects on transient network errors. Do not close.
+        });
+        // First paint: parallel fetch so the tile isn't blank in the gap between
+        // EventSource open and the first server tick. If SSE already delivered a
+        // snapshot we don't paint — the SSE snapshot wins.
+        fetch("/api/profit_quality", { headers: { "Accept": "application/json" } })
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => {
+            if (!data || window.__pqSSEOwned) return;
+            if (typeof renderProfitQuality === "function") renderProfitQuality(data);
+            if (typeof renderPayoffParadoxMeter === "function") renderPayoffParadoxMeter(data);
+          })
+          .catch(() => { /* SSE will fill it in */ });
+      })();
+    </script>
 </body>
 </html>

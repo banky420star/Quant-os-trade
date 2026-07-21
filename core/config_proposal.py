@@ -16,6 +16,12 @@ from core.utils import utc_now_iso
 
 # --- Safety policy ---------------------------------------------------------
 
+# Hard cap on SL widening. The learning loop may never propose widening SL
+# beyond this value, and apply_learning_overrides enforces the same cap at
+# read-back time as defense-in-depth. Tune cautiously — wider SL reduces R:R
+# and can choke the verifier's risk/reward gate.
+MAX_SL_ATR = 2.0
+
 # Config paths the engine may never touch automatically.
 FORBIDDEN_PATHS = {
     ("execution", "default_lot"),
@@ -55,6 +61,11 @@ BOUNDED_TUNABLES: dict[tuple[str, ...], tuple[float, float]] = {
     ("trading", "strategy_entries", "entry_buffer_atr"): (-0.05, 0.05),
     ("trading", "trailing", "activation_atr_mult"): (-0.2, 0.2),
     ("trading", "break_even", "trigger_atr_mult"): (-0.2, 0.2),
+    # Payoff Paradox Meter (2026-07-20). Ratchet-only: never demote, max
+    # +0.1 step per proposal so the bot ratchets up slowly with operator
+    # review between cycles. is_dangerous() below ALSO rejects negative
+    # deltas for this path regardless of what BOUNDED_TUNABLES says.
+    ("trading", "exits", "min_r_multiple_win"): (0.0, 0.1),
 }
 
 MIN_TRADES_FOR_CAP_RELAX = 30
@@ -169,11 +180,20 @@ def propose_from_reviews(
                     risk_level="low", mode_required="shadow_apply", config=config,
                 ))
 
-        # SL too tight pattern -> widen SL
+        # SL too tight pattern -> widen SL (capped at MAX_SL_ATR)
         sl_tight = [r for r in rows if "sl_too_tight" in (r.get("mistake_categories") or [])]
         if len(sl_tight) >= min_sample:
             prev = _get_path(config, ("trading", "sl_tp", "sl_atr_mult")) or 0.5
             delta = _clamp_delta(("trading", "sl_tp", "sl_atr_mult"), 0.1)
+            if prev + delta > MAX_SL_ATR:
+                proposals.append(_build_proposal(
+                    symbol=symbol, kind="sl_too_tight_capped",
+                    reason=f"sl_too_tight x{len(sl_tight)} but SL already at {prev:.1f} ATR (cap={MAX_SL_ATR}). No further widening allowed.",
+                    evidence={"sample_size": len(sl_tight), "current_sl_atr_mult": prev,
+                              "max_sl_atr": MAX_SL_ATR, "reviewed_trades": reviewed},
+                    ops=[],                    risk_level="high", mode_required="shadow_apply", config=config,
+                ))
+                continue
             proposals.append(_build_proposal(
                 symbol=symbol, kind="sl_too_tight",
                 reason=f"{len(sl_tight)} losses stopped on small wiggles then reversed.",

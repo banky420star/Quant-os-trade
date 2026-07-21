@@ -59,9 +59,12 @@ def test_evaluation_attaches_management_profile(growth_profile):
     feat = {"price": 2400.0, "atr": 4.0, "volume_ratio": 1.1, "m5_trend": "bullish"}
     out = evaluate_candidate(_sample_signal(), feat, config)
     assert out.get("management_profile")
-    assert out["management_profile"]["break_even_trigger_r"] == pytest.approx(0.35)
+    # Wider scenario-fit defaults (tight 0.35R BE was the payoff killer).
+    assert out["management_profile"]["break_even_trigger_r"] >= 0.6
+    assert out.get("indicator_params") is not None
     assert out["execution_policy"]["entry_type"] in ("limit", "market")
     assert out["evaluation"]["policy_score"] > 0
+    assert out["evaluation"].get("scenario_key")
 
 
 def test_low_score_marks_skip(growth_profile):
@@ -69,9 +72,18 @@ def test_low_score_marks_skip(growth_profile):
 
     config = load_config()
     config["evaluation"]["skip_below_score"] = 99
-    feat = {"price": 2400.0, "atr": 4.0, "volume_ratio": 0.5}
+    # Non-gold: gold is never-rejectable and would force execute
+    feat = {"price": 1.1, "atr": 0.001, "volume_ratio": 0.5}
     out = evaluate_candidate(
-        _sample_signal(within_reach=False, distance_atr=2.5, entry_quality=20),
+        _sample_signal(
+            symbol="EURUSDm",
+            within_reach=False,
+            distance_atr=2.5,
+            entry_quality=20,
+            entry=1.10,
+            sl=1.09,
+            tp1=1.12,
+        ),
         feat,
         config,
     )
@@ -108,7 +120,8 @@ def test_evaluate_batch_splits_skipped(growth_profile):
 def test_rollover_session_bias_is_cautious():
     bias = session_entry_bias("rollover")
     assert bias["entry_type"] == "limit"
-    assert bias["break_even_trigger_r"] == pytest.approx(0.35)
+    assert bias["break_even_trigger_r"] >= 0.6
+    assert bias["max_hold_minutes"] <= 30
 
 
 def test_policy_score_penalizes_weak_volume():
@@ -142,6 +155,31 @@ def test_recent_cold_streak_skips_symbol(growth_profile):
     )
     assert out["evaluation"]["action"] == "skip"
     assert "recent_cold_symbol" in out["evaluation"]["reason"]
+
+
+def test_setup_blocklist_skips_trend_continuation(growth_profile):
+    from core.utils import load_config
+
+    config = load_config()
+    config["evaluation"]["setup_blocklist"] = ["trend_continuation"]
+    config["evaluation"]["symbol_blocklist"] = []
+    # Non-gold: XAU never-rejectable would force execute even on blocked setup
+    feat = {"price": 1.1, "atr": 0.001, "volume_ratio": 1.2, "m5_trend": "bullish"}
+    out = evaluate_candidate(
+        _sample_signal(
+            symbol="EURUSDm",
+            setup_type="trend_continuation",
+            within_reach=True,
+            distance_atr=0.2,
+            entry=1.10,
+            sl=1.09,
+            tp1=1.12,
+        ),
+        feat,
+        config,
+    )
+    assert out["evaluation"]["action"] == "skip"
+    assert "setup_blocklist" in out["evaluation"]["reason"]
 
 
 def test_symbol_blocklist_skips(growth_profile):

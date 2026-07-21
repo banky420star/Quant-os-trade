@@ -40,21 +40,23 @@ def _pick_entry_type(
 
 
 def _build_management_profile(session_bias: dict[str, Any], entry_type: str) -> dict[str, Any]:
+    """Legacy builder — prefer scenario_management_recipe for new paths."""
     return {
         "entry_type": entry_type,
         "limit_offset_atr": float(session_bias.get("limit_offset_atr") or 0.1),
         "sl_model": "structure_atr",
         "sl_atr_mult": float(session_bias.get("sl_atr_mult") or 1.15),
         "tp_model": "rr",
-        "tp1_r": float(session_bias.get("tp1_r") or 0.95),
-        "tp2_r": float(session_bias.get("tp2_r") or 1.25),
+        # Wider defaults: tight BE/trail was the live payoff killer (WR high, $ net neg).
+        "tp1_r": float(session_bias.get("tp1_r") or 1.2),
+        "tp2_r": float(session_bias.get("tp2_r") or 1.7),
         "break_even_enabled": True,
-        "break_even_trigger_r": float(session_bias.get("break_even_trigger_r") or 0.4),
-        "break_even_lock_r": 0.05,
+        "break_even_trigger_r": float(session_bias.get("break_even_trigger_r") or 0.75),
+        "break_even_lock_r": float(session_bias.get("break_even_lock_r") or 0.2),
         "trailing_enabled": True,
-        "trail_start_r": float(session_bias.get("trail_start_r") or 0.65),
-        "trail_atr_mult": float(session_bias.get("trail_atr_mult") or 0.43),
-        "max_hold_minutes": int(session_bias.get("max_hold_minutes") or 20),
+        "trail_start_r": float(session_bias.get("trail_start_r") or 1.0),
+        "trail_atr_mult": float(session_bias.get("trail_atr_mult") or 0.5),
+        "max_hold_minutes": int(session_bias.get("max_hold_minutes") or 35),
         "cancel_if_not_filled_seconds": int(session_bias.get("cancel_if_not_filled_seconds") or 110),
     }
 
@@ -160,6 +162,37 @@ def evaluate_candidate(
         session_bias=session_bias,
     )
 
+    # Regime-aware score bias: preferred setups in this market get a small lift;
+    # demoted / untradeable regimes tighten or skip.
+    regime_eff: dict[str, Any] = {}
+    try:
+        from core.regime_evolution import (
+            effective_regime_settings,
+            regime_evolution_enabled,
+        )
+
+        if regime_evolution_enabled(config):
+            mc = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+            mr = mc.get("market_regime") if isinstance(mc.get("market_regime"), dict) else {}
+            regime_label = mr.get("primary") or mc.get("regime")
+            regime_eff = effective_regime_settings(
+                config,
+                symbol=str(symbol),
+                regime=regime_label,
+                setup=setup,
+            )
+            if regime_eff.get("setup_preferred"):
+                score += 4.0
+                reason_parts.append(f"regime_preferred:{regime_eff.get('regime')}")
+            if regime_eff.get("setup_demoted"):
+                score -= 8.0
+                reason_parts.append(f"regime_demoted:{regime_eff.get('regime')}")
+            if regime_eff.get("skip"):
+                score -= 25.0
+                reason_parts.append(f"regime_skip:{regime_eff.get('regime')}")
+    except Exception:
+        regime_eff = {}
+
     skip_below = float(cfg.get("skip_below_score") or 25)
     min_score = float(cfg.get("min_policy_score") or 35)
     action = "execute"
@@ -167,6 +200,11 @@ def evaluate_candidate(
         action = "skip"
     elif score < min_score:
         action = "skip"
+
+    if regime_eff.get("skip") and action != "skip":
+        action = "skip"
+        if f"regime_skip:{regime_eff.get('regime')}" not in reason_parts:
+            reason_parts.append(f"regime_skip:{regime_eff.get('regime')}")
 
     # --- Profit-protection gates (USER-AUTHORIZED 2026-07-08) ---
     # These block negative-edge trades the score alone was too lenient to catch.
@@ -178,6 +216,11 @@ def evaluate_candidate(
     if str(symbol) in blocklist:
         action = "skip"
         reason_parts.append(f"symbol_blocklist:{symbol}")
+
+    setup_blocklist = list(cfg.get("setup_blocklist") or [])
+    if setup in setup_blocklist:
+        action = "skip"
+        reason_parts.append(f"setup_blocklist:{setup}")
 
     # (2) Recent cold-streak circuit breaker: a symbol that lost its last N
     #     closes (win_rate < cold_wr) is skipped regardless of entry quality.
@@ -209,7 +252,43 @@ def evaluate_candidate(
         action = "skip"
         reason_parts.append("limit_unreachable")
 
-    mgmt = _build_management_profile(session_bias, entry_type)
+    # USER 2026-07-15: gold quality bypass only — never override structural skips
+    # (blocklist / cold / global-edge). Review bug: prior code forced execute even
+    # when XAU or setup was on an operator blocklist.
+    try:
+        from core.gold_policy import gold_force_pass
+
+        if gold_force_pass(str(symbol), config) and action == "skip":
+            structural = any(
+                r.startswith("symbol_blocklist:")
+                or r.startswith("setup_blocklist:")
+                or r.startswith("recent_cold_symbol_")
+                or r.startswith("global_edge_cold_")
+                for r in reason_parts
+            )
+            if not structural:
+                action = "execute"
+                reason_parts.append("gold_never_rejectable_force_execute")
+                if signal.get("within_reach") is False:
+                    entry_type = "market"
+    except Exception:
+        pass
+
+    # Scenario-fit recipe: which settings fit *this symbol + regime + session now*
+    # (not a global "best strategy"). Ghost promotions override when trusted.
+    try:
+        from core.trade_manager import (
+            scenario_management_recipe,
+            snapshot_indicators,
+        )
+
+        mgmt = scenario_management_recipe(signal, config, session_bias=session_bias)
+        mgmt["entry_type"] = entry_type
+        indicator_params = snapshot_indicators(feat)
+    except Exception:
+        mgmt = _build_management_profile(session_bias, entry_type)
+        indicator_params = {}
+
     out = dict(signal)
     out["evaluation"] = {
         "action": action,
@@ -218,14 +297,25 @@ def evaluate_candidate(
         "mode": evaluation_mode(config),
         "reason": "; ".join(reason_parts),
         "recent_symbol_stats": recent,
+        "scenario_key": mgmt.get("scenario_key"),
+        "recipe_source": mgmt.get("source"),
+        "regime": (regime_eff or {}).get("regime"),
+        "regime_source": (regime_eff or {}).get("source"),
+        "regime_min_confidence": (regime_eff or {}).get("min_confidence"),
+        "regime_min_risk_reward": (regime_eff or {}).get("min_risk_reward"),
     }
     out["execution_policy"] = {
         "action": action,
         "entry_type": entry_type,
-        "entry_offset_atr": mgmt["limit_offset_atr"] if entry_type == "limit" else 0.0,
+        "entry_offset_atr": float(mgmt.get("limit_offset_atr") or 0.0) if entry_type == "limit" else 0.0,
         "confidence_adjusted": int(min(99, max(0, (signal.get("confidence") or 50) + int((score - 50) / 5)))),
+        "sl_atr_mult": mgmt.get("sl_atr_mult"),
+        "tp1_r": mgmt.get("tp1_r"),
+        "tp2_r": mgmt.get("tp2_r"),
     }
     out["management_profile"] = mgmt
+    # Logged for trade_manager ghost experiments / later promotion.
+    out["indicator_params"] = indicator_params
     if action == "skip":
         log.info(
             "Evaluation skip %s %s score=%.1f — %s",
@@ -236,13 +326,15 @@ def evaluate_candidate(
         )
     else:
         log.info(
-            "Evaluation %s %s → %s score=%.1f BE=%.2fR trail=%.2fR",
+            "Evaluation %s %s → %s score=%.1f BE=%.2fR trail=%.2fR scenario=%s src=%s",
             symbol,
             signal.get("side"),
             entry_type,
             score,
-            mgmt["break_even_trigger_r"],
-            mgmt["trail_start_r"],
+            float(mgmt.get("break_even_trigger_r") or 0),
+            float(mgmt.get("trail_start_r") or 0),
+            mgmt.get("scenario_key"),
+            mgmt.get("source"),
         )
     return out
 

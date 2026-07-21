@@ -56,6 +56,7 @@ except ImportError:
 
 from core.mt5_connection_manager import MT5ConnectionManager  # noqa: E402
 from core.position_sync import _setup_type_from_comment  # noqa: E402
+from core.session_scorer import resolve_trading_session  # noqa: E402
 from core.symbol_manager import broker_symbol, logical_symbol  # noqa: E402
 from core.trade_journal import (  # noqa: E402
     build_organized_index,
@@ -141,6 +142,17 @@ def _summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_R": avg_r,
         "expectancy_R": avg_r,
     }
+
+
+def _parse_hour(iso_str: str | None) -> int | None:
+    """Extract UTC hour from an ISO timestamp string."""
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        return dt.hour
+    except (ValueError, TypeError):
+        return None
 
 
 def _session_trades(
@@ -443,7 +455,7 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
             "market_intent": mc.get("market_intent") or t.get("market_intent"),
             "regime_primary": mr.get("primary") or mc.get("regime"),
             "regime_bias": mr.get("bias"),
-            "session": mc.get("session"),
+            "session": mc.get("session") or (resolve_trading_session(_parse_hour(opened_at)) if opened_at else "unknown"),
             "phase": mc.get("phase"),
             "move_type": mc.get("move_type") or t.get("move_type"),
             "tags": mr.get("tags"),

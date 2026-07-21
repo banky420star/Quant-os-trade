@@ -51,8 +51,8 @@ def _is_win(t: dict[str, Any]) -> bool:
 
 def _recent_closed_trades(limit: int) -> list[dict[str, Any]]:
     """Most-recent-first closed trades from trade_log (falls back to paper_trades)."""
-    tl = read_json_state("trade_log.json", default={}) or {}
-    trades = list(tl.get("trades") or [])
+    tl = read_json_state("trade_log.json", default=[]) or []
+    trades = list(tl if isinstance(tl, list) else (tl or {}).get("trades") or [])
     if not trades:
         pt = read_json_state("paper_trades.json", default={"trades": []}) or {}
         trades = list(pt.get("trades") or [])
@@ -130,21 +130,82 @@ def compute_adaptive_gates(config: dict[str, Any]) -> dict[str, Any]:
     cautious_wr = float(cfg.get("cautious_win_rate", 40))
     defensive_wr = float(cfg.get("defensive_win_rate", 28))
     defensive_streak = int(cfg.get("defensive_consecutive", 4))
+    # Net-PnL gates (2026-07-15): live book had 67% WR with net=-20 — WR-only
+    # gates stayed "normal" while the account bled. Expectancy is the real signal.
+    cautious_net = float(cfg.get("cautious_net_pnl", -5.0))
+    defensive_net = float(cfg.get("defensive_net_pnl", -15.0))
+    # Auto-block symbols with deep net loss in the lookback (not just streak).
+    symbol_net_block = float(cfg.get("symbol_net_block_pnl", -8.0))
+    symbol_net_min_n = int(cfg.get("symbol_net_block_min_n", 5))
+    for sym, rows in by_sym.items():
+        if len(rows) < symbol_net_min_n:
+            continue
+        sym_net = 0.0
+        for t in rows:
+            try:
+                sym_net += float(t.get("pnl") or 0)
+            except (TypeError, ValueError):
+                pass
+        if sym_net <= symbol_net_block:
+            blocked.add(sym)
+
+    # Gold never auto-paused — re-strip AFTER streak + net-block (review bug).
+    try:
+        from core.gold_policy import is_gold_symbol, gold_never_rejectable
+
+        if gold_never_rejectable(config):
+            blocked = {s for s in blocked if not is_gold_symbol(s)}
+    except Exception:
+        pass
+
     tight_cautious_score = float(cfg.get("tighten_cautious_score", 10))
     tight_defensive_score = float(cfg.get("tighten_defensive_score", 20))
     tight_cautious_conf = float(cfg.get("tighten_cautious_conf", 5))
     tight_defensive_conf = float(cfg.get("tighten_defensive_conf", 10))
 
-    if n >= min_sample and (win_rate < defensive_wr or consec >= defensive_streak):
+    # Payoff ratio (avg_win / |avg_loss|) — high WR with tiny wins is still toxic.
+    win_pnls = []
+    loss_pnls = []
+    for t in trades:
+        try:
+            p = float(t.get("pnl") or 0)
+        except (TypeError, ValueError):
+            continue
+        if p > 0:
+            win_pnls.append(p)
+        elif p < 0:
+            loss_pnls.append(p)
+    avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else 0.0
+    avg_loss = sum(loss_pnls) / len(loss_pnls) if loss_pnls else 0.0
+    payoff = abs(avg_win / avg_loss) if avg_loss != 0 else None
+    weak_payoff = float(cfg.get("weak_payoff_ratio", 0.6))
+    defensive_payoff = float(cfg.get("defensive_payoff_ratio", 0.4))
+
+    if n >= min_sample and (
+        win_rate < defensive_wr
+        or consec >= defensive_streak
+        or net <= defensive_net
+        or (payoff is not None and payoff < defensive_payoff and win_rate >= 50)
+    ):
         tier = "defensive"
         min_score = base_min_score + tight_defensive_score
         min_conf = base_min_conf + tight_defensive_conf
-        reason = f"defensive win={win_rate:.0f}% consec={consec} net={net:.2f}"
-    elif n >= min_sample and win_rate < cautious_wr:
+        reason = (
+            f"defensive win={win_rate:.0f}% consec={consec} net={net:.2f}"
+            f" payoff={payoff if payoff is not None else 'n/a'}"
+        )
+    elif n >= min_sample and (
+        win_rate < cautious_wr
+        or net <= cautious_net
+        or (payoff is not None and payoff < weak_payoff and win_rate >= 55)
+    ):
         tier = "cautious"
         min_score = base_min_score + tight_cautious_score
         min_conf = base_min_conf + tight_cautious_conf
-        reason = f"cautious win={win_rate:.0f}% net={net:.2f}"
+        reason = (
+            f"cautious win={win_rate:.0f}% net={net:.2f}"
+            f" payoff={payoff if payoff is not None else 'n/a'}"
+        )
     else:
         tier = "normal"
         min_score = base_min_score
@@ -160,6 +221,9 @@ def compute_adaptive_gates(config: dict[str, Any]) -> dict[str, Any]:
         "lookback_n": n,
         "recent_win_rate_pct": round(win_rate, 1),
         "recent_net_pnl": round(net, 2),
+        "recent_payoff_ratio": round(payoff, 4) if payoff is not None else None,
+        "avg_win": round(avg_win, 4),
+        "avg_loss": round(avg_loss, 4),
         "consecutive_losses": consec,
         "reason": reason,
         "timestamp": utc_now_iso(),

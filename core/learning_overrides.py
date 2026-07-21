@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.config_proposal import apply_patch_to_config, is_dangerous
+from core.config_proposal import MAX_SL_ATR, apply_patch_to_config, is_dangerous
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
 OVERRIDES_FILE = "learning_config_overrides.json"
@@ -30,6 +30,10 @@ def apply_learning_overrides(config: dict[str, Any]) -> tuple[dict[str, Any], li
 
     Re-checks the safety policy at read-back time so a corrupted/tampered patch
     file can never bypass the guard.
+
+    Also enforces a hard cap on sl_atr_mult (see MAX_SL_ATR in
+    core.config_proposal) so the learning loop can never widen SL beyond
+    this threshold through accumulated patches.
     """
     patches = active_patches()
     if not patches:
@@ -45,6 +49,10 @@ def apply_learning_overrides(config: dict[str, Any]) -> tuple[dict[str, Any], li
             rollback_patch(entry.get("proposal_id"), f"unsafe_at_readback:{why}")
             continue
         merged = apply_patch_to_config(merged, patch)
+        # Enforce hard SL cap on the resolved config after each patch
+        current_sl = merged.get("trading", {}).get("sl_tp", {}).get("sl_atr_mult")
+        if current_sl is not None and float(current_sl) > MAX_SL_ATR:
+            merged["trading"]["sl_tp"]["sl_atr_mult"] = MAX_SL_ATR
         applied.append(entry.get("proposal_id"))
     return merged, applied
 
