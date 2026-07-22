@@ -1,0 +1,573 @@
+{
+  "capital_usd": 80.0,
+  "cost_r": 0.15,
+  "step": 10,
+  "min_trades": 30,
+  "common_window": {
+    "start": "2025-10-09 17:15:00+00:00",
+    "end": "2026-06-26 20:55:00+00:00"
+  },
+  "splits": [
+    {
+      "fold": 0,
+      "train_start": "2025-10-09 17:15:00+00:00",
+      "train_end": "2025-11-24 05:53:29.999999999+00:00",
+      "test_start": "2025-11-24 05:53:29.999999999+00:00",
+      "test_end": "2025-12-13 18:09:59.999999999+00:00"
+    },
+    {
+      "fold": 1,
+      "train_start": "2025-10-09 17:15:00+00:00",
+      "train_end": "2026-01-08 18:31:59.999999999+00:00",
+      "test_start": "2026-01-08 18:31:59.999999999+00:00",
+      "test_end": "2026-01-28 06:48:29.999999999+00:00"
+    },
+    {
+      "fold": 2,
+      "train_start": "2025-10-09 17:15:00+00:00",
+      "train_end": "2026-02-23 07:10:29.999999998+00:00",
+      "test_start": "2026-02-23 07:10:29.999999998+00:00",
+      "test_end": "2026-03-14 19:26:59.999999998+00:00"
+    },
+    {
+      "fold": 3,
+      "train_start": "2025-10-09 17:15:00+00:00",
+      "train_end": "2026-04-09 19:48:59.999999998+00:00",
+      "test_start": "2026-04-09 19:48:59.999999998+00:00",
+      "test_end": "2026-04-29 08:05:29.999999998+00:00"
+    }
+  ],
+  "results": [
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 20,
+      "win_rate_pct": 40.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": -0.15,
+      "profit_factor": 1.0,
+      "max_drawdown_r": 4.5,
+      "ci95": [
+        -0.5,
+        0.5
+      ],
+      "sum_r": 0.0,
+      "gross_win_r": 12.0,
+      "gross_loss_r": 12.0,
+      "final_equity": 81.43,
+      "signals_generated": 910,
+      "signals_approved": 22
+    },
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 20,
+      "win_rate_pct": 15.0,
+      "expectancy_r": -0.625,
+      "expectancy_net_r": -0.775,
+      "profit_factor": 0.265,
+      "max_drawdown_r": 12.5,
+      "ci95": [
+        -1.0,
+        -0.25
+      ],
+      "sum_r": -12.5,
+      "gross_win_r": 4.5,
+      "gross_loss_r": 17.0,
+      "final_equity": 77.74,
+      "signals_generated": 766,
+      "signals_approved": 22
+    },
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 19,
+      "win_rate_pct": 31.6,
+      "expectancy_r": -0.2105,
+      "expectancy_net_r": -0.3605,
+      "profit_factor": 0.692,
+      "max_drawdown_r": 7.0,
+      "ci95": [
+        -0.7368,
+        0.3158
+      ],
+      "sum_r": -4.0,
+      "gross_win_r": 9.0,
+      "gross_loss_r": 13.0,
+      "final_equity": 79.3,
+      "signals_generated": 879,
+      "signals_approved": 21
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 17,
+      "win_rate_pct": 52.9,
+      "expectancy_r": 0.3235,
+      "expectancy_net_r": 0.1735,
+      "profit_factor": 1.688,
+      "max_drawdown_r": 4.0,
+      "ci95": [
+        -0.2647,
+        0.9118
+      ],
+      "sum_r": 5.5,
+      "gross_win_r": 13.5,
+      "gross_loss_r": 8.0,
+      "final_equity": 82.2,
+      "signals_generated": 732,
+      "signals_approved": 19
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 15,
+      "win_rate_pct": 33.3,
+      "expectancy_r": -0.1667,
+      "expectancy_net_r": -0.3167,
+      "profit_factor": 0.75,
+      "max_drawdown_r": 4.0,
+      "ci95": [
+        -0.6667,
+        0.5
+      ],
+      "sum_r": -2.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 10.0,
+      "final_equity": 81.09,
+      "signals_generated": 625,
+      "signals_approved": 17
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 20,
+      "win_rate_pct": 40.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": -0.15,
+      "profit_factor": 1.0,
+      "max_drawdown_r": 8.0,
+      "ci95": [
+        -0.5,
+        0.5
+      ],
+      "sum_r": 0.0,
+      "gross_win_r": 12.0,
+      "gross_loss_r": 12.0,
+      "final_equity": 80.07,
+      "signals_generated": 713,
+      "signals_approved": 22
+    },
+    {
+      "fold": 1,
+      "window": "train",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 17,
+      "win_rate_pct": 35.3,
+      "expectancy_r": -0.1176,
+      "expectancy_net_r": -0.2676,
+      "profit_factor": 0.818,
+      "max_drawdown_r": 5.0,
+      "ci95": [
+        -0.7059,
+        0.4706
+      ],
+      "sum_r": -2.0,
+      "gross_win_r": 9.0,
+      "gross_loss_r": 11.0,
+      "final_equity": 77.03,
+      "signals_generated": 911,
+      "signals_approved": 19
+    },
+    {
+      "fold": 1,
+      "window": "train",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 29,
+      "win_rate_pct": 41.4,
+      "expectancy_r": 0.0345,
+      "expectancy_net_r": -0.1155,
+      "profit_factor": 1.059,
+      "max_drawdown_r": 6.0,
+      "ci95": [
+        -0.3966,
+        0.4655
+      ],
+      "sum_r": 1.0,
+      "gross_win_r": 18.0,
+      "gross_loss_r": 17.0,
+      "final_equity": 79.71,
+      "signals_generated": 788,
+      "signals_approved": 29
+    },
+    {
+      "fold": 1,
+      "window": "train",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 22,
+      "win_rate_pct": 36.4,
+      "expectancy_r": -0.0909,
+      "expectancy_net_r": -0.2409,
+      "profit_factor": 0.857,
+      "max_drawdown_r": 7.0,
+      "ci95": [
+        -0.5455,
+        0.3636
+      ],
+      "sum_r": -2.0,
+      "gross_win_r": 12.0,
+      "gross_loss_r": 14.0,
+      "final_equity": 79.8,
+      "signals_generated": 890,
+      "signals_approved": 23
+    },
+    {
+      "fold": 1,
+      "window": "test",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 12,
+      "win_rate_pct": 33.3,
+      "expectancy_r": -0.1667,
+      "expectancy_net_r": -0.3167,
+      "profit_factor": 0.75,
+      "max_drawdown_r": 3.0,
+      "ci95": [
+        -0.7917,
+        0.4583
+      ],
+      "sum_r": -2.0,
+      "gross_win_r": 6.0,
+      "gross_loss_r": 8.0,
+      "final_equity": 82.46,
+      "signals_generated": 644,
+      "signals_approved": 14
+    },
+    {
+      "fold": 1,
+      "window": "test",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 11,
+      "win_rate_pct": 45.5,
+      "expectancy_r": 0.1364,
+      "expectancy_net_r": -0.0136,
+      "profit_factor": 1.25,
+      "max_drawdown_r": 2.0,
+      "ci95": [
+        -0.5455,
+        0.8182
+      ],
+      "sum_r": 1.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 6.0,
+      "final_equity": 82.89,
+      "signals_generated": 548,
+      "signals_approved": 13
+    },
+    {
+      "fold": 1,
+      "window": "test",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 11,
+      "win_rate_pct": 72.7,
+      "expectancy_r": 0.8182,
+      "expectancy_net_r": 0.6682,
+      "profit_factor": 4.0,
+      "max_drawdown_r": 1.0,
+      "ci95": [
+        0.1364,
+        1.5
+      ],
+      "sum_r": 9.0,
+      "gross_win_r": 12.0,
+      "gross_loss_r": 3.0,
+      "final_equity": 82.6,
+      "signals_generated": 625,
+      "signals_approved": 13
+    },
+    {
+      "fold": 2,
+      "window": "train",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 16,
+      "win_rate_pct": 31.2,
+      "expectancy_r": -0.2187,
+      "expectancy_net_r": -0.3687,
+      "profit_factor": 0.682,
+      "max_drawdown_r": 3.5,
+      "ci95": [
+        -0.6875,
+        0.4063
+      ],
+      "sum_r": -3.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 11.0,
+      "final_equity": 74.51,
+      "signals_generated": 879,
+      "signals_approved": 18
+    },
+    {
+      "fold": 2,
+      "window": "train",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 22,
+      "win_rate_pct": 45.5,
+      "expectancy_r": 0.1364,
+      "expectancy_net_r": -0.0136,
+      "profit_factor": 1.25,
+      "max_drawdown_r": 4.5,
+      "ci95": [
+        -0.3182,
+        0.7045
+      ],
+      "sum_r": 3.0,
+      "gross_win_r": 15.0,
+      "gross_loss_r": 12.0,
+      "final_equity": 77.98,
+      "signals_generated": 720,
+      "signals_approved": 24
+    },
+    {
+      "fold": 2,
+      "window": "train",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 17,
+      "win_rate_pct": 35.3,
+      "expectancy_r": -0.1176,
+      "expectancy_net_r": -0.2676,
+      "profit_factor": 0.818,
+      "max_drawdown_r": 4.0,
+      "ci95": [
+        -0.7059,
+        0.4706
+      ],
+      "sum_r": -2.0,
+      "gross_win_r": 9.0,
+      "gross_loss_r": 11.0,
+      "final_equity": 79.35,
+      "signals_generated": 838,
+      "signals_approved": 19
+    },
+    {
+      "fold": 2,
+      "window": "test",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 16,
+      "win_rate_pct": 43.8,
+      "expectancy_r": 0.0938,
+      "expectancy_net_r": -0.0562,
+      "profit_factor": 1.167,
+      "max_drawdown_r": 5.0,
+      "ci95": [
+        -0.5312,
+        0.7188
+      ],
+      "sum_r": 1.5,
+      "gross_win_r": 10.5,
+      "gross_loss_r": 9.0,
+      "final_equity": 82.07,
+      "signals_generated": 704,
+      "signals_approved": 20
+    },
+    {
+      "fold": 2,
+      "window": "test",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 15,
+      "win_rate_pct": 46.7,
+      "expectancy_r": 0.1667,
+      "expectancy_net_r": 0.0167,
+      "profit_factor": 1.313,
+      "max_drawdown_r": 3.0,
+      "ci95": [
+        -0.5,
+        0.8333
+      ],
+      "sum_r": 2.5,
+      "gross_win_r": 10.5,
+      "gross_loss_r": 8.0,
+      "final_equity": 87.02,
+      "signals_generated": 586,
+      "signals_approved": 17
+    },
+    {
+      "fold": 2,
+      "window": "test",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 14,
+      "win_rate_pct": 35.7,
+      "expectancy_r": -0.1071,
+      "expectancy_net_r": -0.2571,
+      "profit_factor": 0.833,
+      "max_drawdown_r": 6.0,
+      "ci95": [
+        -0.6429,
+        0.6071
+      ],
+      "sum_r": -1.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 9.0,
+      "final_equity": 80.14,
+      "signals_generated": 676,
+      "signals_approved": 16
+    },
+    {
+      "fold": 3,
+      "window": "train",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 19,
+      "win_rate_pct": 26.3,
+      "expectancy_r": -0.3421,
+      "expectancy_net_r": -0.4921,
+      "profit_factor": 0.536,
+      "max_drawdown_r": 8.5,
+      "ci95": [
+        -0.7368,
+        0.1842
+      ],
+      "sum_r": -6.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 14.0,
+      "final_equity": 70.84,
+      "signals_generated": 875,
+      "signals_approved": 21
+    },
+    {
+      "fold": 3,
+      "window": "train",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 15,
+      "win_rate_pct": 26.7,
+      "expectancy_r": -0.3333,
+      "expectancy_net_r": -0.4833,
+      "profit_factor": 0.545,
+      "max_drawdown_r": 8.0,
+      "ci95": [
+        -0.8333,
+        0.3333
+      ],
+      "sum_r": -5.0,
+      "gross_win_r": 6.0,
+      "gross_loss_r": 11.0,
+      "final_equity": 76.82,
+      "signals_generated": 719,
+      "signals_approved": 17
+    },
+    {
+      "fold": 3,
+      "window": "train",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 17,
+      "win_rate_pct": 29.4,
+      "expectancy_r": -0.2647,
+      "expectancy_net_r": -0.4147,
+      "profit_factor": 0.625,
+      "max_drawdown_r": 7.0,
+      "ci95": [
+        -0.7059,
+        0.3235
+      ],
+      "sum_r": -4.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 12.0,
+      "final_equity": 78.81,
+      "signals_generated": 827,
+      "signals_approved": 19
+    },
+    {
+      "fold": 3,
+      "window": "test",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 17,
+      "win_rate_pct": 35.3,
+      "expectancy_r": -0.1176,
+      "expectancy_net_r": -0.2676,
+      "profit_factor": 0.818,
+      "max_drawdown_r": 5.5,
+      "ci95": [
+        -0.7059,
+        0.4706
+      ],
+      "sum_r": -2.0,
+      "gross_win_r": 9.0,
+      "gross_loss_r": 11.0,
+      "final_equity": 77.69,
+      "signals_generated": 679,
+      "signals_approved": 21
+    },
+    {
+      "fold": 3,
+      "window": "test",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 19,
+      "win_rate_pct": 26.3,
+      "expectancy_r": -0.3421,
+      "expectancy_net_r": -0.4921,
+      "profit_factor": 0.536,
+      "max_drawdown_r": 8.5,
+      "ci95": [
+        -0.7368,
+        0.1842
+      ],
+      "sum_r": -6.5,
+      "gross_win_r": 7.5,
+      "gross_loss_r": 14.0,
+      "final_equity": 74.19,
+      "signals_generated": 567,
+      "signals_approved": 20
+    },
+    {
+      "fold": 3,
+      "window": "test",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 17,
+      "win_rate_pct": 35.3,
+      "expectancy_r": -0.1176,
+      "expectancy_net_r": -0.2676,
+      "profit_factor": 0.818,
+      "max_drawdown_r": 5.0,
+      "ci95": [
+        -0.7059,
+        0.4706
+      ],
+      "sum_r": -2.0,
+      "gross_win_r": 9.0,
+      "gross_loss_r": 11.0,
+      "final_equity": 79.93,
+      "signals_generated": 652,
+      "signals_approved": 19
+    }
+  ],
+  "candidates": [],
+  "compounding": {},
+  "note": "Reported in R-multiples (capital-independent). expectancy_net_r applies a per-trade cost stand-in for spread+slippage+commission. No verdict is drawn below min_trades. This is measurement only \u2014 no live trades placed."
+}

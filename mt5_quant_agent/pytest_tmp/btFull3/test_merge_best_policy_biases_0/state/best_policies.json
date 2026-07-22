@@ -1,0 +1,1 @@
+{"policies": {"XAUUSDm|pullback|rollover": {"entry_type": "market", "policy_score": 70.0, "sample_n": 20, "gate": "suggest", "management_profile": {"entry_type": "market", "break_even_trigger_r": 0.55, "trail_start_r": 0.8}}}}

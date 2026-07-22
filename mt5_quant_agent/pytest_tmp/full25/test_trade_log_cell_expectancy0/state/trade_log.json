@@ -1,0 +1,32 @@
+{
+  "trades": [
+    {
+      "trade_id": "t1",
+      "symbol": "XAUUSDm",
+      "setup": "pullback",
+      "side": "BUY",
+      "session": "tokyo",
+      "regime_primary": "strong_trend",
+      "regime_bias": "bullish",
+      "result": "win",
+      "won": true,
+      "r_multiple": 1.2,
+      "pnl": 2.5,
+      "culturing_cell": "pullback|strong_trend|align|tokyo"
+    },
+    {
+      "trade_id": "t2",
+      "symbol": "USOILm",
+      "setup": "pullback",
+      "side": "SELL",
+      "session": "tokyo",
+      "regime_primary": "weak_trend",
+      "regime_bias": "bearish",
+      "result": "loss",
+      "won": false,
+      "r_multiple": -1.0,
+      "pnl": -1.0,
+      "culturing_cell": "pullback|weak_trend|align|tokyo"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "deployed": true,
+  "weights": {
+    "trend_engine": 0.22
+  },
+  "per_symbol": {
+    "XAUUSDm": {
+      "weights": {
+        "trend_engine": 0.31,
+        "structure_engine": 0.19
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "cells": {
+    "XAUUSDm": {
+      "bad|range|counter|asia": {
+        "n": 10,
+        "expectancy_net_r": -0.2
+      },
+      "good|trend|align|london_open": {
+        "n": 10,
+        "expectancy_net_r": 0.3
+      }
+    }
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "capital_usd": 80.0,
+  "cost_r": 0.15,
+  "step": 10,
+  "min_trades": 40,
+  "common_window": {
+    "start": "2025-10-09 17:15:00+00:00",
+    "end": "2026-06-26 20:55:00+00:00"
+  },
+  "splits": [
+    {
+      "fold": 0,
+      "train_start": "2025-10-09 17:15:00+00:00",
+      "train_end": "2026-04-09 19:48:59.999999998+00:00",
+      "test_start": "2026-04-09 19:48:59.999999998+00:00",
+      "test_end": "2026-06-26 20:55:00+00:00"
+    }
+  ],
+  "results": [
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 33,
+      "win_rate_pct": 51.5,
+      "expectancy_r": 0.2879,
+      "expectancy_net_r": 0.1379,
+      "profit_factor": 1.594,
+      "max_drawdown_r": 9.0,
+      "ci95": [
+        -0.1667,
+        0.6667
+      ],
+      "sum_r": 9.5,
+      "gross_win_r": 25.5,
+      "gross_loss_r": 16.0,
+      "final_equity": 83.11,
+      "signals_generated": 1761,
+      "signals_approved": 35
+    },
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 35,
+      "win_rate_pct": 31.4,
+      "expectancy_r": -0.2143,
+      "expectancy_net_r": -0.3643,
+      "profit_factor": 0.688,
+      "max_drawdown_r": 10.0,
+      "ci95": [
+        -0.5714,
+        0.1429
+      ],
+      "sum_r": -7.5,
+      "gross_win_r": 16.5,
+      "gross_loss_r": 24.0,
+      "final_equity": 77.57,
+      "signals_generated": 1460,
+      "signals_approved": 37
+    },
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "conservative",
+      "description": "Smaller risk per trade, wider reward demand, fewer session trades, trades off sooner. Designed to minimise drawdown, accept lower frequency.",
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_r": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "sum_r": 0.0,
+      "final_equity": 80.0,
+      "signals_generated": 1544,
+      "signals_approved": 0
+    },
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 34,
+      "win_rate_pct": 52.9,
+      "expectancy_r": 0.3235,
+      "expectancy_net_r": 0.1735,
+      "profit_factor": 1.687,
+      "max_drawdown_r": 8.0,
+      "ci95": [
+        -0.1176,
+        0.7647
+      ],
+      "sum_r": 11.0,
+      "gross_win_r": 27.0,
+      "gross_loss_r": 16.0,
+      "final_equity": 81.68,
+      "signals_generated": 1675,
+      "signals_approved": 36
+    },
+    {
+      "fold": 0,
+      "window": "train",
+      "variant": "wide_swing",
+      "description": "Larger reward floor, wider trailing \u2014 fewer trades that let winners run. Tests the opposite end of the selectivity spectrum vs scalper.",
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_r": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "sum_r": 0.0,
+      "final_equity": 80.0,
+      "signals_generated": 1495,
+      "signals_approved": 0
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "baseline",
+      "description": "Current shipped config on the real $80 capital \u2014 the control. Live record (713 trades, 43.2% wr @1.15 RR) implies ~-0.07R/trade.",
+      "trades": 41,
+      "win_rate_pct": 34.1,
+      "expectancy_r": -0.1463,
+      "expectancy_net_r": -0.2963,
+      "profit_factor": 0.778,
+      "max_drawdown_r": 10.0,
+      "ci95": [
+        -0.5122,
+        0.2195
+      ],
+      "sum_r": -6.0,
+      "gross_win_r": 21.0,
+      "gross_loss_r": 27.0,
+      "final_equity": 78.52,
+      "signals_generated": 1805,
+      "signals_approved": 42
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "strict_trend",
+      "description": "Higher confidence floor, wider reward floor, stricter session score. Fewer, higher-conviction trades; favours clean trend-aligned setups.",
+      "trades": 42,
+      "win_rate_pct": 47.6,
+      "expectancy_r": 0.1905,
+      "expectancy_net_r": 0.0405,
+      "profit_factor": 1.364,
+      "max_drawdown_r": 5.0,
+      "ci95": [
+        -0.2262,
+        0.5476
+      ],
+      "sum_r": 8.0,
+      "gross_win_r": 30.0,
+      "gross_loss_r": 22.0,
+      "final_equity": 86.65,
+      "signals_generated": 1487,
+      "signals_approved": 44
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "conservative",
+      "description": "Smaller risk per trade, wider reward demand, fewer session trades, trades off sooner. Designed to minimise drawdown, accept lower frequency.",
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_r": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "sum_r": 0.0,
+      "final_equity": 80.0,
+      "signals_generated": 1578,
+      "signals_approved": 0
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "scalper",
+      "description": "Lower reward floor, lower score floor, tighter trailing \u2014 more trades, smaller wins. Tests whether high frequency beats selectivity here.",
+      "trades": 39,
+      "win_rate_pct": 38.5,
+      "expectancy_r": -0.0385,
+      "expectancy_net_r": -0.1885,
+      "profit_factor": 0.937,
+      "max_drawdown_r": 7.5,
+      "ci95": [
+        -0.4231,
+        0.3462
+      ],
+      "sum_r": -1.5,
+      "gross_win_r": 22.5,
+      "gross_loss_r": 24.0,
+      "final_equity": 79.63,
+      "signals_generated": 1731,
+      "signals_approved": 40
+    },
+    {
+      "fold": 0,
+      "window": "test",
+      "variant": "wide_swing",
+      "description": "Larger reward floor, wider trailing \u2014 fewer trades that let winners run. Tests the opposite end of the selectivity spectrum vs scalper.",
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_r": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "sum_r": 0.0,
+      "final_equity": 80.0,
+      "signals_generated": 1541,
+      "signals_approved": 0
+    }
+  ],
+  "candidates": [],
+  "compounding": {},
+  "note": "Reported in R-multiples (capital-independent). expectancy_net_r applies a per-trade cost stand-in for spread+slippage+commission. No verdict is drawn below min_trades. This is measurement only \u2014 no live trades placed."
+}

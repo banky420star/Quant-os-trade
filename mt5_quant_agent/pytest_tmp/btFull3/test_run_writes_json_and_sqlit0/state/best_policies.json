@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-07-08T21:25:04.933842+00:00",
+  "mode": "shadow",
+  "auto_blocked": false,
+  "policies": {
+    "XAUUSDm|pullback|rollover": {
+      "entry_type": "market",
+      "management_profile": {
+        "entry_type": "market",
+        "limit_offset_atr": 0.05,
+        "break_even_trigger_r": 0.5
+      },
+      "policy_score": 72.5,
+      "sample_n": 15,
+      "gate": "suggest",
+      "reason": "sample_n=15; mode=shadow; best_score=72.5"
+    }
+  },
+  "source": "policy_optimizer",
+  "cells_scored": 1,
+  "cells_selected": 1
+}

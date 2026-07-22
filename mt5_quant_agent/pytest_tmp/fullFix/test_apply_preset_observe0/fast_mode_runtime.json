@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-07-08T21:59:51.161405+00:00",
+  "preset": "observe",
+  "label": "Observe only",
+  "overrides": {
+    "enabled": true,
+    "live_enabled": false,
+    "tick_interval_ms": 1000,
+    "symbols": [
+      "XAUUSDm",
+      "USOILm",
+      "UK100m"
+    ],
+    "allow_market_entries": false,
+    "allow_limit_entries": true
+  },
+  "source": "fast_mode_runtime"
+}

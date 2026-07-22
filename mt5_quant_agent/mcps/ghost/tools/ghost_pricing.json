@@ -1,0 +1,8 @@
+{
+  "name": "ghost_pricing",
+  "description": "Get pricing for compute overages and dedicated databases.\n\nDatabases share a monthly pool of compute-hours across the space and are reset monthly. Usage is metered in 15-minute intervals with at least one query. Databases are auto-paused when the compute limit is reached. Run 'ghost overages enable' to allow paid usage above the included free allowance.\n\nDedicated databases are always-on instances separate from the shared compute pool. They are billed by uptime rather than query activity, making them well-suited for production workloads. Pausing stops compute charges, but storage charges continue.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

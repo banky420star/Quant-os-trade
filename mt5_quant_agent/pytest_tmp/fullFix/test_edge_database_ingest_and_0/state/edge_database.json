@@ -1,0 +1,66 @@
+{
+  "records": [
+    {
+      "id": "5fb99a42-e113-40ab-a34e-e8ef5581bf41",
+      "trade_id": "t1",
+      "signal_id": "sig-t1",
+      "source": "test",
+      "symbol": "XAUUSDm",
+      "side": "BUY",
+      "setup_type": "trend_continuation",
+      "market_regime": "strong_trend",
+      "session": "London",
+      "volatility": "high",
+      "phase": null,
+      "spread_points": 12,
+      "confidence": 75,
+      "confidence_tree": {
+        "trend_engine": 80,
+        "structure_engine": 70
+      },
+      "evidence": {},
+      "entry": 2000.0,
+      "exit": 2010.0,
+      "sl": 1990.0,
+      "tp1": 2015.0,
+      "rr": 1.5,
+      "pnl": 10.0,
+      "result": "win",
+      "exit_reason": null,
+      "m5_trend": null,
+      "m15_trend": null,
+      "closed_at": "2026-06-25T10:00:00Z",
+      "recorded_at": "2026-07-08T22:00:34.132276+00:00"
+    }
+  ],
+  "aggregates": {
+    "by_setup": {
+      "trend_continuation": {
+        "wins": 1,
+        "losses": 0,
+        "total": 1,
+        "rr_sum": 1.5,
+        "pnl_sum": 10.0,
+        "win_rate_pct": 100.0,
+        "avg_rr": 1.5,
+        "avg_pnl": 10.0
+      }
+    },
+    "by_context": {
+      "XAUUSDm|strong_trend|London": {
+        "trend_continuation": {
+          "wins": 1,
+          "losses": 0,
+          "total": 1,
+          "rr_sum": 1.5,
+          "win_rate_pct": 100.0,
+          "avg_rr": 1.5,
+          "avg_pnl": 0
+        }
+      }
+    },
+    "total_records": 1
+  },
+  "count": 1,
+  "timestamp": "2026-07-08T22:00:34.132297+00:00"
+}

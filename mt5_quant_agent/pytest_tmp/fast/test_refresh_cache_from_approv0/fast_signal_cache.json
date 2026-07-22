@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-07-08T21:40:45.401583+00:00",
+  "mode": "live",
+  "symbol_count": 1,
+  "symbols": {
+    "XAUUSDm": {
+      "signal_id": "sig-approved",
+      "symbol": "XAUUSDm",
+      "side": "SELL",
+      "setup_type": "pullback",
+      "allowed": true,
+      "anchor": 2400.0,
+      "entry_zone": [
+        2399.8,
+        2400.2
+      ],
+      "entry_type": "limit",
+      "policy_score": null,
+      "expires_at": "2026-07-08T21:41:45.401538+00:00",
+      "management_profile": {
+        "trail_start_r": 0.45,
+        "trail_atr_mult": 0.35
+      },
+      "trigger_zone_atr": 0.08,
+      "max_spread_points": 25.0,
+      "micro_momentum_required": true,
+      "cached_at": "2026-07-08T21:40:45.401574+00:00"
+    }
+  }
+}

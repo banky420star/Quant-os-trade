@@ -1,0 +1,37 @@
+{
+  "name": "ghost_fork_dedicated",
+  "description": "Fork an existing database as a new dedicated instance. The fork inherits\nthe source database's data but runs as an always-on, billed instance.\nA payment method must be on file.\n\nUse ghost_pricing to see compute and storage pricing.\n\nNote: forked databases may take a few minutes to start up. Use ghost_list to check the current status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      },
+      "name": {
+        "type": "string",
+        "description": "Name for the forked database (defaults to '{source-name}-fork')"
+      },
+      "size": {
+        "type": "string",
+        "description": "Database size — controls the CPU and memory allocated to the database",
+        "default": "1x",
+        "enum": [
+          "1x",
+          "2x",
+          "4x",
+          "8x"
+        ]
+      },
+      "wait": {
+        "type": "boolean",
+        "description": "Wait for the database to be ready before returning. Set to true if your next steps require connecting to or querying the database.",
+        "default": false
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

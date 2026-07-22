@@ -1,0 +1,26 @@
+{
+  "name": "ghost_fork",
+  "description": "Fork an existing database to create a new independent copy.\n\nNote: forked databases may take a few minutes to start up. Use ghost_list to check the current status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      },
+      "name": {
+        "type": "string",
+        "description": "Name for the forked database (defaults to '{source-name}-fork')"
+      },
+      "wait": {
+        "type": "boolean",
+        "description": "Wait for the database to be ready before returning. Set to true if your next steps require connecting to or querying the database.",
+        "default": false
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

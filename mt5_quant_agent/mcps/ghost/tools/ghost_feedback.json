@@ -1,0 +1,17 @@
+{
+  "name": "ghost_feedback",
+  "description": "Submit feedback, a bug report, or a support request to the Ghost team.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "description": "Feedback message, bug report, or support request"
+      }
+    },
+    "required": [
+      "message"
+    ],
+    "additionalProperties": false
+  }
+}

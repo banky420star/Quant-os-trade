@@ -1,0 +1,8 @@
+{
+  "name": "ghost_usage",
+  "description": "Display database space usage including compute minutes, storage, and database counts by status.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,1 @@
+{"trades": [{"trade_id": "t1", "symbol": "XAUUSDm", "side": "BUY", "setup_type": "pullback", "session": "rollover", "result": "win", "pnl": 1.2, "r_multiple": 1.1, "management_profile": {"entry_type": "limit", "limit_offset_atr": 0.15, "sl_atr_mult": 1.0, "tp1_r": 0.8, "break_even_trigger_r": 0.35, "trail_start_r": 0.55}}]}

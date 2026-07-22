@@ -1,0 +1,74 @@
+build(blue-guardian): growth profile + payout-quality tile + learning fixes
+
+This rolls up the conversation-era feature work onto blue-guardian: the
+new full-14-symbol growth profile, per-symbol BE/trail tightening, the
+payout-quality dashboard tile, the CLI overrides layer x key grid,
+archive-restore for trade_log position_mgmt stamps, per-tick MAE/MFE
+tracking, the payoff-paradox meter + tuner, calibrated DEAL_REASON-based
+exit_reason mapping, the dashed Session Reset / Memory wipe controls,
+plus 20+ new utilities/scripts and 16 new tests.
+
+Profiles
+  * profiles/growth.yaml: new full-14-symbol growth campaign
+    (Kelly 0.25, pyramiding on, 20% daily target, 0.7 RR floor,
+    loop_interval_seconds=15, fast_mode eligible on gold/oil/SPX)
+  * profiles/{100,30,30-real}.yaml: per-symbol BE overrides, per-symbol
+    SL/TP widening for XAUUSDm/USOILm/SPX500m, fast_mode symbol set
+
+Core / loops
+  * core/position_manager.py + loops/position_manager_loop.py: per-symbol
+    BE, fallback close-at-floor on stale losers, MAE/MFE recorded per
+    tick, archive to state/position_mgmt_archive.jsonl before merge roll
+  * core/trade_tracker.py: restore position_mgmt flags from archive at
+    merge time; DEAL_REASON-based exit_reason mapping for MT5 closes;
+    paper-close exit_reason from mgmt_row trailing/break_even flags
+  * core/learning_overrides.py: bounded proposal pipeline + per-symbol
+    confidence-weighted merge
+  * core/{payoff_paradox_meter,trade_manager,regime_evolution,
+    babysit_metrics,gold_policy}.py: new modules
+  * loops/{babysit_loop,thesis_review_loop}.py: new loops
+  * Updated loops: signal_loop, evaluation_loop, execution_loop,
+    adaptation_loop, market_context_loop, trade_log_loop,
+    learning_review_loop
+
+Dashboard
+  * dashboard/index.html: payout-quality tile (R-multiple + payoff
+    buckets), BE/Partial heatmap, payoff-paradox meter, CLI overrides
+    layer x key diff tree tile, session / memory reset buttons,
+    per-symbol tweakable controls on Living Parameters
+  * dashboard/server.py: /api/cli_overrides endpoint with runtime
+    auto-discovered in-memory layer catalog (AST-walked load_config)
+
+Strategies / scripts (new)
+  * strategies/__init__.py + strategies/bankbot.py: Phase 2.5
+    configurable strategy library (MA-cross + ATR + alternate-resolution)
+  * scripts/calibrate_be_trail_curve.py, scripts/tune_persymbol_be.py,
+    scripts/tune_bankbot.py
+  * scripts/compare_exit_reasons.py, scripts/compare_exit_reasons_after_24h.py
+  * scripts/backfill_{mgmt_archive,mgmt_stamping,payoff_paradox_audit,
+    trade_enrichment}.py
+  * scripts/do_full_reset.py, scripts/fit_payoff_paradox_floor.py,
+    scripts/manual_close_all_positions.py, scripts/rebuild_trade_log.py,
+    scripts/relabel_setups.py, scripts/repair_mt5_trade_entries.py,
+    scripts/reset_learning_state.py
+  * scripts/babysit_observe.py, scripts/babysit_observe_loop.py,
+    scripts/test_payoff_paradox_patch.py
+  * scripts/run_learning_loop.bat
+
+Tests (16 new + 6 modified)
+  * tests/test_profit_quality.py, tests/test_profit_quality_stream.py
+  * tests/test_payoff_paradox_{meter,fitter,simulation}.py
+  * tests/test_calibrate_be_trail_curve.py
+  * tests/test_position_manager_{archive,payoff_paradox}.py
+  * tests/test_trade_tracker_{archive_recovery,entry}.py
+  * tests/test_trade_manager.py, tests/test_babysit_metrics.py,
+    tests/test_regime_evolution.py
+  * tests/test_state_archive.py, tests/test_backfill_mgmt_stamping.py,
+    tests/test_gold_never_rejectable.py
+  * modified tests: conftest.py, test_adaptive_gates.py,
+    test_evaluation_policy.py, test_exposure.py
+
+Hygiene
+  * .gitignore: ignore tmp/, nul, output.txt, .freebuff/, mcps/, profile
+    *.bak* snapshots, scripts/_*.py one-off utilities, scripts/._*
+    metadata, root-level _*.py scratch

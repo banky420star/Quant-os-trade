@@ -1,0 +1,1 @@
+{"timestamp": "t", "approved": [{"signal_id": "sig-001", "symbol": "XAUUSDm", "side": "BUY", "setup_type": "pullback", "confidence": 85, "entry": 2400.0, "sl": 2390.0, "tp1": 2420.0, "tp2": 2430.0, "entry_quality": 0.8}]}

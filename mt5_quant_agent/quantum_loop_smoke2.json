@@ -1,0 +1,260 @@
+{
+  "capital_usd": 80.0,
+  "cost_r": 0.15,
+  "step": 10,
+  "min_trades": 40,
+  "grid": "small",
+  "grid_dims": {
+    "variants": 2,
+    "exits": 2,
+    "gates": 2
+  },
+  "K_comparisons": 8,
+  "bonferroni": true,
+  "common_window": {
+    "start": "2025-10-09 17:15:00+00:00",
+    "end": "2026-06-26 20:55:00+00:00"
+  },
+  "n_folds": 1,
+  "ranked": [
+    {
+      "cell": "scalper|medium|off",
+      "variant": "scalper",
+      "exit": "medium",
+      "gate": "off",
+      "trades": 32,
+      "win_rate_pct": 81.2,
+      "expectancy_r": 0.6179,
+      "expectancy_net_r": 0.4679,
+      "profit_factor": 4.296,
+      "max_drawdown_r": 2.0,
+      "ci95": [
+        0.33,
+        0.8662
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 1,
+      "folds_total": 1,
+      "majority_fold_positive": true,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "baseline|medium|off",
+      "variant": "baseline",
+      "exit": "medium",
+      "gate": "off",
+      "trades": 19,
+      "win_rate_pct": 78.9,
+      "expectancy_r": 0.5582,
+      "expectancy_net_r": 0.4082,
+      "profit_factor": 3.651,
+      "max_drawdown_r": 1.0,
+      "ci95": [
+        0.1535,
+        0.9023
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 1,
+      "folds_total": 1,
+      "majority_fold_positive": true,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "scalper|off|off",
+      "variant": "scalper",
+      "exit": "off",
+      "gate": "off",
+      "trades": 13,
+      "win_rate_pct": 61.5,
+      "expectancy_r": 0.5385,
+      "expectancy_net_r": 0.3885,
+      "profit_factor": 2.4,
+      "max_drawdown_r": 3.0,
+      "ci95": [
+        -0.0385,
+        1.1154
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 1,
+      "folds_total": 1,
+      "majority_fold_positive": true,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "baseline|off|off",
+      "variant": "baseline",
+      "exit": "off",
+      "gate": "off",
+      "trades": 12,
+      "win_rate_pct": 58.3,
+      "expectancy_r": 0.4583,
+      "expectancy_net_r": 0.3083,
+      "profit_factor": 2.1,
+      "max_drawdown_r": 3.0,
+      "ci95": [
+        -0.1667,
+        1.0833
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 1,
+      "folds_total": 1,
+      "majority_fold_positive": true,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "scalper|medium|loose",
+      "variant": "scalper",
+      "exit": "medium",
+      "gate": "loose",
+      "trades": 22,
+      "win_rate_pct": 68.2,
+      "expectancy_r": 0.3449,
+      "expectancy_net_r": 0.1949,
+      "profit_factor": 2.084,
+      "max_drawdown_r": 2.0,
+      "ci95": [
+        -0.0438,
+        0.7143
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 1,
+      "folds_total": 1,
+      "majority_fold_positive": true,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "baseline|medium|loose",
+      "variant": "baseline",
+      "exit": "medium",
+      "gate": "loose",
+      "trades": 19,
+      "win_rate_pct": 63.2,
+      "expectancy_r": 0.2413,
+      "expectancy_net_r": 0.0913,
+      "profit_factor": 1.655,
+      "max_drawdown_r": 3.06,
+      "ci95": [
+        -0.1953,
+        0.6639
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 1,
+      "folds_total": 1,
+      "majority_fold_positive": true,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "baseline|off|loose",
+      "variant": "baseline",
+      "exit": "off",
+      "gate": "loose",
+      "trades": 11,
+      "win_rate_pct": 45.5,
+      "expectancy_r": 0.1364,
+      "expectancy_net_r": -0.0136,
+      "profit_factor": 1.25,
+      "max_drawdown_r": 3.0,
+      "ci95": [
+        -0.5455,
+        0.8182
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 0,
+      "folds_total": 1,
+      "majority_fold_positive": false,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    },
+    {
+      "cell": "scalper|off|loose",
+      "variant": "scalper",
+      "exit": "off",
+      "gate": "loose",
+      "trades": 15,
+      "win_rate_pct": 40.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": -0.15,
+      "profit_factor": 1.0,
+      "max_drawdown_r": 3.0,
+      "ci95": [
+        -0.6667,
+        0.6667
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 0,
+      "folds_total": 1,
+      "majority_fold_positive": false,
+      "eligible": false,
+      "bonferroni_floor": 0.09,
+      "organic_winner": false
+    }
+  ],
+  "organic_winners": [],
+  "show_trades": {
+    "cell": "scalper|medium|off",
+    "trades": [
+      {
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "setup_type": "mean_reversion",
+        "entry": 4157.355,
+        "exit": 4150.8095936,
+        "sl": 4150.8095936,
+        "tp1": 4121.96898,
+        "pnl": 0.06,
+        "exit_reason": "trailing_stop",
+        "entry_narrative": "SELL Mean Reversion: EMA20 slope bullish on M5, M15 bearish (not aligned); price tagging BB upper (pos 1.06). regime expansion, bias bullish, session rollover.",
+        "be_narrative": "Break-even: +0.70ATR favourable triggered SL move to 4156.09683 (locked 0.08ATR over entry).",
+        "trail_narrative": "Trailing: SL trailed to 4150.80959 (0.28ATR behind peak 4146.40600).",
+        "exit_narrative": "Exit 4,150.8 (+1.00R, $+0.06) \u2014 trailing stop hit (profit locked).",
+        "cell": "mean_reversion|expansion|counter"
+      },
+      {
+        "symbol": "USOILm",
+        "side": "BUY",
+        "setup_type": "trend_continuation",
+        "entry": 76.078,
+        "exit": 77.43497,
+        "sl": 77.26001013333334,
+        "tp1": 77.43497,
+        "pnl": 0.36,
+        "exit_reason": "take_profit",
+        "entry_narrative": "BUY Trend Continuation: EMA20 slope bullish on M5, M15 aligned (bullish); stochastic bullish cross (K crossed above D); price above BB middle (pos 0.84). regime strong_trend, bias bullish, session rollover.",
+        "be_narrative": "Break-even: +0.77ATR favourable triggered SL move to 76.15037 (locked 0.12ATR over entry).",
+        "trail_narrative": "Trailing: SL trailed to 77.26001 (0.32ATR behind peak 77.45300).",
+        "exit_narrative": "Exit 77.43 (+1.15R, $+0.36) \u2014 full take-profit (TP1) hit.",
+        "cell": "trend_continuation|strong_trend|align"
+      },
+      {
+        "symbol": "XAUUSDm",
+        "side": "SELL",
+        "setup_type": "pullback",
+        "entry": 4145.362,
+        "exit": 4184.78825,
+        "sl": 4184.78825,
+        "tp1": 4086.22263,
+        "pnl": -0.24,
+        "exit_reason": "stop_loss",
+        "entry_narrative": "SELL Pullback: EMA20 slope bearish on M5, M15 aligned (bearish); stochastic bullish cross (K crossed above D); retest of broken support 4,142.5; price tagging BB lower (pos 0.11). regime weak_trend, bias bearish, session rollover.",
+        "be_narrative": null,
+        "trail_narrative": null,
+        "exit_narrative": "Exit 4,184.8 (-1.00R, $-0.24) \u2014 initial stop hit.",
+        "cell": "pullback|weak_trend|align"
+      }
+    ]
+  },
+  "note": "Quantum loop = discretised exhaustive OOS sweep. Every (variant, exit, gate) cell walk-forward evaluated; winners selected by CI95 lower bound net of cost + Bonferroni correction on K cells + majority-fold stability. Read-only on live edge DB. No live trades. Honest by construction: selecting the best of K noisy estimates is multiple-comparison bias; the correction is what makes a surfaced winner real rather than a mirage."
+}

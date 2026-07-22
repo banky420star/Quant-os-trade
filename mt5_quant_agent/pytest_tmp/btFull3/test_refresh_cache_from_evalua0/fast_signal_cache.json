@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-07-08T21:24:42.803740+00:00",
+  "mode": "live",
+  "symbol_count": 1,
+  "symbols": {
+    "XAUUSDm": {
+      "signal_id": "sig-1",
+      "symbol": "XAUUSDm",
+      "side": "BUY",
+      "setup_type": "pullback",
+      "allowed": true,
+      "anchor": 2400.0,
+      "entry_zone": [
+        2399.8,
+        2400.2
+      ],
+      "entry_type": "limit",
+      "policy_score": 72,
+      "expires_at": "2026-07-08T21:25:42.803655+00:00",
+      "management_profile": {
+        "break_even_trigger_r": 0.4,
+        "trail_start_r": 0.45,
+        "cancel_if_not_filled_seconds": 60,
+        "trail_atr_mult": 0.35
+      },
+      "trigger_zone_atr": 0.08,
+      "max_spread_points": 25.0,
+      "micro_momentum_required": true,
+      "cached_at": "2026-07-08T21:24:42.803693+00:00"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "ghost_resume",
+  "description": "Resume a paused database.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      },
+      "wait": {
+        "type": "boolean",
+        "description": "Wait for the database to be ready before returning. Set to true if your next steps require connecting to or querying the database.",
+        "default": false
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

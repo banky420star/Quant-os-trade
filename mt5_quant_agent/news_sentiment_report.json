@@ -1,0 +1,31 @@
+{
+  "target": "XAUUSDm",
+  "window": [
+    "2025-01-28 18:00:00+00:00",
+    "2026-06-29 13:00:00+00:00"
+  ],
+  "mode": "sentiment",
+  "news_source": "rss",
+  "sentiment_backend": "ollama",
+  "themes_scanned": [
+    "inflation",
+    "employment",
+    "taxes",
+    "war"
+  ],
+  "events_total": 2,
+  "themes_traded_oos": 0,
+  "n_trials": 4,
+  "cost_rt": 0.003,
+  "hold_hours": 4,
+  "family_pbo": null,
+  "family_spa_p": null,
+  "winners": [],
+  "rows": [],
+  "caveats": [
+    "LLM sentiment is non-deterministic -> wrong for backtests; deterministic backend used for reproducibility",
+    "keyword/theme/sentiment-direction selection on same data = data-snooping; DSR n_trials + PBO absorb it",
+    "news_source=rss: if not 'gdelt', this is a constructed-calendar proxy, NOT real news",
+    "a real news-sentiment verdict needs GDELT reachable (non-rate-limited IP) or a news API key"
+  ]
+}

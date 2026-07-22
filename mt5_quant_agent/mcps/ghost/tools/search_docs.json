@@ -1,0 +1,63 @@
+{
+  "name": "search_docs",
+  "description": "Search documentation with hybrid semantic (vector) and keyword (BM25) search. Use semanticWeight to choose keyword-only (0), semantic-only (1), or a blend; mid values fuse rankings with RRF. Supports Tiger Cloud (TimescaleDB), PostgreSQL, and PostGIS.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "properties": {
+      "limit": {
+        "anyOf": [
+          {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The maximum number of matches to return. Defaults to 20."
+      },
+      "query": {
+        "description": "The search query. Used for BM25 when keyword or hybrid search applies, and for the embedding when semantic or hybrid search applies.",
+        "type": "string"
+      },
+      "semanticWeight": {
+        "anyOf": [
+          {
+            "maximum": 1,
+            "minimum": 0,
+            "multipleOf": 0.1,
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Controls the balance between semantic and keyword search. 0 = keyword only, 0.5 = equal mix, 1 = semantic only. Default is 0.7 (favor semantic search)."
+      },
+      "source": {
+        "description": "The documentation source to search. \"tiger\" for Tiger Cloud and TimescaleDB, \"postgres\" for PostgreSQL, \"postgis\" for PostGIS spatial extension. Specific versions provided with _X.X suffixes.",
+        "enum": [
+          "tiger",
+          "postgres_14",
+          "postgres_15",
+          "postgres_16",
+          "postgres_17",
+          "postgres_18",
+          "postgis_3.3",
+          "postgis_3.4",
+          "postgis_3.5",
+          "postgis_3.6"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "source",
+      "query",
+      "limit",
+      "semanticWeight"
+    ],
+    "type": "object"
+  }
+}

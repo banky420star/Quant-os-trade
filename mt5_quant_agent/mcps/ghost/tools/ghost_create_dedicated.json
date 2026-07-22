@@ -1,0 +1,34 @@
+{
+  "name": "ghost_create_dedicated",
+  "description": "Create a new dedicated database. Dedicated databases are always-on,\nbilled instances that are not subject to space compute or storage limits.\nA payment method must be on file.\n\nUse ghost_pricing to see compute and storage pricing.\n\nNote: new databases may take a few minutes to start up. Use ghost_list to check the current status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Database name (auto-generated if not provided)"
+      },
+      "size": {
+        "type": "string",
+        "description": "Database size — controls the CPU and memory allocated to the database",
+        "default": "1x",
+        "enum": [
+          "1x",
+          "2x",
+          "4x",
+          "8x"
+        ]
+      },
+      "share_token": {
+        "type": "string",
+        "description": "Share token from a database share. When provided, creates the new database from the shared snapshot."
+      },
+      "wait": {
+        "type": "boolean",
+        "description": "Wait for the database to be ready before returning. Set to true if your next steps require connecting to or querying the database.",
+        "default": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

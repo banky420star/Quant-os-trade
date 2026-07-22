@@ -1,0 +1,8 @@
+{
+  "name": "ghost_login",
+  "description": "Authenticate with GitHub OAuth. Opens the user's browser to complete authentication.\n\nNote: this tool requires user interaction in the browser. The user must complete the GitHub OAuth flow before the tool returns.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

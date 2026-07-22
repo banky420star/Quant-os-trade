@@ -1,0 +1,22 @@
+{
+  "name": "ghost_rename",
+  "description": "Rename a database.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      },
+      "name": {
+        "type": "string",
+        "description": "New name for the database"
+      }
+    },
+    "required": [
+      "name_or_id",
+      "name"
+    ],
+    "additionalProperties": false
+  }
+}

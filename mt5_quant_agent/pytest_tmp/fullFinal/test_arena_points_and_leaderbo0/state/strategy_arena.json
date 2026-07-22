@@ -1,0 +1,896 @@
+{
+  "campaign_id": "test",
+  "started_at": "2026-07-08T21:54:26.804282+00:00",
+  "updated_at": "2026-07-08T21:54:26.822055+00:00",
+  "symbols": [
+    "XAUUSDm",
+    "BTCUSDm"
+  ],
+  "setup_types": [
+    "trend_continuation",
+    "pullback",
+    "breakout",
+    "compression_breakout",
+    "range_fade",
+    "liquidity_sweep",
+    "mean_reversion",
+    "false_breakout"
+  ],
+  "setup_catalog": {
+    "timestamp": "2026-07-08T21:54:26.804478+00:00",
+    "setup_count": 8,
+    "setups": [
+      {
+        "setup_type": "trend_continuation",
+        "display_name": "Trend Continuation",
+        "description": "Trade with aligned trend after momentum confirmation.",
+        "allowed_regimes": [
+          "strong_trend",
+          "weak_trend",
+          "expansion",
+          "compression",
+          "transitional"
+        ],
+        "blocked_regimes": [
+          "range",
+          "volatility_spike"
+        ],
+        "min_confidence": 0.55,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "M5 and M15 aligned",
+          "move_type continuation",
+          "volume confirming"
+        ],
+        "exit_hints": [
+          "SL beyond structure",
+          "TP at 1.5R minimum"
+        ],
+        "trigger_rules": [
+          "regime=trending AND move_type=continuation",
+          "M5 trend bullish \u2192 BUY / bearish \u2192 SELL",
+          "confidence = avg(trend, momentum) evidence"
+        ],
+        "trigger_summary": "regime=trending AND move_type=continuation",
+        "trigger_params": {
+          "regime": "trending",
+          "move_type": "continuation"
+        }
+      },
+      {
+        "setup_type": "pullback",
+        "display_name": "Pullback",
+        "description": "Retest of broken level or EMA in trending market.",
+        "allowed_regimes": [
+          "strong_trend",
+          "weak_trend",
+          "expansion",
+          "compression",
+          "transitional"
+        ],
+        "blocked_regimes": [
+          "range",
+          "volatility_spike"
+        ],
+        "min_confidence": 0.5,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "Pullback to structure",
+          "Trend bias intact"
+        ],
+        "exit_hints": [
+          "SL beyond pullback swing",
+          "TP at prior high/low"
+        ],
+        "trigger_rules": [
+          "move_type=pullback OR breakout retest OR compression_setup in compression phase",
+          "M5 trend defines side (bullish=BUY, bearish=SELL)",
+          "confidence = avg(trend, structure) evidence"
+        ],
+        "trigger_summary": "move_type=pullback OR breakout retest OR compression_setup in compression phase",
+        "trigger_params": {
+          "move_types": [
+            "pullback"
+          ],
+          "retest_breakouts": [
+            "breakout_retest",
+            "breakdown_retest"
+          ],
+          "allow_compression_setup": true
+        }
+      },
+      {
+        "setup_type": "breakout",
+        "display_name": "Breakout",
+        "description": "Break of key support/resistance with volume.",
+        "allowed_regimes": [
+          "expansion",
+          "compression",
+          "strong_trend",
+          "accumulation"
+        ],
+        "blocked_regimes": [
+          "range",
+          "distribution"
+        ],
+        "min_confidence": 0.55,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "Breakout candle closed",
+          "Volume above average"
+        ],
+        "exit_hints": [
+          "SL inside range",
+          "TP measured move"
+        ],
+        "trigger_rules": [
+          "breakout state = breakout|breakdown",
+          "confidence = avg(structure, volume, momentum)"
+        ],
+        "trigger_summary": "breakout state = breakout|breakdown",
+        "trigger_params": {
+          "breakout_states": [
+            "breakout",
+            "breakdown"
+          ]
+        }
+      },
+      {
+        "setup_type": "compression_breakout",
+        "display_name": "Compression Breakout",
+        "description": "Volatility squeeze release.",
+        "allowed_regimes": [
+          "compression",
+          "accumulation"
+        ],
+        "blocked_regimes": [
+          "strong_trend",
+          "volatility_spike"
+        ],
+        "min_confidence": 0.55,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "BB squeeze",
+          "ATR compression resolving"
+        ],
+        "exit_hints": [
+          "SL inside coil",
+          "TP 2x coil width"
+        ],
+        "trigger_rules": [
+          "phase=compression AND breakout|breakdown",
+          "confidence = avg(volatility, structure, volume)"
+        ],
+        "trigger_summary": "phase=compression AND breakout|breakdown",
+        "trigger_params": {
+          "phase": "compression",
+          "breakout_states": [
+            "breakout",
+            "breakdown"
+          ]
+        }
+      },
+      {
+        "setup_type": "range_fade",
+        "display_name": "Range Fade",
+        "description": "Fade extremes in defined range.",
+        "allowed_regimes": [
+          "range",
+          "distribution",
+          "accumulation"
+        ],
+        "blocked_regimes": [
+          "strong_trend",
+          "weak_trend",
+          "expansion"
+        ],
+        "min_confidence": 0.5,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "Price at range boundary",
+          "No trend alignment"
+        ],
+        "exit_hints": [
+          "SL beyond range",
+          "TP mid-range"
+        ],
+        "trigger_rules": [
+          "regime=ranging",
+          "price within boundary_pct of support \u2192 BUY / resistance \u2192 SELL",
+          "confidence = liquidity evidence"
+        ],
+        "trigger_summary": "ranging + within 0.15% of S/R",
+        "trigger_params": {
+          "regime": "ranging",
+          "boundary_pct": 0.0015
+        }
+      },
+      {
+        "setup_type": "liquidity_sweep",
+        "display_name": "Liquidity Sweep",
+        "description": "Stop hunt beyond level followed by rejection.",
+        "allowed_regimes": [
+          "range",
+          "weak_trend",
+          "distribution",
+          "accumulation"
+        ],
+        "blocked_regimes": [
+          "volatility_spike"
+        ],
+        "min_confidence": 0.55,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "Wick beyond S/R",
+          "Rejection candle",
+          "Liquidity score high"
+        ],
+        "exit_hints": [
+          "SL beyond sweep wick",
+          "TP opposite range bound"
+        ],
+        "trigger_rules": [
+          "rejection = bullish|bearish AND liquidity >= min_liquidity",
+          "confidence = avg(liquidity, volume)"
+        ],
+        "trigger_summary": "rejection + liquidity>=0.65",
+        "trigger_params": {
+          "min_liquidity": 0.65,
+          "rejections": [
+            "bullish_rejection",
+            "bearish_rejection"
+          ]
+        }
+      },
+      {
+        "setup_type": "mean_reversion",
+        "display_name": "Mean Reversion",
+        "description": "Fade extension from Bollinger bands.",
+        "allowed_regimes": [
+          "range",
+          "distribution",
+          "accumulation",
+          "compression"
+        ],
+        "blocked_regimes": [
+          "strong_trend",
+          "expansion"
+        ],
+        "min_confidence": 0.5,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "BB position extreme",
+          "Not in strong trend"
+        ],
+        "exit_hints": [
+          "SL beyond band",
+          "TP middle band"
+        ],
+        "trigger_rules": [
+          "bb_position >= bb_upper \u2192 SELL / <= bb_lower \u2192 BUY",
+          "confidence = avg(structure, liquidity)"
+        ],
+        "trigger_summary": "bb>=0.92 SELL / bb<=0.08 BUY",
+        "trigger_params": {
+          "bb_upper": 0.92,
+          "bb_lower": 0.08
+        }
+      },
+      {
+        "setup_type": "false_breakout",
+        "display_name": "False Breakout",
+        "description": "Failed breakout with rejection back into range.",
+        "allowed_regimes": [
+          "range",
+          "distribution",
+          "accumulation",
+          "weak_trend"
+        ],
+        "blocked_regimes": [
+          "strong_trend",
+          "expansion"
+        ],
+        "min_confidence": 0.5,
+        "min_rr": 1.2,
+        "entry_hints": [
+          "Breakout failure",
+          "Rejection at extreme"
+        ],
+        "exit_hints": [
+          "SL beyond false break",
+          "TP range mid"
+        ],
+        "trigger_rules": [
+          "bearish_rejection + bb_position > bb_upper \u2192 SELL",
+          "bullish_rejection + bb_position < bb_lower \u2192 BUY",
+          "confidence = structure evidence"
+        ],
+        "trigger_summary": "bearish_rejection + bb_position > bb_upper \u2192 SELL",
+        "trigger_params": {
+          "bb_upper": 0.85,
+          "bb_lower": 0.15
+        }
+      }
+    ],
+    "arena_symbols": [
+      "XAUUSDm",
+      "BTCUSDm"
+    ],
+    "emit_all_setups": true
+  },
+  "analytics": {
+    "by_setup_session": {
+      "pullback": {
+        "unknown": {
+          "wins": 1,
+          "losses": 0,
+          "trades": 1,
+          "net_pnl": 20.0,
+          "points": 20.0,
+          "expectancy_r": 2.0,
+          "sum_r": 2.0,
+          "setup_type": "pullback",
+          "session": "unknown",
+          "win_rate_pct": 100.0,
+          "rank": 1
+        }
+      },
+      "breakout": {
+        "unknown": {
+          "wins": 0,
+          "losses": 1,
+          "trades": 1,
+          "net_pnl": -10.0,
+          "points": -14.0,
+          "expectancy_r": -2.0,
+          "sum_r": -2.0,
+          "setup_type": "breakout",
+          "session": "unknown",
+          "win_rate_pct": 0.0,
+          "rank": 1
+        }
+      }
+    },
+    "by_symbol_setup": {
+      "XAUUSDm": {
+        "pullback": {
+          "wins": 1,
+          "losses": 0,
+          "trades": 1,
+          "net_pnl": 20.0,
+          "points": 20.0,
+          "expectancy_r": 2.0,
+          "sum_r": 2.0,
+          "symbol": "XAUUSDm",
+          "setup_type": "pullback",
+          "win_rate_pct": 100.0,
+          "rank": 1
+        },
+        "breakout": {
+          "wins": 0,
+          "losses": 1,
+          "trades": 1,
+          "net_pnl": -10.0,
+          "points": -14.0,
+          "expectancy_r": -2.0,
+          "sum_r": -2.0,
+          "symbol": "XAUUSDm",
+          "setup_type": "breakout",
+          "win_rate_pct": 0.0,
+          "rank": 2
+        }
+      }
+    },
+    "by_symbol_session": {
+      "XAUUSDm": {
+        "unknown": {
+          "wins": 1,
+          "losses": 1,
+          "trades": 2,
+          "net_pnl": 10.0,
+          "points": 6.0,
+          "expectancy_r": 0.0,
+          "sum_r": 0.0,
+          "symbol": "XAUUSDm",
+          "session": "unknown",
+          "win_rate_pct": 50.0,
+          "rank": 1
+        }
+      }
+    },
+    "condition_cells": {
+      "XAUUSDm|pullback|unknown|unknown|-|-": {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "cell_key": "XAUUSDm|pullback|unknown|unknown|-|-",
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "session": "unknown",
+        "regime": "unknown",
+        "move_type": null,
+        "m5_trend": null,
+        "trigger_summary": null,
+        "sample_evidence": {},
+        "win_rate_pct": 100.0,
+        "rank": 1
+      },
+      "XAUUSDm|breakout|unknown|unknown|-|-": {
+        "wins": 0,
+        "losses": 1,
+        "trades": 1,
+        "net_pnl": -10.0,
+        "points": -14.0,
+        "expectancy_r": -2.0,
+        "sum_r": -2.0,
+        "cell_key": "XAUUSDm|breakout|unknown|unknown|-|-",
+        "symbol": "XAUUSDm",
+        "setup_type": "breakout",
+        "session": "unknown",
+        "regime": "unknown",
+        "move_type": null,
+        "m5_trend": null,
+        "trigger_summary": null,
+        "sample_evidence": {},
+        "win_rate_pct": 0.0
+      }
+    },
+    "updated_at": "2026-07-08T21:54:26.819355+00:00"
+  },
+  "insights": {
+    "updated_at": "2026-07-08T21:54:26.819355+00:00",
+    "best_setup_per_session": [
+      {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "setup_type": "pullback",
+        "session": "unknown",
+        "win_rate_pct": 100.0,
+        "rank": 1
+      },
+      {
+        "wins": 0,
+        "losses": 1,
+        "trades": 1,
+        "net_pnl": -10.0,
+        "points": -14.0,
+        "expectancy_r": -2.0,
+        "sum_r": -2.0,
+        "setup_type": "breakout",
+        "session": "unknown",
+        "win_rate_pct": 0.0,
+        "rank": 1
+      }
+    ],
+    "best_setup_per_symbol": [
+      {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "win_rate_pct": 100.0,
+        "rank": 1
+      }
+    ],
+    "best_session_per_symbol": [
+      {
+        "wins": 1,
+        "losses": 1,
+        "trades": 2,
+        "net_pnl": 10.0,
+        "points": 6.0,
+        "expectancy_r": 0.0,
+        "sum_r": 0.0,
+        "symbol": "XAUUSDm",
+        "session": "unknown",
+        "win_rate_pct": 50.0,
+        "rank": 1
+      }
+    ],
+    "top_winning_conditions": [
+      {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "cell_key": "XAUUSDm|pullback|unknown|unknown|-|-",
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "session": "unknown",
+        "regime": "unknown",
+        "move_type": null,
+        "m5_trend": null,
+        "trigger_summary": null,
+        "sample_evidence": {},
+        "win_rate_pct": 100.0,
+        "rank": 1
+      }
+    ]
+  },
+  "trigger_log": [
+    {
+      "ts": "2026-07-08T21:54:26.815948+00:00",
+      "symbol": "XAUUSDm",
+      "setup_type": "pullback",
+      "side": "BUY",
+      "confidence": 72,
+      "signal_id": "s1",
+      "session": "london_open",
+      "regime": "strong_trend",
+      "trigger_summary": null,
+      "trigger_context": null
+    },
+    {
+      "ts": "2026-07-08T21:54:26.815948+00:00",
+      "symbol": "XAUUSDm",
+      "setup_type": "breakout",
+      "side": "BUY",
+      "confidence": 68,
+      "signal_id": "s2",
+      "session": "london_open",
+      "regime": "strong_trend",
+      "trigger_summary": null,
+      "trigger_context": null
+    }
+  ],
+  "outcome_log": [
+    {
+      "ts": "2026-07-08T21:54:26.818858+00:00",
+      "trade_id": "t1",
+      "symbol": "XAUUSDm",
+      "setup_type": "pullback",
+      "side": "BUY",
+      "pnl": 20.0,
+      "r_multiple": 2.0,
+      "points_awarded": 20.0,
+      "result": "win",
+      "session": "unknown",
+      "regime": "unknown",
+      "move_type": null,
+      "m5_trend": null,
+      "trigger_summary": null,
+      "conditions": {
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "side": "BUY",
+        "session": "unknown",
+        "regime": "unknown",
+        "phase": null,
+        "move_type": null,
+        "market_intent": null,
+        "m5_trend": null,
+        "breakout": null,
+        "bb_position": null,
+        "rejection": null,
+        "confidence": null,
+        "trigger_summary": null,
+        "trigger_context": {},
+        "evidence": {},
+        "signal_id": null
+      }
+    },
+    {
+      "ts": "2026-07-08T21:54:26.819279+00:00",
+      "trade_id": "t2",
+      "symbol": "XAUUSDm",
+      "setup_type": "breakout",
+      "side": "BUY",
+      "pnl": -10.0,
+      "r_multiple": -2.0,
+      "points_awarded": -14.0,
+      "result": "loss",
+      "session": "unknown",
+      "regime": "unknown",
+      "move_type": null,
+      "m5_trend": null,
+      "trigger_summary": null,
+      "conditions": {
+        "symbol": "XAUUSDm",
+        "setup_type": "breakout",
+        "side": "BUY",
+        "session": "unknown",
+        "regime": "unknown",
+        "phase": null,
+        "move_type": null,
+        "market_intent": null,
+        "m5_trend": null,
+        "breakout": null,
+        "bb_position": null,
+        "rejection": null,
+        "confidence": null,
+        "trigger_summary": null,
+        "trigger_context": {},
+        "evidence": {},
+        "signal_id": null
+      }
+    }
+  ],
+  "leaderboard": {
+    "trend_continuation": {
+      "setup_type": "trend_continuation",
+      "points": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "trades": 0,
+      "net_pnl": 0.0,
+      "expectancy_r": 0.0,
+      "triggers": 0
+    },
+    "pullback": {
+      "setup_type": "pullback",
+      "points": 20.0,
+      "wins": 1,
+      "losses": 0,
+      "trades": 1,
+      "net_pnl": 20.0,
+      "expectancy_r": 2.0,
+      "triggers": 1
+    },
+    "breakout": {
+      "setup_type": "breakout",
+      "points": -14.0,
+      "wins": 0,
+      "losses": 1,
+      "trades": 1,
+      "net_pnl": -10.0,
+      "expectancy_r": -2.0,
+      "triggers": 1
+    },
+    "compression_breakout": {
+      "setup_type": "compression_breakout",
+      "points": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "trades": 0,
+      "net_pnl": 0.0,
+      "expectancy_r": 0.0,
+      "triggers": 0
+    },
+    "range_fade": {
+      "setup_type": "range_fade",
+      "points": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "trades": 0,
+      "net_pnl": 0.0,
+      "expectancy_r": 0.0,
+      "triggers": 0
+    },
+    "liquidity_sweep": {
+      "setup_type": "liquidity_sweep",
+      "points": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "trades": 0,
+      "net_pnl": 0.0,
+      "expectancy_r": 0.0,
+      "triggers": 0
+    },
+    "mean_reversion": {
+      "setup_type": "mean_reversion",
+      "points": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "trades": 0,
+      "net_pnl": 0.0,
+      "expectancy_r": 0.0,
+      "triggers": 0
+    },
+    "false_breakout": {
+      "setup_type": "false_breakout",
+      "points": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "trades": 0,
+      "net_pnl": 0.0,
+      "expectancy_r": 0.0,
+      "triggers": 0
+    }
+  },
+  "by_symbol": {
+    "XAUUSDm": {
+      "trend_continuation": {
+        "setup_type": "trend_continuation",
+        "symbol": "XAUUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "pullback": {
+        "setup_type": "pullback",
+        "symbol": "XAUUSDm",
+        "points": 20.0,
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "expectancy_r": 0.0,
+        "triggers": 1
+      },
+      "breakout": {
+        "setup_type": "breakout",
+        "symbol": "XAUUSDm",
+        "points": -14.0,
+        "wins": 0,
+        "losses": 1,
+        "trades": 1,
+        "net_pnl": -10.0,
+        "expectancy_r": 0.0,
+        "triggers": 1
+      },
+      "compression_breakout": {
+        "setup_type": "compression_breakout",
+        "symbol": "XAUUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "range_fade": {
+        "setup_type": "range_fade",
+        "symbol": "XAUUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "liquidity_sweep": {
+        "setup_type": "liquidity_sweep",
+        "symbol": "XAUUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "mean_reversion": {
+        "setup_type": "mean_reversion",
+        "symbol": "XAUUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "false_breakout": {
+        "setup_type": "false_breakout",
+        "symbol": "XAUUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      }
+    },
+    "BTCUSDm": {
+      "trend_continuation": {
+        "setup_type": "trend_continuation",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "pullback": {
+        "setup_type": "pullback",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "breakout": {
+        "setup_type": "breakout",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "compression_breakout": {
+        "setup_type": "compression_breakout",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "range_fade": {
+        "setup_type": "range_fade",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "liquidity_sweep": {
+        "setup_type": "liquidity_sweep",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "mean_reversion": {
+        "setup_type": "mean_reversion",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      },
+      "false_breakout": {
+        "setup_type": "false_breakout",
+        "symbol": "BTCUSDm",
+        "points": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "trades": 0,
+        "net_pnl": 0.0,
+        "expectancy_r": 0.0,
+        "triggers": 0
+      }
+    }
+  },
+  "totals": {
+    "triggers": 2,
+    "trades_closed": 2,
+    "wins": 1,
+    "losses": 1,
+    "points": 6.0
+  }
+}

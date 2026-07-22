@@ -1,0 +1,17 @@
+{
+  "name": "ghost_pause",
+  "description": "Pause a running database. This terminates active connections.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

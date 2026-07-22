@@ -1,0 +1,12 @@
+Baseline overwritten — 400 trades frozen.
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Desktop\new task\mt5_quant_agent\scripts\compare_exit_reasons.py", line 314, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "C:\Users\Administrator\Desktop\new task\mt5_quant_agent\scripts\compare_exit_reasons.py", line 294, in main
+    print(report(live_metrics, live_metrics))
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 38-67: character maps to <undefined>

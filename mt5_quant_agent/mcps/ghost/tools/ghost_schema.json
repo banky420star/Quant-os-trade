@@ -1,0 +1,17 @@
+{
+  "name": "ghost_schema",
+  "description": "Display database schema including tables, views, materialized views, and enum types with their columns, constraints, and indexes.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

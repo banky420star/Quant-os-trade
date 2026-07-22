@@ -1,0 +1,56 @@
+{
+  "capital_usd": 80.0,
+  "cost_r": 0.15,
+  "step": 25,
+  "min_trades": 40,
+  "grid": "default",
+  "grid_dims": {
+    "variants": 1,
+    "exits": 1,
+    "gates": 1
+  },
+  "K_comparisons": 1,
+  "bonferroni": true,
+  "common_window": {
+    "start": "2025-10-09 17:15:00+00:00",
+    "end": "2026-06-26 20:55:00+00:00"
+  },
+  "n_folds": 3,
+  "ranked": [
+    {
+      "cell": "baseline|medium|off",
+      "variant": "baseline",
+      "exit": "medium",
+      "gate": "off",
+      "trades": 0,
+      "win_rate_pct": 0.0,
+      "expectancy_r": 0.0,
+      "expectancy_net_r": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_r": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "final_equity": 0.0,
+      "folds_positive": 0,
+      "folds_total": 0,
+      "majority_fold_positive": false,
+      "eligible": false,
+      "bonferroni_floor": 0.0769,
+      "dsr": 0.0,
+      "dsr_precise": 0.0,
+      "dsr_crude_gross": 0.0,
+      "dsr_survives": false,
+      "organic_winner": false
+    }
+  ],
+  "organic_winners": [],
+  "show_trades": {
+    "cell": "baseline|medium|off",
+    "trades": []
+  },
+  "dsr_sr_variance": 0.0,
+  "dsr_threshold": 0.95,
+  "note": "Quantum loop = discretised exhaustive OOS sweep. Every (variant, exit, gate) cell walk-forward evaluated; winners selected by Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014) >= 0.95 \u2014 the data-snooping correction that handles BOTH K-trial selection bias AND return non-normality, which crude Bonferroni does not \u2014 plus CI95 lower bound > 0 net of cost and majority-fold stability. Read-only on live edge DB. No live trades. Honest by construction: selecting the best of K noisy estimates is multiple-comparison bias; DSR is what makes a surfaced winner real rather than a mirage. Per deep-research 2026-06-27, DSR/SPA is the literature's proper bar and is conservative (low power) \u2014 rejection credible, non-rejection weak."
+}

@@ -1,0 +1,17 @@
+{
+  "name": "ghost_delete",
+  "description": "Delete a database permanently. This operation is irreversible.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

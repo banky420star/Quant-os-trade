@@ -1,0 +1,167 @@
+{
+  "updated_at": "2026-07-08T21:41:18.647849+00:00",
+  "last": {
+    "timestamp": "2026-07-08T21:41:18.647768+00:00",
+    "status": "hold",
+    "method": "micro_quant_evolution",
+    "profile": "30-c2",
+    "trade_count": 30,
+    "weights": {
+      "trend_engine": 0.22,
+      "structure_engine": 0.22,
+      "momentum_engine": 0.15,
+      "volume_engine": 0.13,
+      "liquidity_engine": 0.1,
+      "volatility_engine": 0.08,
+      "risk_engine": 0.1
+    },
+    "per_symbol": {
+      "XAUUSDm": {
+        "symbol": "XAUUSDm",
+        "status": "candidate",
+        "trade_count": 10,
+        "wins_analyzed": 5,
+        "losses_analyzed": 5,
+        "weights": {
+          "trend_engine": 0.1976,
+          "structure_engine": 0.1796,
+          "momentum_engine": 0.1377,
+          "volume_engine": 0.1078,
+          "liquidity_engine": 0.0958,
+          "volatility_engine": 0.1257,
+          "risk_engine": 0.1557
+        },
+        "baseline_weights": {
+          "trend_engine": 0.22,
+          "structure_engine": 0.22,
+          "momentum_engine": 0.15,
+          "volume_engine": 0.13,
+          "liquidity_engine": 0.1,
+          "volatility_engine": 0.08,
+          "risk_engine": 0.1
+        },
+        "deltas_pct": {
+          "trend_engine": -2.24,
+          "structure_engine": -4.04,
+          "momentum_engine": -1.23,
+          "volume_engine": -2.22,
+          "liquidity_engine": -0.42,
+          "volatility_engine": 4.57,
+          "risk_engine": 5.57
+        },
+        "method": "micro_symbol_win_loss_correlation",
+        "baseline_score": 4.75,
+        "candidate_score": 4.75,
+        "improvement_pct": 0.0,
+        "baseline_expectancy_usd": 0.2,
+        "candidate_expectancy_usd": 0.2,
+        "baseline_pnl": 1.0,
+        "candidate_pnl": 1.0,
+        "proposal": "hold",
+        "positive_evolution": false
+      },
+      "USOILm": {
+        "symbol": "USOILm",
+        "status": "candidate",
+        "trade_count": 10,
+        "wins_analyzed": 5,
+        "losses_analyzed": 5,
+        "weights": {
+          "trend_engine": 0.1976,
+          "structure_engine": 0.1796,
+          "momentum_engine": 0.1377,
+          "volume_engine": 0.1078,
+          "liquidity_engine": 0.0958,
+          "volatility_engine": 0.1257,
+          "risk_engine": 0.1557
+        },
+        "baseline_weights": {
+          "trend_engine": 0.22,
+          "structure_engine": 0.22,
+          "momentum_engine": 0.15,
+          "volume_engine": 0.13,
+          "liquidity_engine": 0.1,
+          "volatility_engine": 0.08,
+          "risk_engine": 0.1
+        },
+        "deltas_pct": {
+          "trend_engine": -2.24,
+          "structure_engine": -4.04,
+          "momentum_engine": -1.23,
+          "volume_engine": -2.22,
+          "liquidity_engine": -0.42,
+          "volatility_engine": 4.57,
+          "risk_engine": 5.57
+        },
+        "method": "micro_symbol_win_loss_correlation",
+        "baseline_score": 4.75,
+        "candidate_score": 4.75,
+        "improvement_pct": 0.0,
+        "baseline_expectancy_usd": 0.2,
+        "candidate_expectancy_usd": 0.2,
+        "baseline_pnl": 1.0,
+        "candidate_pnl": 1.0,
+        "proposal": "hold",
+        "positive_evolution": false
+      },
+      "UK100m": {
+        "symbol": "UK100m",
+        "status": "candidate",
+        "trade_count": 10,
+        "wins_analyzed": 5,
+        "losses_analyzed": 5,
+        "weights": {
+          "trend_engine": 0.1976,
+          "structure_engine": 0.1796,
+          "momentum_engine": 0.1377,
+          "volume_engine": 0.1078,
+          "liquidity_engine": 0.0958,
+          "volatility_engine": 0.1257,
+          "risk_engine": 0.1557
+        },
+        "baseline_weights": {
+          "trend_engine": 0.22,
+          "structure_engine": 0.22,
+          "momentum_engine": 0.15,
+          "volume_engine": 0.13,
+          "liquidity_engine": 0.1,
+          "volatility_engine": 0.08,
+          "risk_engine": 0.1
+        },
+        "deltas_pct": {
+          "trend_engine": -2.24,
+          "structure_engine": -4.04,
+          "momentum_engine": -1.23,
+          "volume_engine": -2.22,
+          "liquidity_engine": -0.42,
+          "volatility_engine": 4.57,
+          "risk_engine": 5.57
+        },
+        "method": "micro_symbol_win_loss_correlation",
+        "baseline_score": 4.75,
+        "candidate_score": 4.75,
+        "improvement_pct": 0.0,
+        "baseline_expectancy_usd": 0.2,
+        "candidate_expectancy_usd": 0.2,
+        "baseline_pnl": 1.0,
+        "candidate_pnl": 1.0,
+        "proposal": "hold",
+        "positive_evolution": false
+      }
+    },
+    "symbols_evolved": 0,
+    "replay_improvement_pct": 0.0,
+    "threshold_pct": 99.0,
+    "proposal": "hold",
+    "deployed": false,
+    "positive_evolution": false,
+    "message": "No symbol beat 99.0% replay threshold"
+  },
+  "history": [
+    {
+      "timestamp": "2026-07-08T21:41:18.647768+00:00",
+      "symbols_evolved": 0,
+      "proposal": "hold"
+    }
+  ]
+}

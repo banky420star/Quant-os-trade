@@ -1,0 +1,35 @@
+{
+  "name": "ghost_sql",
+  "description": "Execute a SQL query against a database. If the connection fails, the database may not be running - use ghost_list to check its status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      },
+      "query": {
+        "type": "string",
+        "description": "SQL query to execute. Multi-statement queries are supported when no parameters are provided. Exactly one of 'query' or 'file' must be provided."
+      },
+      "file": {
+        "type": "string",
+        "description": "Path to a SQL file on disk to execute. Multi-statement files are supported when no parameters are provided. Exactly one of 'query' or 'file' must be provided."
+      },
+      "parameters": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "description": "Query parameters. Values are substituted for $1, $2, etc. placeholders in the query. Only supported for single-statement queries"
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "ghost_create",
+  "description": "Create a new database.\n\nNote: new databases may take a few minutes to start up. Use ghost_list to check the current status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Database name (auto-generated if not provided)"
+      },
+      "share_token": {
+        "type": "string",
+        "description": "Share token from a database share. When provided, creates the new database from the shared snapshot."
+      },
+      "wait": {
+        "type": "boolean",
+        "description": "Wait for the database to be ready before returning. Set to true if your next steps require connecting to or querying the database.",
+        "default": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

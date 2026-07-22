@@ -1,0 +1,8 @@
+{
+  "name": "ghost_invoice_list",
+  "description": "List the most recent invoices.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

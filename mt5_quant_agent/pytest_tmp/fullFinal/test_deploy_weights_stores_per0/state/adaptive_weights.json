@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-07-08T21:53:44.180643+00:00",
+  "deployed": true,
+  "weights": {
+    "trend_engine": 0.3,
+    "structure_engine": 0.2
+  },
+  "source": "micro_quant_evolution",
+  "trade_count": 0,
+  "per_symbol": {
+    "XAUUSDm": {
+      "weights": {
+        "trend_engine": 0.35,
+        "structure_engine": 0.18
+      },
+      "improvement_pct": 8.0,
+      "expectancy_usd": 0.12
+    }
+  }
+}

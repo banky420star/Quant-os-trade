@@ -1,0 +1,1 @@
+{"evaluated": [{"signal_id": "sig-1", "symbol": "XAUUSDm", "side": "BUY", "setup_type": "pullback", "confidence": 80, "entry_quality": 70, "within_reach": true, "distance_atr": 0.3, "market_context": {"session": "rollover"}}]}

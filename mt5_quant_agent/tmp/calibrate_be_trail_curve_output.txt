@@ -1,0 +1,82 @@
+2026-07-20 22:13:21 | INFO | calibrate_be_trail_curve | Loaded 236 trades (window=236 of 397 total)
+=== BASELINE (last 236) ===
+  n=236  wins=95  losses=141  WR=40.3%  avg_win=$+0.59  avg_loss=$-0.86  payoff=0.69
+  total PnL = $-64.73
+
+Per-symbol baseline:
+  symbol        n     WR   avg_win  avg_loss      total
+  XAUUSDm     138    51% $  +0.30 $  -1.38 $  -72.32
+  USOILm       70    33% $  +1.50 $  -0.55 $   +8.61
+  UK100m       26     4% $  +0.12 $  -0.04 $   -0.76
+  US30m         1   100% $  +0.05 $  +0.00 $   +0.05
+  US500m        1     0% $  +0.00 $  -0.31 $   -0.31
+
+=== SWEEP be_lock_usd (global) ===
+    lock_$    total_$    Delta # boosted  FLIP
+  $  0.05  $  -64.49  $ +0.24        9      
+  $  0.10  $  -63.97  $ +0.76       12      
+  $  0.15  $  -62.84  $ +1.89       27      
+  $  0.20  $  -60.67  $ +4.06       53      
+  $  0.25  $  -57.98  $ +6.75       54      
+  $  0.30  $  -55.21  $ +9.52       56      
+  $  0.40  $  -49.22  $+15.51       67      
+  $  0.50  $  -42.32  $+22.41       69      
+  $  0.60  $  -35.42  $+29.31       69      
+  $  0.75  $  -25.07  $+39.66       69      
+  $  1.00  $   -7.82  $+56.91       69      
+  $  1.25  $  +10.43  $+75.16       73     *
+  $  1.50  $  +28.68  $+93.41       73     *
+
+2026-07-20 22:13:21 | INFO | calibrate_be_trail_curve | GLOBAL last-236: baseline $-64.73  best@lock=$1.50 -> $28.68 (Delta=+93.41, 73 dust)  flip@$1.25
+=== GLOBAL BEST ===
+  baseline total:              $-$64.73
+  best lock_usd (maximises total): $+1.50 -> $+28.68  (Delta=$+93.41, 73 dust boosted)
+  smallest lock_usd that ACTUALLY FLIPS positive: $1.25
+  flipped_positive:            True  actually_flipped: True
+
+=== PER-SYMBOL BEST (n >= 8) ===
+  symbol       n   baseline  lock_$  projected    Delta   #  FLIP  !FLIP
+2026-07-20 22:13:21 | INFO | calibrate_be_trail_curve | UK100m: baseline=$-0.76  best@lock=1.50: $0.62 (Delta=+1.38, 1 dust)  flip@$1.00  actually_flipped=True
+2026-07-20 22:13:21 | INFO | calibrate_be_trail_curve | USOILm: baseline=$8.61  best@lock=1.50: $11.48 (Delta=+2.87, 2 dust)  flip@$-1.00  actually_flipped=False
+2026-07-20 22:13:21 | INFO | calibrate_be_trail_curve | XAUUSDm: baseline=$-72.32  best@lock=1.50: $15.39 (Delta=+87.71, 69 dust)  flip@$1.50  actually_flipped=True
+  UK100m      26 $   -0.76  $ 1.50 $   +0.62  $ +1.38   1   YES   YES  
+  USOILm      70 $   +8.61  $ 1.50 $  +11.48  $ +2.87   2   YES     -  
+  XAUUSDm    138 $  -72.32  $ 1.50 $  +15.39  $+87.71  69   YES   YES  
+
+=== CUMULATIVE PnL CURVE (baseline 'B' vs projected at lock=$1.50 'P') ===
++------------------------------------------------------------+
+|                                                        PPPP|
+|                                                      PPP   |
+|                                                    PPP     |
+|                                                 PPPP       |
+|PP------------------------------------------PPPPP-----------|
+| P                                        PP   P            |
+| PP                                      PP                 |
+|  P                                     PP                  |
+|  P                                  PPP                    |
+|   P                                PP                      |
+|   P              P PP             PP                       |
+|    P           PPPPPPP           PP                        |
+|    PP      PPPPP     PPP   PPPPPPP   BBBBBBBBBBBBBBBBBBBBBB|
+|     PPPPPPPP           PPPPP       BB                      |
+|      PPBBBBBBBBBBBBBB             BB                       |
+|                     BB           BB                        |
+|                      BBB   BBBBBBB                         |
+|                        BBBBB                               |
++============================================================+
+  B = baseline cum PnL   P = projected (best lock)   x-axis = trade #   y-axis: $-100 .. $+29
+
+=== HONEST CAVEATS ===
+  - Trail activation not modelled (mfe_R missing); recommendation limited to BE.
+  - Trade-level path unknown; dust winners floor is an UPPER BOUND.
+  - Reversal risk NOT modelled: a winner boosted to be_lock_usd could in
+    reality have continued to -1R under a different path.
+  - Avg loss = $-0.86; for a clean +E setup, lock_usd
+    should generally stay below |avg_loss_usd| to avoid returning losers.
+  - Per-symbol: any 'floor_above_loss'=True (column '!FLIP' has trailing ' W')
+    means the lock is EQUAL to or LARGER than the symbol's average loss and
+    would amplify damage on losers if path collapses. Treat with caution.
+  - Symbols with '!FLIP=YES' above flip baseline NEGATIVE -> POSITIVE.
+  - Symbols without '!FLIP=YES' cannot be flipped within this grid.
+  - No flip available: USOILm
+

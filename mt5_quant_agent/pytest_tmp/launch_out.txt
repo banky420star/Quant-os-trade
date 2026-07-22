@@ -1,0 +1,15 @@
+﻿
+  MT5 Quant OS — full stack launched
+  ────────────────────────────────────────────
+  bot                PID 10020  log: C:\Users\Administrator\Desktop\new task\mt5_quant_agent\logs\launch_bot.log
+  nojs_dashboard     PID 8240  log: C:\Users\Administrator\Desktop\new task\mt5_quant_agent\logs\launch_nojs.log
+  terminal_web       PID 9688  log: C:\Users\Administrator\Desktop\new task\mt5_quant_agent\logs\launch_terminal_web.log
+  ────────────────────────────────────────────
+  Views (open in browser):
+    Main dashboard   http://127.0.0.1:8080
+    No-JS dashboard  http://127.0.0.1:8081  <- recommended
+    Terminal web     http://127.0.0.1:8083
+  ────────────────────────────────────────────
+  Terminal TUI (this window): python scripts/terminal_view.py
+  Stop everything:          scripts\kill_agent.bat
+

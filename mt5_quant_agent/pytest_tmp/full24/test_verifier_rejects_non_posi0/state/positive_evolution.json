@@ -1,0 +1,10 @@
+{
+  "symbols": {
+    "XAUUSDm": {
+      "allowed_cells": [],
+      "blocked_cells": [
+        "trend_continuation|strong_trend|align|london_open"
+      ]
+    }
+  }
+}

@@ -1,0 +1,210 @@
+{
+  "campaign_id": "test",
+  "updated_at": "2026-07-08T22:00:57.612302+00:00",
+  "analytics": {
+    "by_setup_session": {
+      "pullback": {
+        "unknown": {
+          "wins": 1,
+          "losses": 0,
+          "trades": 1,
+          "net_pnl": 20.0,
+          "points": 20.0,
+          "expectancy_r": 2.0,
+          "sum_r": 2.0,
+          "setup_type": "pullback",
+          "session": "unknown",
+          "win_rate_pct": 100.0,
+          "rank": 1
+        }
+      },
+      "breakout": {
+        "unknown": {
+          "wins": 0,
+          "losses": 1,
+          "trades": 1,
+          "net_pnl": -10.0,
+          "points": -14.0,
+          "expectancy_r": -2.0,
+          "sum_r": -2.0,
+          "setup_type": "breakout",
+          "session": "unknown",
+          "win_rate_pct": 0.0,
+          "rank": 1
+        }
+      }
+    },
+    "by_symbol_setup": {
+      "XAUUSDm": {
+        "pullback": {
+          "wins": 1,
+          "losses": 0,
+          "trades": 1,
+          "net_pnl": 20.0,
+          "points": 20.0,
+          "expectancy_r": 2.0,
+          "sum_r": 2.0,
+          "symbol": "XAUUSDm",
+          "setup_type": "pullback",
+          "win_rate_pct": 100.0,
+          "rank": 1
+        },
+        "breakout": {
+          "wins": 0,
+          "losses": 1,
+          "trades": 1,
+          "net_pnl": -10.0,
+          "points": -14.0,
+          "expectancy_r": -2.0,
+          "sum_r": -2.0,
+          "symbol": "XAUUSDm",
+          "setup_type": "breakout",
+          "win_rate_pct": 0.0,
+          "rank": 2
+        }
+      }
+    },
+    "by_symbol_session": {
+      "XAUUSDm": {
+        "unknown": {
+          "wins": 1,
+          "losses": 1,
+          "trades": 2,
+          "net_pnl": 10.0,
+          "points": 6.0,
+          "expectancy_r": 0.0,
+          "sum_r": 0.0,
+          "symbol": "XAUUSDm",
+          "session": "unknown",
+          "win_rate_pct": 50.0,
+          "rank": 1
+        }
+      }
+    },
+    "condition_cells": {
+      "XAUUSDm|pullback|unknown|unknown|-|-": {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "cell_key": "XAUUSDm|pullback|unknown|unknown|-|-",
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "session": "unknown",
+        "regime": "unknown",
+        "move_type": null,
+        "m5_trend": null,
+        "trigger_summary": null,
+        "sample_evidence": {},
+        "win_rate_pct": 100.0,
+        "rank": 1
+      },
+      "XAUUSDm|breakout|unknown|unknown|-|-": {
+        "wins": 0,
+        "losses": 1,
+        "trades": 1,
+        "net_pnl": -10.0,
+        "points": -14.0,
+        "expectancy_r": -2.0,
+        "sum_r": -2.0,
+        "cell_key": "XAUUSDm|breakout|unknown|unknown|-|-",
+        "symbol": "XAUUSDm",
+        "setup_type": "breakout",
+        "session": "unknown",
+        "regime": "unknown",
+        "move_type": null,
+        "m5_trend": null,
+        "trigger_summary": null,
+        "sample_evidence": {},
+        "win_rate_pct": 0.0
+      }
+    },
+    "updated_at": "2026-07-08T22:00:57.609097+00:00"
+  },
+  "insights": {
+    "updated_at": "2026-07-08T22:00:57.609097+00:00",
+    "best_setup_per_session": [
+      {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "setup_type": "pullback",
+        "session": "unknown",
+        "win_rate_pct": 100.0,
+        "rank": 1
+      },
+      {
+        "wins": 0,
+        "losses": 1,
+        "trades": 1,
+        "net_pnl": -10.0,
+        "points": -14.0,
+        "expectancy_r": -2.0,
+        "sum_r": -2.0,
+        "setup_type": "breakout",
+        "session": "unknown",
+        "win_rate_pct": 0.0,
+        "rank": 1
+      }
+    ],
+    "best_setup_per_symbol": [
+      {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "win_rate_pct": 100.0,
+        "rank": 1
+      }
+    ],
+    "best_session_per_symbol": [
+      {
+        "wins": 1,
+        "losses": 1,
+        "trades": 2,
+        "net_pnl": 10.0,
+        "points": 6.0,
+        "expectancy_r": 0.0,
+        "sum_r": 0.0,
+        "symbol": "XAUUSDm",
+        "session": "unknown",
+        "win_rate_pct": 50.0,
+        "rank": 1
+      }
+    ],
+    "top_winning_conditions": [
+      {
+        "wins": 1,
+        "losses": 0,
+        "trades": 1,
+        "net_pnl": 20.0,
+        "points": 20.0,
+        "expectancy_r": 2.0,
+        "sum_r": 2.0,
+        "cell_key": "XAUUSDm|pullback|unknown|unknown|-|-",
+        "symbol": "XAUUSDm",
+        "setup_type": "pullback",
+        "session": "unknown",
+        "regime": "unknown",
+        "move_type": null,
+        "m5_trend": null,
+        "trigger_summary": null,
+        "sample_evidence": {},
+        "win_rate_pct": 100.0,
+        "rank": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "ghost_share",
+  "description": "Share a database so a recipient can create their own database from a snapshot.\n\nThe share URL can be handed to anyone — they don't need access to this space. Pass the returned share_token to ghost_create (or ghost_create_dedicated) to create a new database from the shared snapshot.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name_or_id": {
+        "type": "string",
+        "description": "Database name or identifier"
+      },
+      "expires": {
+        "type": "string",
+        "description": "Optional share expiry. Accepts a Go duration relative to now (e.g. \"30m\", \"24h\") or an RFC3339 timestamp (e.g. \"2026-05-01T00:00:00Z\"). If omitted, the share does not expire.",
+        "examples": [
+          "24h",
+          "2026-05-01T00:00:00Z"
+        ]
+      }
+    },
+    "required": [
+      "name_or_id"
+    ],
+    "additionalProperties": false
+  }
+}

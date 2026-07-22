@@ -1,0 +1,17 @@
+{
+  "name": "ghost_share_revoke",
+  "description": "Revoke a database share so its URL can no longer be used to create new databases.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "share_token": {
+        "type": "string",
+        "description": "Share token to revoke (as returned by ghost_share or ghost_share_list)"
+      }
+    },
+    "required": [
+      "share_token"
+    ],
+    "additionalProperties": false
+  }
+}

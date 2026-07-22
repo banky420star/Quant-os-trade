@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+
+# State / runtime data (generated, not code)
+mt5_quant_agent/state/
+mt5_quant_agent/logs/
+logs/
+
+# Freebuff / agent artifacts
+.freebuff/
+agent-tools/
+tmp/
+
+# Environment & secrets
+.env
+.env.local
+nul
+
+# IDE
+.vscode/
+.idea/
+
+# Temp fix files
+mt5_quant_agent/_fix*.py
+mt5_quant_agent/_x.py
+_fix*.py
+_x.py
+
+# Marketplace terminal data (large, generated)
+terminals/
+
+# Test / mock artifacts
+_co_mock.json
+_co_test_sandbox.js
+
+# MCP tool definitions (generated/config)
+mcps/
+
+# OS junk
+Thumbs.db
+.DS_Store
+Desktop.ini

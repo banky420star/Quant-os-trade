@@ -1,0 +1,8 @@
+{
+  "name": "ghost_id",
+  "description": "Display information about the authenticated caller: the user when authenticating via OAuth, or the API key when authenticating with an API key.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

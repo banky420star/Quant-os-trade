@@ -1,0 +1,17 @@
+{
+  "name": "ghost_invoice",
+  "description": "Get the line-item breakdown for a single invoice, looked up by the opaque invoice ID returned from ghost_invoice_list.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "invoice_id": {
+        "type": "string",
+        "description": "Opaque invoice identifier returned by ghost_invoice_list"
+      }
+    },
+    "required": [
+      "invoice_id"
+    ],
+    "additionalProperties": false
+  }
+}

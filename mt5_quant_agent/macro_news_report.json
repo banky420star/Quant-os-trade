@@ -1,0 +1,49 @@
+{
+  "target": "XAUUSDm",
+  "window": [
+    "2025-01-28 18:00:00+00:00",
+    "2026-06-26 16:00:00+00:00"
+  ],
+  "h1_rows": 8342,
+  "buckets_scanned": 166,
+  "buckets_traded_oos": 0,
+  "n_trials_for_deflation": 166,
+  "cost_rt": 0.003,
+  "hold_hours": 4,
+  "family_pbo": null,
+  "family_spa_p": null,
+  "winners": [],
+  "event_trade_backtest": [
+    {
+      "event": "nfp",
+      "n": 48,
+      "oos_mean": -0.003057187046637777,
+      "ci95_lo": -0.005544927577619711,
+      "dsr": 0.020169749150448887,
+      "folds_pos": "0/3"
+    },
+    {
+      "event": "fomc",
+      "n": 36,
+      "oos_mean": 0.0008777908828776427,
+      "ci95_lo": -0.0034300375894016394,
+      "dsr": 0.6606450165728593,
+      "folds_pos": "1/3"
+    },
+    {
+      "event": "cpi",
+      "n": 104,
+      "oos_mean": -0.003679594183077862,
+      "ci95_lo": -0.004926109482034606,
+      "dsr": 1.7762242987312616e-07,
+      "folds_pos": "0/3"
+    }
+  ],
+  "top_buckets": [],
+  "method_caveats": [
+    "close-to-close fixed 4h hold = OPTIMISTIC bound (no intrabar SL/TP)",
+    "event windows use a constructed calendar (approximate, not a feed)",
+    "cross-asset factors are venue-internal (oil/btc 1h return), no external macro",
+    "factor buckets are joint-tuple scans; n_trials deflates for the scan size"
+  ]
+}

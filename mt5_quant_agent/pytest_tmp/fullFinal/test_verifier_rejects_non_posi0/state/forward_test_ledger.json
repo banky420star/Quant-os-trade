@@ -1,0 +1,11 @@
+{
+  "cells": {
+    "XAUUSDm": {
+      "trend_continuation|strong_trend|align|london_open": {
+        "n": 12,
+        "expectancy_net_r": -0.1,
+        "win_rate_pct": 42
+      }
+    }
+  }
+}

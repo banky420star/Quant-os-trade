@@ -1,0 +1,19 @@
+{
+  "symbols": {
+    "XAUUSDm": {
+      "promoted_cells": [
+        "pullback|*|align|tokyo"
+      ],
+      "vetoed_cells": [],
+      "cell_rankings": [
+        {
+          "setup": "pullback",
+          "cell": "pullback|strong_trend|align|tokyo",
+          "expectancy_net_r": 0.3,
+          "verdict": "ok",
+          "n": 5
+        }
+      ]
+    }
+  }
+}

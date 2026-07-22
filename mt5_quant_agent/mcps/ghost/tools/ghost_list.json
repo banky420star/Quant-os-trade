@@ -1,0 +1,8 @@
+{
+  "name": "ghost_list",
+  "description": "List all databases, including each database's current status, storage usage, and compute minutes used in the current billing cycle.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

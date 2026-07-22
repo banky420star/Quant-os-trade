@@ -1,0 +1,8 @@
+{
+  "name": "ghost_share_list",
+  "description": "List all shares in the current Ghost space.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "updated_at": "2026-07-08T22:00:31.724359+00:00",
+  "enabled": true,
+  "config": {
+    "min_n": 6,
+    "min_expectancy_net_r": 0.0,
+    "edge_db_min_samples": 5,
+    "edge_db_min_win_rate_pct": 55.0
+  },
+  "symbols": {
+    "UK100m": {
+      "allowed_cells": [],
+      "ledger_positive": [],
+      "edge_db_positive": [],
+      "blocked_cells": [],
+      "gate_mode": "collecting"
+    },
+    "USOILm": {
+      "allowed_cells": [],
+      "ledger_positive": [],
+      "edge_db_positive": [],
+      "blocked_cells": [],
+      "gate_mode": "collecting"
+    },
+    "XAUUSDm": {
+      "allowed_cells": [],
+      "ledger_positive": [],
+      "edge_db_positive": [],
+      "blocked_cells": [],
+      "gate_mode": "collecting"
+    }
+  },
+  "total_allowed": 0,
+  "total_blocked": 0
+}
