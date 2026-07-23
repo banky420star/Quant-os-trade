@@ -1325,6 +1325,151 @@ def _build_learning_status(config: dict, state: dict, decisions: list, reviews: 
     }
 
 
+def _build_daily_pnl_today() -> dict:
+    """Dashboard snapshot of today's (UTC-midnight onwards) closed-trade
+    realized PnL and the daily-profit halt gate state.
+
+    Powers /api/daily_pnl so the user can SEE when the bot has earned enough
+    to halt itself for the day. Backed by core.daily_pnl — the gate in
+    execution_loop._check_execution_allowed uses the same helper, so this
+    payload is the canonical view of "did the halt fire, and where are we?".
+
+    Return shape (stable; clients depend on these keys):
+        today_realized_usd   — sum of closed-trade pnl from UTC midnight today
+        threshold_usd        — config.risk.daily_profit_halt_usd (0 = disabled)
+        remaining_usd        — max(threshold - today, 0) | 0 when disabled
+        progress_pct         — min(today/threshold*100, 100); 0 when disabled
+        halt_active          — TRUE when kill_switch.json is the daily halt
+                               AND its day_stamp matches today
+        halt_reason          — copy of kill_switch.reason while halt_active
+        halt_day_stamp       — copy of kill_switch.day_stamp while halt_active
+        halted_at            — copy of kill_switch.halted_at while halt_active
+        day_stamp_today      — "YYYY-MM-DD" UTC (the boundary key)
+        day_resets_at_iso    — next UTC midnight ISO timestamp (auto-reset hour)
+        trade_count_today    — n closed trades since UTC midnight
+        wins_today / losses_today
+        by_symbol            — [{symbol, pnl, closed_count}, …] sorted by pnl desc
+        status               — "halt_active" | "tracking" | "disabled"
+        updated_at_iso       — wall-clock ISO timestamp of the snapshot
+    """
+    try:
+        from datetime import date, datetime, timedelta, timezone as _tz
+        config = load_config()
+        from core.daily_pnl import (
+            today_realized_pnl_breakdown,
+            today_realized_pnl_usd,
+            today_utc_day_stamp,
+        )
+        threshold_usd = float(
+            (config.get("risk") or {}).get("daily_profit_halt_usd", 0) or 0
+        )
+        breakdown = today_realized_pnl_breakdown("paper_trades.json")
+        pnl_today = today_realized_pnl_usd("paper_trades.json")
+        stamp_today = today_utc_day_stamp()
+
+        kill = read_json_state("kill_switch.json", default={}) or {}
+        kill_reason = str(kill.get("reason") or "")
+        kill_day = str(kill.get("day_stamp") or "")
+        # Broaden day-stamp match to cover the post-midnight window (~up to
+        # one cycle, ~15s on growth profile) where kill_switch.json still
+        # carries yesterday's day_stamp until execution_loop's day-rollover
+        # block clears it on the bot's NEXT cycle. Without this, the tile
+        # would briefly flash "tracking" while execution is ACTUALLY frozen.
+        try:
+            stamp_yesterday = (
+                date.fromisoformat(stamp_today) - timedelta(days=1)
+            ).isoformat()
+        except (ValueError, TypeError):
+            stamp_yesterday = stamp_today
+        halt_active = (
+            bool(kill.get("kill_switch"))
+            and "daily_profit_halt" in kill_reason
+            and kill_day in (stamp_today, stamp_yesterday)
+        )
+
+        if threshold_usd <= 0:
+            status = "disabled"
+        elif halt_active:
+            status = "halt_active"
+        else:
+            status = "tracking"
+
+        remaining_usd = max(threshold_usd - pnl_today, 0.0)
+        progress_pct = (
+            round(min(pnl_today / threshold_usd * 100.0, 100.0), 1)
+            if threshold_usd > 0 else 0.0
+        )
+
+        # Sort by_symbol detail by pnl desc so winners float to the top.
+        # Uses breakdown.per_symbol_detail (added by core/daily_pnl) so we
+        # walk paper_trades.json ONCE — previously the helper re-walked
+        # the same JSON a second time just to count per-symbol closed
+        # trades, and the two passes could disagree across a day rollover.
+        _detail = breakdown.get("per_symbol_detail") or {}
+        by_symbol = [
+            {
+                "symbol": sym,
+                "pnl": round(float(detail.get("pnl", 0) or 0), 2),
+                "closed_count": int(detail.get("closed_count", 0) or 0),
+                "wins": int(detail.get("wins", 0) or 0),
+                "losses": int(detail.get("losses", 0) or 0),
+            }
+            for sym, detail in sorted(
+                _detail.items(),
+                key=lambda kv: float(kv[1].get("pnl", 0) or 0),
+                reverse=True,
+            )
+        ]
+
+        # Next UTC midnight (auto-reset hour; relies on the hoisted
+        # datetime import at the top of the function body).
+        next_midnight = (
+            datetime.now(_tz.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0,
+            ) + timedelta(days=1)
+        )
+
+        return {
+            "today_realized_usd": round(float(pnl_today), 2),
+            "threshold_usd": float(threshold_usd),
+            "remaining_usd": round(float(remaining_usd), 2),
+            "progress_pct": progress_pct,
+            "halt_active": bool(halt_active),
+            "halt_reason": kill_reason if halt_active else None,
+            "halt_day_stamp": kill_day if halt_active else None,
+            "halted_at": kill.get("halted_at") if halt_active else None,
+            "day_stamp_today": stamp_today,
+            "day_resets_at_iso": next_midnight.isoformat(),
+            "trade_count_today": int(breakdown.get("closed_count") or 0),
+            "wins_today": int(breakdown.get("wins") or 0),
+            "losses_today": int(breakdown.get("losses") or 0),
+            "by_symbol": by_symbol,
+            "status": status,
+            "updated_at_iso": utc_now_iso(),
+        }
+    except Exception as _daily_pnl_err:
+        _LOG.warning("_build_daily_pnl_today failed: %s", _daily_pnl_err)
+        return {
+            "today_realized_usd": 0.0,
+            "threshold_usd": 0.0,
+            "remaining_usd": 0.0,
+            "progress_pct": 0.0,
+            "halt_active": False,
+            "halt_reason": None,
+            "halt_day_stamp": None,
+            "halted_at": None,
+            "day_stamp_today": None,
+            "day_resets_at_iso": None,
+            "trade_count_today": 0,
+            "wins_today": 0,
+            "losses_today": 0,
+            "by_symbol": [],
+            "status": "error",
+            "updated_at_iso": utc_now_iso(),
+            "error": str(_daily_pnl_err)[:200],
+        }
+
+
 def _build_adaptive_exit_tile() -> dict:
     """Compute per-symbol adaptive exit SL/TP for each open position.
 
@@ -2933,6 +3078,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "error": "cli_overrides_failed",
                     "message": str(exc)[:240],
                     "updated_at": utc_now_iso(),
+                })
+        elif path == "/api/daily_pnl":
+            # Daily-profit-halt snapshot: today's closed-trade realized PnL,
+            # threshold (config.risk.daily_profit_halt_usd), progress %, halt
+            # status, and per-symbol breakdown. Independent from /api/state so
+            # a stale state miss can't mask "$400 target reached" — the helper
+            # reads paper_trades.json + kill_switch.json directly and is bounded
+            # by their actual size.
+            try:
+                self._send_json(_build_daily_pnl_today())
+            except Exception as _dxc:  # noqa: BLE001
+                _LOG.warning("/api/daily_pnl failed: %s", _dxc)
+                self._send_json({
+                    "error": "daily_pnl_unavailable",
+                    "message": str(_dxc)[:200],
+                    "status": "error",
+                    "updated_at_iso": utc_now_iso(),
                 })
         elif path == "/api/adaptive_exit":
             self._send_json(_build_adaptive_exit_tile())

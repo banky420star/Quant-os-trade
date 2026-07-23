@@ -1,0 +1,92 @@
+{
+  "capital_usd": 80.0,
+  "cost_r": 0.15,
+  "min_n": 4,
+  "min_wr": 50.0,
+  "strict": false,
+  "common_window": {
+    "start": "2025-10-09 17:15:00+00:00",
+    "end": "2026-06-26 20:55:00+00:00"
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_trades": 15,
+      "train_net_r": -0.3167,
+      "cells_learned": 0,
+      "test_baseline": {
+        "trades": 14,
+        "win_rate_pct": 28.6,
+        "expectancy_r": -0.2857,
+        "expectancy_net_r": -0.4357,
+        "profit_factor": 0.6,
+        "max_drawdown_r": 5.5,
+        "ci95": [
+          -0.8214,
+          0.25
+        ],
+        "sum_r": -4.0,
+        "gross_win_r": 6.0,
+        "gross_loss_r": 10.0,
+        "cells_seen": 7
+      },
+      "test_templated": {
+        "trades": 14,
+        "win_rate_pct": 28.6,
+        "expectancy_r": -0.2857,
+        "expectancy_net_r": -0.4357,
+        "profit_factor": 0.6,
+        "max_drawdown_r": 5.5,
+        "ci95": [
+          -0.8214,
+          0.25
+        ],
+        "sum_r": -4.0,
+        "gross_win_r": 6.0,
+        "gross_loss_r": 10.0,
+        "cells_seen": 7
+      }
+    }
+  ],
+  "pooled": {
+    "baseline": {
+      "trades": 14,
+      "win_rate_pct": 28.6,
+      "expectancy_r": -0.2857,
+      "expectancy_net_r": -0.4357,
+      "profit_factor": 0.6,
+      "max_drawdown_r": 5.5,
+      "ci95": [
+        -0.8214,
+        0.25
+      ],
+      "sum_r": -4.0,
+      "gross_win_r": 6.0,
+      "gross_loss_r": 10.0,
+      "cells_seen": 7
+    },
+    "templated": {
+      "trades": 14,
+      "win_rate_pct": 28.6,
+      "expectancy_r": -0.2857,
+      "expectancy_net_r": -0.4357,
+      "profit_factor": 0.6,
+      "max_drawdown_r": 5.5,
+      "ci95": [
+        -0.8214,
+        0.25
+      ],
+      "sum_r": -4.0,
+      "gross_win_r": 6.0,
+      "gross_loss_r": 10.0,
+      "cells_seen": 7
+    }
+  },
+  "verdict": {
+    "edge": false,
+    "beats_baseline": false,
+    "templated_trades": 14,
+    "min_trades": 40
+  },
+  "note": "Condition cell = setup|regime|bias-aligned. Templates learned on TRAIN, frozen, evaluated OOS on TEST. Read-only on live edge DB. No live trades."
+}

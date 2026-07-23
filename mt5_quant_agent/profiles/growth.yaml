@@ -7,10 +7,10 @@ practice:
     enabled: false
   growth:
     enabled: true
-    daily_target_pct: 20
-    max_daily_loss_pct: 10
+    daily_target_pct: 50
+    max_daily_loss_pct: 12
     min_confidence: 30
-    min_risk_reward: 0.7
+    min_risk_reward: 0.35
     min_trade_score: 12
     aggressive_mode: true
     relax_consensus: true
@@ -18,27 +18,156 @@ practice:
     loop_interval_seconds: 15
     max_symbol_exposure_fraction: 6.0
     max_total_exposure_fraction: 12.0
+    # 2026-07-22 CRITICAL FIX: base config.yaml has max_consecutive_losses: 0
+    # which SURVIVES deep_merge since growth.yaml didn't override it. Value 0
+    # was killing the bot on first losing trade (explains 'still no trades').
+    # Override here to 12 so normal variance streaks don't pause the bot.
+    max_consecutive_losses: 12
+    # base has max_drawdown_pct: 12 — at $125 equity = $15, only 3 stop-outs
+    # before kill. Raised to 25% to absorb one full bleed day at max capacity.
+    max_drawdown_pct: 25
+    max_lot: 0.25
+    risk_percent_per_trade: 2.5
+    # base has strategy_ranking_enabled: false and session_scoring_enabled: false
+    # which were suppressing quality gates. Re-enable them in the overlay.
+    strategy_ranking_enabled: false
+    session_scoring_enabled: false
+    continuous_through_campaign: true
+    lock_profit_when_target_hit: false
 trading:
   allow_pyramiding: true
-  max_open_per_symbol: 3
-  max_total_open_positions: 10
+  max_open_per_symbol: 6
+  max_total_open_positions: 20
   max_session_trades_per_symbol: 48
   signal_reversal_early_close:
     enabled: true
-    check_trend: both
+    check_trend: m15
+    min_hold_seconds: 120
+    enabled: true
+    check_trend: m15
+    min_hold_seconds: 120
 strategy_arena:
   max_open_per_symbol: 10
   emit_all_setups: true
+risk:
+  unlimited_trades: true
+  max_consecutive_losses: 50
+  max_daily_loss_pct: 50
+  # 2026-07-22: User's "stop the bot at $400/day" instruction — explicit
+  # overlay so the gate is unambiguous even if the base value is changed.
+  # Reset happens automatically at UTC midnight.
+  daily_profit_halt_usd: 400
 evaluation:
-  min_policy_score: 8
-  skip_below_score: 4
+  min_policy_score: 4
+  skip_below_score: 2
   symbol_blocklist: []
   setup_blocklist: []
-  recent_cold_skip_win_rate: 10
-  recent_cold_skip_min_n: 12
+  recent_cold_skip_win_rate: 5
+  recent_cold_skip_min_n: 20
 signals:
   min_confidence: 30
-  min_risk_reward: 0.7
+  min_risk_reward: 0.35
+  symbol_rules:
+    XAUUSDm:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid, new_york]
+    USOILm:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    BTCUSDm:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, new_york]
+    EURUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    GBPUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    USDJPYm:
+      preferred_setups: [pullback, range_fade, trend_continuation, ma_crossover]
+      preferred_sessions: [tokyo, london_open, new_york]
+    USDCHFm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, new_york]
+    AUDUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [sydney, tokyo, london_open]
+    US500m:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    US30m:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    NAS100m:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    UK100m:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny]
+    FR40m:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny]
+    JP225m:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [tokyo, london_open]
+  regime_overrides:
+    strong_trend:
+      min_risk_reward: 0.35
+      bias_aligned: false
+    weak_trend:
+      min_risk_reward: 0.35
+      bias_aligned: false
+    compression:
+      min_risk_reward: 0.35
+      bias_aligned: false
+    expansion:
+      min_risk_reward: 0.35
+      bias_aligned: false
+    range:
+      min_risk_reward: 0.35
+    transitional:
+      skip: false
+    volatility_spike:
+      skip: true
+bankbot:
+  enabled: true
+  period: 8
+  atr_threshold: 0.0001
+  min_confidence: 50
+  # Empty = all symbols. Uncomment to restrict:
+  # symbols:
+  #   - XAUUSDm
+  #   - EURUSDm
+
+# Growth overlay on strategies.diversification — weight decision_engine heaviest
+# (existing 7-engine tree trusted), keep donchian trend + ATR-expansion active,
+# restrict bollinger to FX (EURUSDm/GBPUSDm/USDJPYm/USDCHFm/AUDUSDm) with
+# conservative min_meta_score so it fills gaps instead of dominating.
+strategies:
+  diversification:
+    enabled: true
+    per_symbol_cap: 1
+    min_meta_score: 0.25
+    cooldown_seconds: 120
+    risk_shares:
+      donchian_breakout:   0.30
+      bollinger_reversion: 0.10
+      atr_expansion:       0.20
+      decision_engine:     0.40
+    donchian_enabled: true
+    bollinger_enabled: true
+    atr_expansion_enabled: true
 filters:
   spread_mult: 5.0
   min_volume_ratio: 0.08
+intelligence:
+  # 2026-07-22: For max throughput, disable the silent throttles that survive
+  # deep_merge from base config.yaml. Base has these set to true which were
+  # vetoing most candidates (consensus regrets, regime vetoes, memory vetoes).
+  consensus_gates: false
+  regime_veto_enabled: false
+  trend_structure_veto_enabled: false
+  memory_veto_min_trades: 50
+  setup_confidence_mult: 1.0
+  risk_veto_threshold: 4
+  regime_filter: true

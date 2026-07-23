@@ -26,6 +26,10 @@ _FILES = {
     "reviews": "reviews.jsonl",
     "config_changes": "config_changes.jsonl",
     "config_proposals": "config_proposals.jsonl",
+    # Phase 2.5 — deterministic-guards observability. Replaces the
+    # config_proposals/config_changes audit trail with a single
+    # observe-only stream emitted by the log_always guard every cycle.
+    "learning_guards": "learning_guards.jsonl",
 }
 
 _LOCK = threading.Lock()
@@ -111,3 +115,42 @@ def log_config_change(event: dict[str, Any]) -> None:
 
 def log_config_proposal(event: dict[str, Any]) -> None:
     _append("config_proposals", _ts(dict(event)))
+
+
+def log_guard_report(report: dict[str, Any]) -> None:
+    """Append a deterministic-guards snapshot to logs/learning_guards.jsonl.
+
+    Phase 2.5 — emitted every learning-loop cycle so operators can replay
+    the guard timeline without needing to parse state/learning_state.json.
+    The row carries the verdict of every guard + an 'alerts' list so an
+    alerting UI can light up immediately off the JSONL stream.
+
+    This is the AUDIT trail replacement for log_config_proposal +
+    log_config_change. It carries zero patch objects — observe-only.
+    """
+    guards = report.get("guards") or {}
+    guards_summary = {
+        k: (v.get("verdict") if isinstance(v, dict) else None)
+        for k, v in guards.items()
+    }
+    alerts = [
+        {"guard": k, "details": v}
+        for k, v in guards.items()
+        if isinstance(v, dict) and v.get("verdict") in ("pause", "halve", "alert")
+    ]
+    row = {
+        "timestamp": utc_now_iso(),
+        "mode": report.get("mode"),
+        "status": report.get("status"),
+        "reviewed_trades": report.get("reviewed_trades"),
+        "rolling_win_rate_pct": report.get("rolling_win_rate_pct"),
+        "rolling_expectancy_r": report.get("rolling_expectancy_r"),
+        "guards_summary": guards_summary,
+        "alerts": alerts,
+    }
+    _append("learning_guards", row)
+
+
+def read_recent_guard_reports(*, limit: int = 50) -> list[dict[str, Any]]:
+    """Most-recent-first guard reports from logs/learning_guards.jsonl."""
+    return read_jsonl("learning_guards", limit=limit)

@@ -44,20 +44,22 @@ logger = logging.getLogger("adaptive_exit")
 #   max_spread_tp_ratio — reject trade if spread / TP > this (default 0.25)
 #
 _ADAPTIVE_DEFAULTS: dict[str, dict[str, float]] = {
-    "XAUUSDm":  {"tp_m5_atr": 0.30, "tp_m15_atr": 0.45, "sl_atr": 0.80, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "USOILm":   {"tp_m5_atr": 0.35, "tp_m15_atr": 0.50, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "BTCUSDm":  {"tp_m5_atr": 0.40, "tp_m15_atr": 0.60, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "EURUSDm":  {"tp_m5_atr": 0.25, "tp_m15_atr": 0.40, "sl_atr": 0.70, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "GBPUSDm":  {"tp_m5_atr": 0.30, "tp_m15_atr": 0.45, "sl_atr": 0.75, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "USDJPYm":  {"tp_m5_atr": 0.25, "tp_m15_atr": 0.40, "sl_atr": 0.70, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "USDCHFm":  {"tp_m5_atr": 0.25, "tp_m15_atr": 0.40, "sl_atr": 0.70, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "AUDUSDm":  {"tp_m5_atr": 0.25, "tp_m15_atr": 0.40, "sl_atr": 0.70, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "US500m":   {"tp_m5_atr": 0.35, "tp_m15_atr": 0.50, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "US30m":    {"tp_m5_atr": 0.40, "tp_m15_atr": 0.60, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "NAS100m":  {"tp_m5_atr": 0.40, "tp_m15_atr": 0.60, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "UK100m":   {"tp_m5_atr": 0.35, "tp_m15_atr": 0.50, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "FR40m":    {"tp_m5_atr": 0.35, "tp_m15_atr": 0.50, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
-    "JP225m":   {"tp_m5_atr": 0.40, "tp_m15_atr": 0.60, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    # R:R = tp_m5_atr / sl_atr.  All symbols set to >= 1.5:1 so every trade has
+    # positive mathematical expectancy regardless of entry quality.
+    "XAUUSDm":  {"tp_m5_atr": 1.20, "tp_m15_atr": 1.80, "sl_atr": 0.80, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "USOILm":   {"tp_m5_atr": 1.28, "tp_m15_atr": 1.92, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "BTCUSDm":  {"tp_m5_atr": 1.50, "tp_m15_atr": 2.25, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "EURUSDm":  {"tp_m5_atr": 1.05, "tp_m15_atr": 1.58, "sl_atr": 0.70, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "GBPUSDm":  {"tp_m5_atr": 1.13, "tp_m15_atr": 1.69, "sl_atr": 0.75, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "USDJPYm":  {"tp_m5_atr": 0.60, "tp_m15_atr": 0.90, "sl_atr": 0.40, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "USDCHFm":  {"tp_m5_atr": 0.60, "tp_m15_atr": 0.90, "sl_atr": 0.40, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "AUDUSDm":  {"tp_m5_atr": 1.05, "tp_m15_atr": 1.58, "sl_atr": 0.70, "spread_min_mult": 3.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "US500m":   {"tp_m5_atr": 1.80, "tp_m15_atr": 2.70, "sl_atr": 1.20, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "US30m":    {"tp_m5_atr": 1.80, "tp_m15_atr": 2.70, "sl_atr": 1.20, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "NAS100m":  {"tp_m5_atr": 1.50, "tp_m15_atr": 2.25, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "UK100m":   {"tp_m5_atr": 1.28, "tp_m15_atr": 1.92, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "FR40m":    {"tp_m5_atr": 1.28, "tp_m15_atr": 1.92, "sl_atr": 0.85, "spread_min_mult": 3.5, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
+    "JP225m":   {"tp_m5_atr": 1.50, "tp_m15_atr": 2.25, "sl_atr": 1.00, "spread_min_mult": 4.0, "trail_atr": 0.25, "be_trigger_pct": 0.70, "max_spread_tp_ratio": 0.25},
 }
 
 # Broker point defaults (mirrors position_manager._DEFAULT_BROKER_POINTS)

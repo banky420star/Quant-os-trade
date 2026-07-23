@@ -56,7 +56,7 @@ def _patch_loop(monkeypatch, *, mode, trades, writes=None):
     monkeypatch.setattr(L, "log_review", lambda r: None)
     monkeypatch.setattr(L, "log_config_proposal", lambda p: None)
     monkeypatch.setattr(L, "log_config_change", lambda e: None)
-    monkeypatch.setattr(L, "config_snapshot_hash", lambda c: "hash123")
+    monkeypatch.setattr(L, "log_guard_report", lambda r: None)
     return writes
 
 
@@ -80,29 +80,55 @@ def test_review_only_scores_trades_and_updates_state(monkeypatch):
     assert state.get("active_proposals") == []
 
 
-def test_propose_only_writes_proposals(monkeypatch):
-    # trades that exited early -> should generate a tp_too_early proposal
+def test_propose_only_runs_guards_only(monkeypatch):
+    """Phase 2.5 — propose_only no longer writes proposals; it only logs guards."""
     trades = _trades(4)
     for t in trades:
         t["r_multiple"] = 0.3
         t["mfe_R"] = 1.4  # captured only 0.3R of 1.4R -> tp_too_early
-    _patch_loop(monkeypatch, mode="propose_only", trades=trades)
+    writes = _patch_loop(monkeypatch, mode="propose_only", trades=trades)
     state = L.run()
     assert state["reviewed_count"] == 4
-    assert len(state.get("active_proposals") or []) >= 1
+    assert state["mode"] == "propose_only"
+    # No proposal pipeline — active_proposals stays empty.
+    assert state.get("active_proposals") == []
+    # No override file ever written regardless of mode.
+    assert "learning_config_overrides.json" not in writes
+    # last_guard_report populated by the 5 deterministic guards.
+    rep = state.get("last_guard_report") or {}
+    assert rep.get("reviewed_trades") == 4
+    assert "guards_status" in rep
+    assert rep["guards_status"]["no_config_patches"] == "ok"
 
 
-def test_live_apply_limited_only_applies_safe_proposals(monkeypatch):
+def test_live_apply_limited_blocks_all_patches_via_guards(monkeypatch):
+    """Phase 2.5 — even live_apply_limited is observe-only now."""
     trades = _trades(4)
     for t in trades:
         t["r_multiple"] = 0.3
         t["mfe_R"] = 1.4
     writes = _patch_loop(monkeypatch, mode="live_apply_limited", trades=trades)
     state = L.run()
-    # a bounded tp_too_early proposal is low-risk + auto_apply_allowed -> applied
-    overrides = writes.get("learning_config_overrides.json")
-    assert overrides is not None
-    assert len(state.get("applied_patches") or []) >= 1
+    assert state["mode"] == "live_apply_limited"
+    # Learning overrides file MUST NOT be written in any mode.
+    assert "learning_config_overrides.json" not in writes
+    # applied_patches stays empty.
+    assert state.get("applied_patches") == []
+    # last_guard_report carries the no_config_patches guard verdict.
+    rep = state.get("last_guard_report") or {}
+    assert rep["guards_status"]["no_config_patches"] == "ok"
+    assert rep["guards_status"]["log_always"] == "logged"
+
+
+def test_run_writes_log_guard_report_every_cycle(monkeypatch):
+    """log_always: every cycle must emit a guard report, even with 0 reviews."""
+    reported = []
+    _patch_loop(monkeypatch, mode="observe_only", trades=[])
+    monkeypatch.setattr(L, "log_guard_report", lambda r: reported.append(r))
+    L.run()
+    assert len(reported) == 1, "log_always must emit on every cycle"
+    assert reported[0]["guards"]["log_always"]["verdict"] == "logged"
+    assert reported[0]["guards"]["no_config_patches"]["writes_blocked"] is True
 
 
 def test_loop_does_not_place_trades():

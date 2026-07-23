@@ -559,6 +559,8 @@ def _check_signal_reversal(
     symbol: str,
     features: dict[str, Any],
     config: dict[str, Any],
+    *,
+    age_seconds: float = 0,
 ) -> tuple[bool, str]:
     """Check if M5/M15 trend has flipped against the open position side.
 
@@ -569,10 +571,20 @@ def _check_signal_reversal(
     Uses ``trading.signal_reversal_early_close.check_trend`` to choose
     which timeframe to inspect (m5, m15, or both). Disabled when the
     config toggle is off or the feature data is missing.
+
+    Includes a ``min_hold_seconds`` gate (default 60) so trades opened
+    less than that many seconds ago are NEVER reversal-closed. This
+    prevents the immediate open-close loop when features data from the
+    previous cycle shows conflicting trend vs the newly opened side.
     """
     _sr_cfg = ((config.get("trading") or {}).get("signal_reversal_early_close") or {})
     if not _sr_cfg.get("enabled", False):
         return False, "signal_reversal_disabled"
+
+    # Minimum hold: skip reversal check for freshly-opened trades
+    _min_hold = int(_sr_cfg.get("min_hold_seconds", 60))
+    if age_seconds < _min_hold:
+        return False, f"age={age_seconds:.0f}s < min_hold={_min_hold}s"
 
     feat = features.get("symbols", {}).get(symbol, {})
     m5 = str(feat.get("m5_trend") or "")
@@ -981,7 +993,12 @@ def manage_paper_positions(
         # Same logic as manage_mt5_positions: close early when the M5 or M15
         # trend flips against the position side. For paper mode we can't use
         # MT5Broker, so we record a synthetic close and skip the position.
-        _rev, _rev_reason = _check_signal_reversal(side, symbol, features, config)
+        _open_times = _load_open_times()
+        _rev_age = position_age_seconds(pos, _open_times)
+        _rev, _rev_reason = _check_signal_reversal(
+            side, symbol, features, config,
+            age_seconds=_rev_age,
+        )
         if _rev:
             _entry = float(pos.get("entry", 0) or 0)
             _pnl = round((price - _entry) * float(pos.get("size", 0.01)), 2) if side == "BUY" else round((_entry - price) * float(pos.get("size", 0.01)), 2)
@@ -1164,7 +1181,14 @@ def manage_mt5_positions(
         # When M5 or M15 trend flips against the position side, close early
         # instead of waiting for SL/BE/trail.  This prevents winners from
         # reversing to losses and losers from deepening.
-        _rev, _rev_reason = _check_signal_reversal(side, symbol, features, config)
+        #
+        # Minimum hold gate (default 60s) prevents immediate open-close
+        # loops when features data from the prior cycle shows conflicting
+        # trend vs the newly opened trade side.
+        _rev, _rev_reason = _check_signal_reversal(
+            side, symbol, features, config,
+            age_seconds=age,
+        )
         if _rev:
             try:
                 from core.mt5_broker import MT5Broker

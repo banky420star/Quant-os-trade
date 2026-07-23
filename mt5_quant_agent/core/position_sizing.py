@@ -90,6 +90,30 @@ def calc_executable_volume(
         signal["kelly"] = kelly
     risk_pct = float(kelly.get("fraction", default_risk_pct))
 
+    # 2026-07-22 — symbol canary A/B: apply the canary lot multiplier at
+    # the RISK_PCT layer (BEFORE the USD risk cap clamps risk_money) so
+    # the boost flows through cap-normalisation. The previous post-clamp
+    # IDEAL-amplification was silently cancelled by min_lot + USD-cap
+    # `cap_size_to_exposure_limits`. Observe-only — solely the canary
+    # state file is the persistent surface; no config mutation.
+    try:
+        from core.canary import lot_multiplier_for as _canary_mult
+        _canary_boost = float(_canary_mult(symbol, config=config) or 1.0)
+        _canary_boost = _canary_boost if _canary_boost > 1.0 else 1.0
+    except Exception:
+        _canary_boost = 1.0
+    if _canary_boost > 1.0:
+        risk_pct = risk_pct * _canary_boost
+        details["canary_multiplier"] = round(_canary_boost, 3)
+
+    # Risk-parity scaling: when the candidate carries a stream share (e.g.
+    # donchian_breakout 0.25), we reduce per-trade risk_pct AND USD cap by
+    # that share so the 4-stream bot stays within its risk budget.
+    rp_share = signal.get("risk_parity_share")
+    rp_active = rp_share is not None and 0 < float(rp_share) <= 1
+    if rp_active:
+        risk_pct = risk_pct * float(rp_share)
+
     max_lot = float(exec_cfg.get("max_lot", 0.1))
     default_lot = float(exec_cfg.get("default_lot", 0.01))
     symbol = signal["symbol"]
@@ -107,7 +131,10 @@ def calc_executable_volume(
         risk_money = float(equity) * (risk_pct / 100.0)
         cap_usd = effective_risk_cap(config, balance, symbol=symbol)
         if cap_usd is not None:
-            risk_money = min(risk_money, cap_usd)
+            # Cap also scales by risk_parity share so a 0.25-share stream
+            # can't blow through the per-trade USD cap at full size.
+            scaled_cap = cap_usd * float(rp_share) if rp_active else cap_usd
+            risk_money = min(risk_money, scaled_cap)
         if tick_value > 0 and tick_size > 0:
             ticks = risk_dist / tick_size
             ideal = risk_money / (ticks * tick_value)
@@ -117,6 +144,24 @@ def calc_executable_volume(
     ideal = min(ideal, max_lot_for_symbol(config, symbol, max_lot))
     if ideal < vmin:
         ideal = min(max(default_lot, vmin), max_lot)
+
+    # 2026-07-22 — symbol canary A/B: amplify the IDEAL size BEFORE all
+    # downstream gates so exposure caps, USD risk caps, and pyramid scaling
+    # see the boosted size and naturally shrink it back if needed. This
+    # avoids the failure mode where the canary multiplier at the END of
+    # the pipeline could push loss_usd past the risk cap and outright
+    # reject the trade. Observe-only by design (state/canary_state.json
+    # is the only persistent surface; no config mutation).
+    try:
+        from core.canary import lot_multiplier_for as _canary_mult
+        _canary_boost = float(_canary_mult(symbol, config=config) or 1.0)
+        _canary_boost = _canary_boost if _canary_boost > 1.0 else 1.0
+    except Exception:
+        _canary_boost = 1.0
+    if _canary_boost > 1.0:
+        ideal = ideal * _canary_boost
+        ideal = max(vmin, min(ideal, max_lot))
+        details["canary_multiplier"] = round(_canary_boost, 3)
 
     # Scalable lot sizing: scale the ideal lot by signal confidence and current
     # drawdown. High confidence + low drawdown -> larger lot (up to max_lot);
@@ -183,10 +228,27 @@ def calc_executable_volume(
 
     layer = int(signal.get("pyramid_layer", pyramid_layer_index(signal, positions)))
     vol = scale_lot_for_layer(config, symbol, vol, layer)
+
+    # 2026-07-22 — symbol canary A/B: when today's canary pick matches
+    # `symbol`, apply `canary_state.lot_multiplier` (default 1.5x) AT
+    # THE IDEAL-SIZE LAYER (before exposure + USD risk-cap gates) so the
+    # downstream gates see the amplified size and either keep or cap it
+    # down without outright rejection. Observe-only by design — the
+    # canary state file is the only persistent state.
+    try:
+        from core.canary import lot_multiplier_for as _canary_mult
+        _canary = float(_canary_mult(symbol, config=config) or 1.0)
+        _canary = _canary if _canary > 1.0 else 1.0
+    except Exception:
+        _canary = 1.0
+    if _canary > 1.0:
+        details["canary_multiplier"] = round(_canary, 3)
+
     vol = normalize_volume(vol, symbol_spec)
 
     cap_usd = effective_risk_cap(config, balance, symbol=symbol)
     if cap_usd is not None and risk_dist > 0 and vol > 0:
+        scaled_cap = cap_usd * float(rp_share) if rp_active else cap_usd
         loss_usd = estimate_stop_loss_usd(
             risk_dist=risk_dist,
             volume=vol,
@@ -194,10 +256,34 @@ def calc_executable_volume(
             tick_size=tick_size,
         )
         details["stop_loss_usd"] = round(loss_usd, 2)
-        details["risk_cap_usd"] = round(cap_usd, 2)
-        if loss_usd > cap_usd + 0.05:
-            details["reject_reason"] = "min_lot_stop_risk_exceeds_cap"
-            return 0.0, details
+        details["risk_cap_usd"] = round(scaled_cap, 2)
+        if loss_usd > scaled_cap + 0.05:
+            # 2026-07-22 — canary-friendly shrink-to-fit: if the canary
+            # boost pushed loss_usd over the cap, scale vol DOWN
+            # proportionally (with a 5% safety pad) rather than outright
+            # rejecting the trade. Preserves the A/B experiment flow.
+            _cbo = float(details.get("canary_multiplier", 1.0) or 1.0)
+            if _cbo > 1.0 and vol > 0 and loss_usd > 0:
+                _target = vol * (scaled_cap * 0.95) / loss_usd
+                _target_n = normalize_volume(_target, symbol_spec)
+                if _target_n >= vmin:
+                    loss_usd = estimate_stop_loss_usd(
+                        risk_dist=risk_dist, volume=_target_n,
+                        tick_value=tick_value, tick_size=tick_size,
+                    )
+                    if loss_usd <= scaled_cap + 0.05:
+                        vol = _target_n
+                        details["canary_capped_to_fit"] = True
+                        details["stop_loss_usd"] = round(loss_usd, 2)
+            if loss_usd > scaled_cap + 0.05:
+                # 2026-07-22 — clearer reject reason distinguishing
+                # normal cap-exceeded from canary-boost-induced exceedance.
+                if details.get("canary_multiplier", 1.0) > 1.0:
+                    details["reject_reason"] = "canary_boost_cannot_fit_under_risk_cap"
+                    details["canary_overshoot_usd"] = round(loss_usd - scaled_cap, 4)
+                else:
+                    details["reject_reason"] = "min_lot_stop_risk_exceeds_cap"
+                return 0.0, details
 
     details["executable_volume"] = vol
     return vol, details
