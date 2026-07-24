@@ -28,6 +28,7 @@ from core.trade_limits import (
     is_duplicate_position,
     session_trade_capacity_available,
     symbol_reentry_available,
+    total_position_capacity_available,
     unlimited_trades,
 )
 from core.utils import read_json_state, utc_now_iso
@@ -349,6 +350,10 @@ class Verifier:
             signal["symbol"],
             active_signals,
         )
+        total_ok, _total_limit = total_position_capacity_available(
+            self.config, active_signals,
+        )
+        checks["total_position_capacity"] = total_ok
         # Confidence floor: a new position must be at least as confident as the
         # strongest currently-open position (don't add a weaker trade on top of
         # a stronger one). Open-position confidences are persisted by the broker

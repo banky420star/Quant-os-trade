@@ -408,6 +408,35 @@ def _strategy_comparison(edge_insights: dict, rankings: dict) -> list[dict]:
     return unique[:12]
 
 
+# ----- Exit-reason → flag mapping -----
+# PRIMARY source for Profit Quality BE/Partial/Stale/Trailing splits.
+# Each key is the exact exit_reason string produced by trade_tracker.py
+# from MT5 DEAL_REASON codes (or paper mgmt_row flags).
+# None = unresolved (falls through to "unknown" bucket in segmentation).
+_EXIT_REASON_FLAGS: dict[str, dict[str, bool | None]] = {
+    # Full SL hits — BE never triggered. Partial TP is an INTERMEDIATE action
+    # that exit_reason doesn't capture (partial may have been taken before SL).
+    # partial=None so mgmt/archive can supplement when available.
+    "stop_loss":            {"be": False, "partial": None,  "trailing": False, "stale": False},
+    "stop_out":             {"be": False, "partial": None,  "trailing": False, "stale": False},
+    "sl_hit":               {"be": False, "partial": None,  "trailing": False, "stale": False},
+    # TP hits — BE was hit (trade in profit), partial TP was done
+    "take_profit":          {"be": True,  "partial": True,  "trailing": False, "stale": False},
+    "partial_take_profit":  {"be": True,  "partial": True,  "trailing": False, "stale": False},
+    "tp1_hit":              {"be": True,  "partial": True,  "trailing": False, "stale": False},
+    "tp2_hit":              {"be": True,  "partial": True,  "trailing": False, "stale": False},
+    # BE explicitly triggered and closed the remaining position.
+    # Partial TP is intermediate (may have been taken before BE triggered).
+    "break_even_stop":      {"be": True,  "partial": None,  "trailing": False, "stale": False},
+    "break_even":           {"be": True,  "partial": None,  "trailing": False, "stale": False},
+    # Trailing stop — BE was hit (trail only activates after BE), partial TP ambiguous
+    "trailing_stop":        {"be": True,  "partial": None,  "trailing": True,  "stale": False},
+    # Time-based / stale closes — definitely stale, BE/partial unknown without mgmt_row
+    "time_stop":            {"be": None,  "partial": None,  "trailing": None,  "stale": True},
+    "stale":                {"be": None,  "partial": None,  "trailing": None,  "stale": True},
+}
+
+
 def _build_profit_quality(
     trade_log: dict,
     pos_mgmt: dict,
@@ -428,25 +457,21 @@ def _build_profit_quality(
       * Partial x Stale (catches "BE-then-time-stop triples")
       * BE x Stale (catches "BE'd to flat and still killed by time-stop")
 
-    Data-join strategy (in order until resolved):
-      1. Per-trade `position_mgmt` (truthful when populated by TradeTracker).
-      2. Cross-join against live state/position_management.json by ticket.
-      3. Tier-2 (2026-07-20): consult state/position_mgmt_archive.jsonl to
-         recover mgmt flags from CLOSED MANAGED POSITIONS that have rolled out
-         of the live mgmt state. Skipped when trade's position_mgmt has any
-         True flag (live always wins). This is what turns the BE/Partial/Stale
-         axes GREEN for historical closes retro-backfilled by
-         scripts/backfill_mgmt_archive.py.
-      4. Infer from exit_reason ("partial_take_profit" -> partial=True,
-         contains "breakeven" / "break_even_stop" -> BE=True,
-         "time_stop" / "stale" -> stale=True).
-      5. Anything unresolved -> "unknown" bucket so the panel is honest about
+    Flag resolution (exit_reason is now PRIMARY):
+      1. Map exit_reason string through _EXIT_REASON_FLAGS dict (80%+ coverage now).
+      2. For unknown exit_reason values (mt5_close, closed_externally), consult the
+         per-trade position_mgmt dict, then live join to position_management.json,
+         then archive fallback (position_mgmt_archive.jsonl).
+      3. Stale_tickets from position_management.json last_run.audit (time_stop_closed)
+         + trade_manager.json stale_candidates override the stale flag for any reason.
+      4. Anything unresolved -> None -> "unknown" bucket so the panel is honest about
          the data layer gap rather than inventing false positives.
     """
     trades = list(trade_log if isinstance(trade_log, list) else (trade_log or {}).get("trades") or [])
 
     # ----- stale ticket lookup from pos_mgmt last-run audit + trade_mgr ----
-    # Specific exceptions; do not swallow AttributeError/TypeError so real bugs surface.
+    # Used as stale-flag override for trades where exit_reason doesn't carry the
+    # time_stop signal (e.g. mt5_close that was actually a stale close).
     stale_tickets: set[str] = set()
     try:
         last_run = (pos_mgmt or {}).get("last_run", {}) or {}
@@ -466,7 +491,7 @@ def _build_profit_quality(
     except (AttributeError, TypeError, KeyError):
         pass
 
-    # ----- mgmt state by ticket (live join for missing per-trade mgmt) -----
+    # ----- mgmt state by ticket (fallback for unknown exit_reason) -----
     mgmt_positions: dict[str, dict] = {}
     try:
         positions = (pos_mgmt or {}).get("positions", {}) or {}
@@ -477,41 +502,35 @@ def _build_profit_quality(
     except (AttributeError, TypeError, KeyError):
         pass
 
-    # Tier-2: archive fallback for closed positions whose live mgmt has rolled.
-    # Loaded once per _build_profit_quality call (bounded 50k JSONL lines).
-    # mtime-cached in core/utils.py so a dashboard poll hot loop doesn't
-    # re-parse 50k records each tick.
-    archive_index: dict[str, dict[str, Any]] = {}
+
+
+    # Archive partial_tp_done lookup: flat mapping from ANY trade identifier
+    # field (mt5_position, ticket, position_id, trade_id, mt5_deal) to True.
+    # Built from position_mgmt_archive.jsonl. Uses ROOT (canonical path).
+    _archive_partial: dict[str, bool] = {}
     try:
-        from core.utils import read_archive_index_cached
-        archive_index = read_archive_index_cached("position_mgmt_archive.jsonl")
-    except (AttributeError, TypeError, KeyError, OSError):
-        archive_index = {}
+        _ap = ROOT / "state" / "position_mgmt_archive.jsonl"
+        if _ap.exists():
+            for _line in _ap.read_text(encoding="utf-8").strip().splitlines():
+                _rec = json.loads(_line)
+                if _rec.get("mgmt_row", {}).get("partial_tp_done"):
+                    for _id_key in ("mt5_position", "ticket", "position_id", "trade_id", "mt5_deal"):
+                        _iv = _rec.get(_id_key)
+                        if _iv is not None and str(_iv):
+                            _archive_partial[str(_iv)] = True
+    except Exception:
+        _archive_partial = {}
 
     enriched: list[dict] = []
-    n_with_mgmt = 0
     n_with_r = 0
-    n_with_stale_flag = 0
-    from core.utils import _live_mgmt_has_truthy
+    n_exit_reason_used = 0
+    n_mgmt_fallback = 0
+    n_mgmt_joined = 0
+    n_stale_flagged = 0
     for t in trades:
         et = dict(t)
-        # Tier-2 (REVIEW FIX): try ALL of {mt5_position, ticket, position_id,
-        # trade_id, mt5_deal} as archive keys. The prior `or`-chain picked the
-        # first truthy value but the archive was keyed by trade_id while mt5
-        # deals are keyed by mt5_position — they often DISAGREE for paper-vs-live
-        # and backfilled closes. The first key that hits the archive wins.
-        archive_hit: dict[str, Any] | None = None
-        archive_key_used: str | None = None
-        for candidate_key in ("mt5_position", "ticket", "position_id", "trade_id", "mt5_deal"):
-            kval = et.get(candidate_key)
-            if kval is None or kval == "":
-                continue
-            rec = archive_index.get(str(kval))
-            if isinstance(rec, dict):
-                archive_hit = rec
-                archive_key_used = str(kval)
-                break
-        ticket = archive_key_used or str(
+        er = str(et.get("exit_reason") or "").lower()
+        ticket = str(
             et.get("mt5_position")
             or et.get("ticket")
             or et.get("position_id")
@@ -519,62 +538,140 @@ def _build_profit_quality(
             or et.get("mt5_deal")
             or ""
         )
-        mgmt = et.get("position_mgmt") if isinstance(et.get("position_mgmt"), dict) else {}
-        if not mgmt and ticket and ticket in mgmt_positions:
-            mgmt = dict(mgmt_positions[ticket])
-            et["position_mgmt"] = mgmt
-            et["position_mgmt_source"] = "live_state"
-        # Tier-2: archive fallback when neither per-trade nor live mgmt has
-        # any truthy flag. Live mgmt with all-falsy values is treated as
-        # "no live signal" so the archive can fill in what existed during
-        # the position's lifecycle. Uses shared _live_mgmt_has_truthy so
-        # this stays in lockstep with trade_tracker._hydrate semantics.
-        if archive_hit and not _live_mgmt_has_truthy(mgmt):
-            snap = archive_hit.get("mgmt_row") or {}
-            if isinstance(snap, dict) and snap:
-                merged = {k: v for k, v in mgmt.items()}
-                for k, v in snap.items():
-                    if v is not None and not merged.get(k):
-                        merged[k] = v
-                merged["_from_archive"] = True
-                merged["_archive_reason"] = archive_hit.get("reason")
-                mgmt = merged
+
+        # PRIMARY: derive flags from exit_reason mapping
+        flags = _EXIT_REASON_FLAGS.get(er)
+        if flags is not None:
+            be_val = flags["be"]
+            partial_val = flags["partial"]
+            trailing_val = flags["trailing"]
+            is_stale = flags["stale"]
+            n_exit_reason_used += 1
+            et["_mgmt_source"] = "exit_reason"
+        else:
+            # FALLBACK: unknown exit_reason (mt5_close, closed_externally, etc.)
+            # Try per-trade position_mgmt, then live join, then archive.
+            mgmt = (
+                et.get("position_mgmt")
+                if isinstance(et.get("position_mgmt"), dict)
+                else {}
+            )
+            if not mgmt and ticket and ticket in mgmt_positions:
+                mgmt = dict(mgmt_positions[ticket])
                 et["position_mgmt"] = mgmt
-                et["position_mgmt_source"] = "archive"
-        if mgmt:
-            n_with_mgmt += 1
-        er = str(et.get("exit_reason") or "").lower()
+                n_mgmt_joined += 1
 
-        be_val = et.get("be_triggered")
-        if be_val is None and "break_even" in mgmt:
-            be_val = bool(mgmt.get("break_even"))
-        # Robust BE inference: match "break_even", "breakeven", "be_stop", "be-stop",
-        # but NOT "break-even_stop" winners (those have positive pnl on the close leg).
-        if be_val is None:
-            import re as _re
-            if _re.search(r"break[_ -]?even", er) and "partial" not in er:
-                be_val = True
+            be_val = et.get("be_triggered")
+            if be_val is None and "break_even" in mgmt:
+                be_val = bool(mgmt.get("break_even"))
+            partial_val = None
+            if "partial_tp_done" in mgmt:
+                partial_val = bool(mgmt.get("partial_tp_done"))
+            elif et.get("partial_tp_done") is not None:
+                partial_val = bool(et.get("partial_tp_done"))
+            trailing_val = bool(mgmt.get("trailing")) if "trailing" in mgmt else None
+            is_stale = False
+            n_mgmt_fallback += 1
+            et["_mgmt_source"] = et.get("_mgmt_source") or "mgmt_state"
+            # Substring inference for exit_reason variants that aren't in the
+            # exact-match map (e.g. "close_partial_tp1", "breakeven_exit").
+            # Only fills flags that mgmt left unresolved.
+            if er:
+                if partial_val is None and "partial" in er:
+                    partial_val = True
+                if be_val is None and ("break_even" in er or "breakeven" in er):
+                    be_val = True
+                if trailing_val is None and "trailing" in er:
+                    trailing_val = True
+                if "time_stop" in er or "stale" in er:
+                    is_stale = True
+            # Final fallback (2026-07-22): re-derive exit_reason for mt5_close
+            # trades that have mgmt enrichment from archive. Same heuristic as
+            # sync_mt5_closed_deals — profit sign + stale_closed flag. Stamps
+            # et["exit_reason"] so the stoploss hit rate and from_exit_reason
+            # data-quality counter reflect these trades.
+            if er == "mt5_close" and isinstance(mgmt, dict):
+                _derived = None
+                if mgmt.get("stale_closed"):
+                    _derived = "time_stop"
+                elif et.get("pnl") is not None:
+                    try:
+                        _p = float(et["pnl"])
+                        if _p < 0:
+                            _derived = "stop_loss"
+                        elif _p > 0:
+                            _derived = "take_profit"
+                    except (TypeError, ValueError):
+                        pass
+                if _derived:
+                    er = _derived
+                    et["exit_reason"] = er
+                    n_exit_reason_used += 1
+                    n_mgmt_fallback -= 1
+                    et["_mgmt_source"] = "exit_reason"
+                    # Re-derive flags from the resolved exit_reason. The
+                    # pnl-sign heuristic must never override flags already
+                    # known from truthful mgmt state (a green close does NOT
+                    # imply BE was ever triggered) — only fill the gaps.
+                    _df = _EXIT_REASON_FLAGS.get(er)
+                    if _df:
+                        if be_val is None:
+                            be_val = _df["be"]
+                        if partial_val is None:
+                            partial_val = _df["partial"]
+                        if trailing_val is None:
+                            trailing_val = _df["trailing"]
+                        if not is_stale:
+                            is_stale = bool(_df["stale"])
 
-        partial_val = None
-        if "partial_tp_done" in mgmt:
-            partial_val = bool(mgmt.get("partial_tp_done"))
-        elif et.get("partial_tp_done") is not None:
-            partial_val = bool(et.get("partial_tp_done"))
-        if partial_val is None and "partial" in er:
-            partial_val = True
+        # SUPPLEMENT: partial TP is an INTERMEDIATE action that exit_reason may
+        # not capture (e.g. stop_loss after partial was taken). When exit_reason
+        # leaves partial=None, consult mgmt/archive to recover the partial flag.
+        # Uses multi-key scanning (mt5_position, ticket, position_id, trade_id,
+        # mt5_deal) because the archive may be keyed differently per trade.
+        if partial_val is None:
+            _s_mgmt = (
+                et.get("position_mgmt")
+                if isinstance(et.get("position_mgmt"), dict)
+                else {}
+            )
+            if not _s_mgmt:
+                for _k in ("mt5_position", "ticket", "position_id", "trade_id", "mt5_deal"):
+                    _v = et.get(_k)
+                    if _v is None or _v == "":
+                        continue
+                    if str(_v) in mgmt_positions:
+                        _s_mgmt = dict(mgmt_positions[str(_v)])
+                        break
 
-        is_stale = ticket in stale_tickets if ticket else False
-        if not is_stale:
-            import re as _re
-            if _re.search(r"time[_ -]?stop|stale", er):
-                is_stale = True
+            if "partial_tp_done" in _s_mgmt:
+                partial_val = bool(_s_mgmt.get("partial_tp_done"))
+            elif et.get("partial_tp_done") is not None:
+                partial_val = bool(et.get("partial_tp_done"))
+
+        # DEDICATED ARCHIVE FALLBACK for partial_tp_done:
+        # mgmt_positions (13 entries, 0 partial, overlaps 12/13 with trades)
+        # blocks the original archive loop. This fallback uses a flat
+        # _archive_partial dict (trade_id→True) to bypass that blind spot.
+        if partial_val is None:
+            for _k in ("mt5_position", "ticket", "position_id", "trade_id", "mt5_deal"):
+                _v = et.get(_k)
+                if _v is None or _v == "":
+                    continue
+                if _archive_partial.get(str(_v)):
+                    partial_val = True
+                    break
+
+        # Override stale flag with stale_tickets set (catches mt5_close that was really stale)
+        if ticket and ticket in stale_tickets:
+            is_stale = True
         if is_stale:
-            n_with_stale_flag += 1
+            n_stale_flagged += 1
 
         et["_enriched_mgmt"] = {
             "break_even": be_val,
             "partial_tp_done": partial_val,
-            "trailing": bool(mgmt.get("trailing")) if "trailing" in mgmt else None,
+            "trailing": trailing_val,
             "stale": bool(is_stale),
         }
         if et.get("r_multiple") is not None:
@@ -754,6 +851,16 @@ def _build_profit_quality(
             _meter["proposal_written"] = False
             _meter["proposal_error"] = str(_proposal_err)[:120]
         _meter["current_floor_resolved"] = _meter_floor
+
+        # Stoploss hit rate KPI — pct of trades that exited via stop_loss
+        _stoploss_n = sum(
+            1 for t in enriched
+            if str(t.get("exit_reason") or "").lower() == "stop_loss"
+        )
+        _stoploss_total = max(len(enriched), 1)
+        _meter["stoploss_hit_rate"] = round(100.0 * _stoploss_n / _stoploss_total, 1)
+        _meter["stoploss_hit_n"] = _stoploss_n
+        _meter["stoploss_hit_total"] = _stoploss_total
     except Exception as _meter_err:
         _meter = {
             "error": f"meter_unavailable: {str(_meter_err)[:120]}",
@@ -766,16 +873,19 @@ def _build_profit_quality(
         "n_total": n_total,
         "meter": _meter,
         "data_quality": {
-            "trades_with_mgmt_joined": n_with_mgmt,
+            "archive_partial_size": len(_archive_partial),
+            "trades_from_exit_reason": n_exit_reason_used,
+            "trades_from_mgmt_fallback": n_mgmt_fallback,
+            "trades_with_mgmt_joined": n_mgmt_joined,
             "trades_with_r_multiple": n_with_r,
-            "trades_stale_flagged": n_with_stale_flag,
+            "trades_stale_flagged": n_stale_flagged,
             "pct_complete_be_and_r": pct_complete,
             "note": (
-                "BE/partial flags prefer per-trade position_mgmt, then live join to "
-                "state/position_management.json, then exit_reason inference. Anything "
-                "unresolved is marked 'unknown'. Stale = joined to "
-                "position_management.json.last_run.audit (time_stop_closed) + "
-                "trade_manager.json.stale_candidates."
+                "BE/partial/trailing flags now derived from exit_reason (DEAL_REASON codes) "
+                "as PRIMARY source. Fallback to position_mgmt dict + live state join only "
+                "for unknown exit_reasons (mt5_close, closed_externally). Stale = exit_reason "
+                "time_stop/stale OR stale_tickets from position_management.json.last_run "
+                "(time_stop_closed) + trade_manager.json.stale_candidates."
             ),
         },
         "r_buckets": _ordered_buckets(R_ORDER, r_buckets),
@@ -1232,6 +1342,235 @@ def _build_learning_status(config: dict, state: dict, decisions: list, reviews: 
         "active_proposals": active,
         "rejected_proposals": rejected,
         "updated_at": state.get("updated_at"),
+    }
+
+
+def _build_daily_pnl_today() -> dict:
+    """Dashboard snapshot of today's (UTC-midnight onwards) closed-trade
+    realized PnL and the daily-profit halt gate state.
+
+    Powers /api/daily_pnl so the user can SEE when the bot has earned enough
+    to halt itself for the day. Backed by core.daily_pnl — the gate in
+    execution_loop._check_execution_allowed uses the same helper, so this
+    payload is the canonical view of "did the halt fire, and where are we?".
+
+    Return shape (stable; clients depend on these keys):
+        today_realized_usd   — sum of closed-trade pnl from UTC midnight today
+        threshold_usd        — config.risk.daily_profit_halt_usd (0 = disabled)
+        remaining_usd        — max(threshold - today, 0) | 0 when disabled
+        progress_pct         — min(today/threshold*100, 100); 0 when disabled
+        halt_active          — TRUE when kill_switch.json is the daily halt
+                               AND its day_stamp matches today
+        halt_reason          — copy of kill_switch.reason while halt_active
+        halt_day_stamp       — copy of kill_switch.day_stamp while halt_active
+        halted_at            — copy of kill_switch.halted_at while halt_active
+        day_stamp_today      — "YYYY-MM-DD" UTC (the boundary key)
+        day_resets_at_iso    — next UTC midnight ISO timestamp (auto-reset hour)
+        trade_count_today    — n closed trades since UTC midnight
+        wins_today / losses_today
+        by_symbol            — [{symbol, pnl, closed_count}, …] sorted by pnl desc
+        status               — "halt_active" | "tracking" | "disabled"
+        updated_at_iso       — wall-clock ISO timestamp of the snapshot
+    """
+    try:
+        from datetime import date, datetime, timedelta, timezone as _tz
+        config = load_config()
+        from core.daily_pnl import (
+            today_realized_pnl_breakdown,
+            today_realized_pnl_usd,
+            today_utc_day_stamp,
+        )
+        threshold_usd = float(
+            (config.get("risk") or {}).get("daily_profit_halt_usd", 0) or 0
+        )
+        breakdown = today_realized_pnl_breakdown("paper_trades.json")
+        pnl_today = today_realized_pnl_usd("paper_trades.json")
+        stamp_today = today_utc_day_stamp()
+
+        kill = read_json_state("kill_switch.json", default={}) or {}
+        kill_reason = str(kill.get("reason") or "")
+        kill_day = str(kill.get("day_stamp") or "")
+        # Broaden day-stamp match to cover the post-midnight window (~up to
+        # one cycle, ~15s on growth profile) where kill_switch.json still
+        # carries yesterday's day_stamp until execution_loop's day-rollover
+        # block clears it on the bot's NEXT cycle. Without this, the tile
+        # would briefly flash "tracking" while execution is ACTUALLY frozen.
+        try:
+            stamp_yesterday = (
+                date.fromisoformat(stamp_today) - timedelta(days=1)
+            ).isoformat()
+        except (ValueError, TypeError):
+            stamp_yesterday = stamp_today
+        halt_active = (
+            bool(kill.get("kill_switch"))
+            and "daily_profit_halt" in kill_reason
+            and kill_day in (stamp_today, stamp_yesterday)
+        )
+
+        if threshold_usd <= 0:
+            status = "disabled"
+        elif halt_active:
+            status = "halt_active"
+        else:
+            status = "tracking"
+
+        remaining_usd = max(threshold_usd - pnl_today, 0.0)
+        progress_pct = (
+            round(min(pnl_today / threshold_usd * 100.0, 100.0), 1)
+            if threshold_usd > 0 else 0.0
+        )
+
+        # Sort by_symbol detail by pnl desc so winners float to the top.
+        # Uses breakdown.per_symbol_detail (added by core/daily_pnl) so we
+        # walk paper_trades.json ONCE — previously the helper re-walked
+        # the same JSON a second time just to count per-symbol closed
+        # trades, and the two passes could disagree across a day rollover.
+        _detail = breakdown.get("per_symbol_detail") or {}
+        by_symbol = [
+            {
+                "symbol": sym,
+                "pnl": round(float(detail.get("pnl", 0) or 0), 2),
+                "closed_count": int(detail.get("closed_count", 0) or 0),
+                "wins": int(detail.get("wins", 0) or 0),
+                "losses": int(detail.get("losses", 0) or 0),
+            }
+            for sym, detail in sorted(
+                _detail.items(),
+                key=lambda kv: float(kv[1].get("pnl", 0) or 0),
+                reverse=True,
+            )
+        ]
+
+        # Next UTC midnight (auto-reset hour; relies on the hoisted
+        # datetime import at the top of the function body).
+        next_midnight = (
+            datetime.now(_tz.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0,
+            ) + timedelta(days=1)
+        )
+
+        return {
+            "today_realized_usd": round(float(pnl_today), 2),
+            "threshold_usd": float(threshold_usd),
+            "remaining_usd": round(float(remaining_usd), 2),
+            "progress_pct": progress_pct,
+            "halt_active": bool(halt_active),
+            "halt_reason": kill_reason if halt_active else None,
+            "halt_day_stamp": kill_day if halt_active else None,
+            "halted_at": kill.get("halted_at") if halt_active else None,
+            "day_stamp_today": stamp_today,
+            "day_resets_at_iso": next_midnight.isoformat(),
+            "trade_count_today": int(breakdown.get("closed_count") or 0),
+            "wins_today": int(breakdown.get("wins") or 0),
+            "losses_today": int(breakdown.get("losses") or 0),
+            "by_symbol": by_symbol,
+            "status": status,
+            "updated_at_iso": utc_now_iso(),
+        }
+    except Exception as _daily_pnl_err:
+        _LOG.warning("_build_daily_pnl_today failed: %s", _daily_pnl_err)
+        return {
+            "today_realized_usd": 0.0,
+            "threshold_usd": 0.0,
+            "remaining_usd": 0.0,
+            "progress_pct": 0.0,
+            "halt_active": False,
+            "halt_reason": None,
+            "halt_day_stamp": None,
+            "halted_at": None,
+            "day_stamp_today": None,
+            "day_resets_at_iso": None,
+            "trade_count_today": 0,
+            "wins_today": 0,
+            "losses_today": 0,
+            "by_symbol": [],
+            "status": "error",
+            "updated_at_iso": utc_now_iso(),
+            "error": str(_daily_pnl_err)[:200],
+        }
+
+
+def _build_adaptive_exit_tile() -> dict:
+    """Compute per-symbol adaptive exit SL/TP for each open position.
+
+    Reads open positions from paper_positions.json and computes what the
+    adaptive exit engine would set as SL, TP1, TP2 for each position
+    based on current market data.
+
+    Returns a list of per-position dicts with keys:
+      symbol, side, entry, sl, tp1, tp2, current_price, atr, spread_pct_of_tp,
+      sl_atr_mult, tp_atr_mult, trail_atr, exit_reason, profit_usd
+    """
+    config = load_config()
+    features = read_json_state("features.json", default={"symbols": {}})
+    positions_data = read_json_state("paper_positions.json", default={"positions": []})
+    positions = list(positions_data.get("positions", []))
+    feat_symbols = features.get("symbols", {})
+
+    adaptive_exit_on = False
+    try:
+        from core.adaptive_exit import adaptive_exit_enabled, compute_adaptive_levels, get_symbol_config
+        adaptive_exit_on = adaptive_exit_enabled(config)
+    except Exception:
+        return {"enabled": False, "symbols": [], "note": "adaptive_exit module unavailable"}
+
+    rows = []
+    for pos in positions:
+        sym = pos.get("symbol", "")
+        side = pos.get("side", "BUY")
+        entry = float(pos.get("entry", 0) or 0)
+        current_sl = float(pos.get("sl", 0) or 0)
+        tp1 = float(pos.get("tp1", 0) or 0)
+        feat = feat_symbols.get(sym, {})
+        price = float(feat.get("price", entry))
+        atr = float(feat.get("atr", price * 0.001) or price * 0.001)
+        profit_usd = float(pos.get("profit", 0) or 0)
+        spread_pts = int(feat.get("spread_points", 0) or 0)
+
+        row = {
+            "symbol": sym,
+            "side": side,
+            "entry": entry,
+            "current_sl": current_sl,
+            "current_tp1": tp1,
+            "current_price": price,
+            "atr": round(atr, 6),
+            "profit_usd": round(profit_usd, 2),
+            "spread_points": spread_pts,
+        }
+
+        if adaptive_exit_on and sym:
+            try:
+                cfg = get_symbol_config(sym, config)
+                adaptive = compute_adaptive_levels(
+                    symbol=sym,
+                    side=side,
+                    entry=entry,
+                    atr=atr,
+                    price=price,
+                    spread_points=spread_pts,
+                    config=config,
+                )
+                row["adaptive_sl"] = adaptive["sl"]
+                row["adaptive_tp1"] = adaptive["tp1"]
+                row["adaptive_tp2"] = adaptive["tp2"]
+                row["sl_points"] = adaptive["sl_points"]
+                row["tp_points"] = adaptive["tp_points"]
+                row["spread_pct_of_tp"] = adaptive["spread_pct_of_tp"]
+                row["sl_atr_mult"] = cfg.get("sl_atr", 0.8)
+                row["tp_atr_mult"] = cfg.get("tp_m5_atr", 0.3)
+                row["trail_atr"] = cfg.get("trail_atr", 0.25)
+            except Exception as exc:
+                row["adaptive_error"] = str(exc)[:80]
+
+        rows.append(row)
+
+    return {
+        "enabled": adaptive_exit_on,
+        "symbols": rows,
+        "count": len(rows),
+        "updated_at": utc_now_iso(),
+        "features_available": bool(feat_symbols),
     }
 
 
@@ -2760,6 +3099,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "message": str(exc)[:240],
                     "updated_at": utc_now_iso(),
                 })
+        elif path == "/api/daily_pnl":
+            # Daily-profit-halt snapshot: today's closed-trade realized PnL,
+            # threshold (config.risk.daily_profit_halt_usd), progress %, halt
+            # status, and per-symbol breakdown. Independent from /api/state so
+            # a stale state miss can't mask "$400 target reached" — the helper
+            # reads paper_trades.json + kill_switch.json directly and is bounded
+            # by their actual size.
+            try:
+                self._send_json(_build_daily_pnl_today())
+            except Exception as _dxc:  # noqa: BLE001
+                _LOG.warning("/api/daily_pnl failed: %s", _dxc)
+                self._send_json({
+                    "error": "daily_pnl_unavailable",
+                    "message": str(_dxc)[:200],
+                    "status": "error",
+                    "updated_at_iso": utc_now_iso(),
+                })
+        elif path == "/api/adaptive_exit":
+            self._send_json(_build_adaptive_exit_tile())
         elif path == "/api/living_params":
             self._send_json(_build_living_params())
         elif path == "/api/verdict":

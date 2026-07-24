@@ -58,6 +58,9 @@ def test_real_mode_syncs_performance_gates():
     base = load_config()
     real_cfg = copy.deepcopy(base)
     real_cfg["mt5"]["account_mode"] = "real"
+    # Base config ships apply_when: never (2026-07-21, so the $50k-plan gates
+    # don't override the micro-live tuning); force it on to test the sync path.
+    real_cfg["performance"]["apply_when"] = "real"
     cfg = sync_performance_gates(real_cfg)
     assert performance_gates_active(cfg) is True
     assert cfg["trading"]["aggressive_mode"] is False

@@ -1,0 +1,65 @@
+{
+  "objective": "get the bot performing at a level that would make 50 000 $ a month",
+  "verification_plan": [
+    {
+      "step": 1,
+      "gating": true,
+      "command": "python -m pytest tests/ -q --deselect tests/test_performance_benchmark.py::test_run_verification_subprocess",
+      "exit_code": 1,
+      "passed": false,
+      "artifact": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\3\\grok-goal-5d7c28d4f228\\implementer/pytest_results.log",
+      "stdout_tail": [
+        "FAILED tests/test_terminal_manager.py::test_is_alive_matches_when_exe_lacks_drive_letter",
+        "23 failed, 788 passed, 3 deselected in 15.30s"
+      ]
+    },
+    {
+      "step": 2,
+      "gating": true,
+      "command": "python scripts/run_performance_benchmark.py --output performance_benchmark.json",
+      "exit_code": 1,
+      "artifact_json": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\3\\grok-goal-5d7c28d4f228\\implementer/performance_benchmark.json",
+      "artifact_log": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\3\\grok-goal-5d7c28d4f228\\implementer/performance_benchmark.log",
+      "capital_base_usd": null,
+      "target_monthly_pnl_usd": null,
+      "projected_monthly_pnl": null,
+      "meets_target": null,
+      "coverage_ok": null,
+      "pnl_ok": null,
+      "eligibility": null,
+      "replay_window_days": null,
+      "passed": false,
+      "per_symbol": [],
+      "report_contains_required_fields": false
+    },
+    {
+      "step": 3,
+      "gating": true,
+      "command": "python start.py --help",
+      "exit_code": 0,
+      "artifact": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\3\\grok-goal-5d7c28d4f228\\implementer/start_launch.log",
+      "has_usage": true,
+      "no_traceback": true
+    },
+    {
+      "step": 4,
+      "gating": false,
+      "evidence": true,
+      "aggressive_mode": true,
+      "min_confidence": 38,
+      "default_risk_percent": 1.0,
+      "min_trade_score": 18,
+      "min_volume_ratio": 0.12,
+      "regime_veto_enabled": false,
+      "max_symbol_exposure_usd": 12.0,
+      "max_total_exposure_usd": 18.0,
+      "starting_cash": 100,
+      "projection_capital_usd": 1000000,
+      "account_mode": "demo",
+      "performance_plan_active": false,
+      "capital_aligned": true,
+      "performance_section_present": true
+    }
+  ],
+  "all_gating_passed": false
+}

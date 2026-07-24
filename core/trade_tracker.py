@@ -469,6 +469,7 @@ class TradeTracker:
             # Provides a meaningful fallback when position_mgmt enrichment is
             # absent, so the Profit Quality dashboard shows accurate exit
             # diagnostics instead of 100% 'mt5_close' for historic backfills.
+            _dr = None
             exit_reason = "mt5_close"
             try:
                 _dr = getattr(deal, "reason", None)
@@ -499,6 +500,25 @@ class TradeTracker:
                 exit_reason = "trailing_stop"
             elif be_triggered:
                 exit_reason = "break_even_stop"
+            # Final fallback (2026-07-22): for mt5_close trades that no
+            # DEAL_REASON code or mgmt heuristic resolved, use profit sign +
+            # stale_closed flag to make a best-effort classification. These
+            # are typically MT5 trades where the broker reported the exit as
+            # DEAL_REASON_EXPERT (EA-placed order) instead of SL/TP/SO —
+            # common on Exness and other ECN brokers that report ALL EA
+            # actions as EXPERT regardless of whether it was a stop hit or
+            # a manual close. The mgmt_row recovered from archive carries
+            # the stale_closed flag set by position_manager for time_stops,
+            # and profit sign is the best heuristic for stop_loss vs
+            # take_profit when no trail/BE/partial flag was set.
+            if exit_reason == "mt5_close":
+                if mgmt_row.get("stale_closed"):
+                    exit_reason = "time_stop"
+                elif float(deal.profit) < 0:
+                    exit_reason = "stop_loss"
+                elif float(deal.profit) > 0:
+                    exit_reason = "take_profit"
+                # profit == 0: leave as mt5_close (rare; ambiguous)
             exit_narrative = build_exit_narrative(
                 side,
                 entry_price,

@@ -399,7 +399,11 @@ def test_sse_endpoint_via_raw_socket(monkeypatch):
         for line in text.splitlines():
             if line.startswith("data: "):
                 payload = json.loads(line[len("data: "):])
-                assert payload.get("n_total") == 11, (
+                # The SSE endpoint wraps the snapshot as
+                # {"profit_quality": {...}, "meter": {...}} since the
+                # payoff-paradox meter joined the stream.
+                snap_payload = payload.get("profit_quality", payload)
+                assert snap_payload.get("n_total") == 11, (
                     f"snapshot payload n_total mismatch: {payload!r}"
                 )
                 break

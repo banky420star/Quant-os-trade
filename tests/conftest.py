@@ -2,7 +2,30 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
+
+_STATE_DIR = Path(__file__).resolve().parent.parent / "state"
+_ACTIVE_PROFILE = _STATE_DIR / "active_profile.json"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_active_profile():
+    """Undo profile activation leaked by tests that call set_active_profile().
+
+    Without this, a test that activates e.g. the growth profile leaves
+    state/active_profile.json behind and every later load_config() in the
+    suite silently runs with that overlay applied (order-dependent failures).
+    """
+    before = _ACTIVE_PROFILE.read_bytes() if _ACTIVE_PROFILE.exists() else None
+    yield
+    os.environ.pop("MT5_QUANT_PROFILE", None)
+    if before is None:
+        _ACTIVE_PROFILE.unlink(missing_ok=True)
+    else:
+        _ACTIVE_PROFILE.write_bytes(before)
 
 
 @pytest.fixture

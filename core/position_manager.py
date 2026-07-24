@@ -554,6 +554,70 @@ def _enrich_position_open_time(
     return position
 
 
+def _check_signal_reversal(
+    side: str,
+    symbol: str,
+    features: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    age_seconds: float = 0,
+) -> tuple[bool, str]:
+    """Check if M5/M15 trend has flipped against the open position side.
+
+    Returns (rev, reason) where ``rev`` is True when the trade
+    should be closed early because the signal direction now contradicts
+    the position side. ``reason`` is a human-readable description.
+
+    Uses ``trading.signal_reversal_early_close.check_trend`` to choose
+    which timeframe to inspect (m5, m15, or both). Disabled when the
+    config toggle is off or the feature data is missing.
+
+    Includes a ``min_hold_seconds`` gate (default 60) so trades opened
+    less than that many seconds ago are NEVER reversal-closed. This
+    prevents the immediate open-close loop when features data from the
+    previous cycle shows conflicting trend vs the newly opened side.
+    """
+    _sr_cfg = ((config.get("trading") or {}).get("signal_reversal_early_close") or {})
+    if not _sr_cfg.get("enabled", False):
+        return False, "signal_reversal_disabled"
+
+    # Minimum hold: skip reversal check for freshly-opened trades
+    _min_hold = int(_sr_cfg.get("min_hold_seconds", 60))
+    if age_seconds < _min_hold:
+        return False, f"age={age_seconds:.0f}s < min_hold={_min_hold}s"
+
+    feat = features.get("symbols", {}).get(symbol, {})
+    m5 = str(feat.get("m5_trend") or "")
+    m15 = str(feat.get("m15_trend") or "")
+
+    check_trend = str(_sr_cfg.get("check_trend", "both"))
+
+    if side == "BUY":
+        # BUY position: trend should be bullish. Reversal = bearish/mixed.
+        if check_trend == "m5":
+            rev = m5 == "bearish"
+            return rev, f"m5_trend={m5} reversed BUY" if rev else (False, "")
+        if check_trend == "m15":
+            rev = m15 == "bearish"
+            return rev, f"m15_trend={m15} reversed BUY" if rev else (False, "")
+        # both: close if EITHER timeframe flipped
+        rev = m5 == "bearish" or m15 == "bearish"
+        return rev, f"m5={m5} m15={m15} => {'reversed_BUY' if rev else 'ok'}"
+
+    if side == "SELL":
+        # SELL position: trend should be bearish. Reversal = bullish/mixed.
+        if check_trend == "m5":
+            rev = m5 == "bullish"
+            return rev, f"m5_trend={m5} reversed SELL" if rev else (False, "")
+        if check_trend == "m15":
+            rev = m15 == "bullish"
+            return rev, f"m15_trend={m15} reversed SELL" if rev else (False, "")
+        rev = m5 == "bullish" or m15 == "bullish"
+        return rev, f"m5={m5} m15={m15} => {'reversed_SELL' if rev else 'ok'}"
+
+    return False, "unknown_side"
+
+
 def _load_mgmt_state() -> dict[str, Any]:
     return read_json_state("position_management.json", default={"positions": {}})
 
@@ -743,6 +807,49 @@ def compute_managed_sl(
                         row["break_even"] = True
                         actions.append("break_even")
 
+    # ----- 70% TP → BREAKEVEN + TRAIL TRIGGER (2026-07-22) -----------------
+    # Adaptive Exit Engine: when price reaches 70% of TP distance, move SL
+    # to entry (breakeven) then force-activate trailing at the per-symbol
+    # trail_atr (default 0.25 ATR) so the runner captures further profit.
+    _adex_cfg = (config.get("trading") or {}).get("adaptive_exit") or {}
+    if _adex_cfg.get("enabled", True) and not row.get("break_even"):
+        try:
+            _adex_per = _adex_cfg.get("per_symbol") or {}
+            _adex_sym = _adex_per.get(symbol) or {}
+            _be70_pct = float(_adex_sym.get("be_trigger_pct", 0.70))
+            _be70_trail_atr = float(_adex_sym.get("trail_atr", 0.25))
+            _be70_tp1 = float(position.get("tp1") or row.get("tp1") or 0)
+            if _be70_tp1 > 0 and entry != _be70_tp1:
+                _be70_dist = abs(_be70_tp1 - entry)
+                if side == "BUY":
+                    _be70_progress = (current_price - entry) / _be70_dist if _be70_dist > 0 else 0.0
+                else:
+                    _be70_progress = (entry - current_price) / _be70_dist if _be70_dist > 0 else 0.0
+                if _be70_progress >= _be70_pct:
+                    _be70_trail_dist = atr * _be70_trail_atr
+                    row["trailing"] = True
+                    row["trail_distance"] = round(_be70_trail_dist, 8)
+                    if side == "BUY":
+                        if entry > new_sl:
+                            new_sl = entry
+                        row["break_even"] = True
+                        _be70_tsl = peak - _be70_trail_dist
+                        if _be70_tsl > new_sl:
+                            new_sl = _be70_tsl
+                    else:
+                        if current_sl <= 0 or entry < new_sl:
+                            new_sl = entry
+                        row["break_even"] = True
+                        _be70_tsl = peak + _be70_trail_dist
+                        if current_sl <= 0 or _be70_tsl < new_sl:
+                            new_sl = _be70_tsl
+                    actions.append("be70_trail")
+        except Exception as _be70_exc:
+            logging.getLogger("position_manager").warning(
+                "be_at_70pct_tp error %s side=%s err=%s",
+                symbol, side, _be70_exc,
+            )
+
     if trail_cfg.get("enabled", True):
         trail_dist = _trail_distance_price(trail_sym, trail_cfg, atr, point)
         trail_dist *= trail_distance_multiplier(row, config)
@@ -772,6 +879,83 @@ def compute_managed_sl(
                     new_sl = trail_sl
             actions.append("trail")
 
+        # Trail-after-partial-TP (2026-07-22): when partial_tp_done is True
+        # but trailing hasn't armed yet, immediately activate trailing on the
+        # runner so it locks profit instead of reversing to SL. This addresses
+        # the core finding that 236/492 partial TP trades reversed to full SL
+        # on the runner — the trail locks in gains after the first target hit.
+        if row.get("partial_tp_done") and not row.get("trailing"):
+            _ptp_dist = _trail_distance_price(trail_sym, trail_cfg, atr, point)
+            _ptp_dist *= trail_distance_multiplier(row, config)
+            row["trailing"] = True
+            row["trail_distance"] = round(_ptp_dist, 8)
+            if side == "BUY":
+                _ptp_sl = peak - _ptp_dist
+                if _ptp_sl > new_sl:
+                    new_sl = _ptp_sl
+            else:
+                _ptp_sl = peak + _ptp_dist
+                if current_sl <= 0 or _ptp_sl < new_sl:
+                    new_sl = _ptp_sl
+                    actions.append("trail_after_partial")
+
+    # ----- TIME-DECAYING STOP LOSS (2026-07-22) ---------------------------
+    # Tighten the SL toward entry the longer a trade sits open, preventing
+    # slow bleeders from accumulating losses over time.  Only ever tightens
+    # (never loosens) and defers to any existing BE/trail SL that is already
+    # tighter than the time-based floor.
+    _tsl_cfg = ((config.get("trading") or {}).get("exits") or {}).get("time_based_sl") or {}
+    if _tsl_cfg.get("enabled", False) and risk_sl != entry:
+        try:
+            _tsl_start = int(_tsl_cfg.get("start_tighten_seconds", 1800))
+            _tsl_window = int(_tsl_cfg.get("tighten_window_seconds", 3600))
+            _tsl_target_be = bool(_tsl_cfg.get("target_sl_be", True))
+            _tsl_target_atr = float(_tsl_cfg.get("target_sl_atr_mult", 0.2))
+            _tsl_target_profit = float(_tsl_cfg.get("target_profit_atr_mult", 0.0))
+            # Per-symbol overrides
+            _tsl_per = (_tsl_cfg.get("per_symbol") or {}).get(symbol, {})
+            if _tsl_per.get("start_tighten_seconds") is not None:
+                _tsl_start = int(_tsl_per["start_tighten_seconds"])
+            if _tsl_per.get("tighten_window_seconds") is not None:
+                _tsl_window = int(_tsl_per["tighten_window_seconds"])
+            if _tsl_per.get("target_sl_be") is not None:
+                _tsl_target_be = bool(_tsl_per["target_sl_be"])
+            if _tsl_per.get("target_sl_atr_mult") is not None:
+                _tsl_target_atr = float(_tsl_per["target_sl_atr_mult"])
+            if _tsl_per.get("target_profit_atr_mult") is not None:
+                _tsl_target_profit = float(_tsl_per["target_profit_atr_mult"])
+
+            _age = position_age_seconds(position)
+            if _age > _tsl_start and _tsl_window > 0:
+                _t_progress = min(1.0, max(0.0, (_age - _tsl_start) / _tsl_window))
+                if _tsl_target_profit > 0:
+                    # Target is IN PROFIT past entry — tightens toward a small win
+                    if side == "BUY":
+                        _t_target = entry + _tsl_target_profit * atr
+                    else:
+                        _t_target = entry - _tsl_target_profit * atr
+                elif _tsl_target_be:
+                    _t_target = entry
+                else:
+                    if side == "BUY":
+                        _t_target = max(risk_sl, entry - _tsl_target_atr * atr)
+                    else:
+                        _t_target = min(risk_sl, entry + _tsl_target_atr * atr)
+                # Interpolate from risk_sl toward target
+                _t_floor = risk_sl + (_t_target - risk_sl) * _t_progress
+                # Only tighten, never loosen
+                if side == "BUY" and new_sl < _t_floor:
+                    new_sl = _t_floor
+                    actions.append("time_tighten")
+                elif side == "SELL" and current_sl > 0 and new_sl > _t_floor:
+                    new_sl = _t_floor
+                    actions.append("time_tighten")
+        except Exception as _tsl_exc:
+            logging.getLogger("position_manager").warning(
+                "time_based_sl error %s side=%s err=%s",
+                symbol, side, _tsl_exc,
+            )
+
     if abs(new_sl - current_sl) < 1e-9:
         return None, row, actions
 
@@ -781,6 +965,7 @@ def compute_managed_sl(
         return None, row, actions
 
     return new_sl, row, actions
+
 
 
 def manage_paper_positions(
@@ -797,11 +982,47 @@ def manage_paper_positions(
 
     for pos in positions:
         symbol = pos["symbol"]
+        side = pos["side"]
         ticket = str(pos.get("position_id") or pos.get("ticket"))
         feat = features.get("symbols", {}).get(symbol, {})
         price = float(feat.get("price", pos.get("entry", 0)))
         atr = float(feat.get("atr", price * 0.001) or price * 0.001)
         row = dict(mgmt.get("positions", {}).get(ticket, {}))
+
+        # ----- SIGNAL REVERSAL EARLY CLOSE (Paper) ---------------------------
+        # Same logic as manage_mt5_positions: close early when the M5 or M15
+        # trend flips against the position side. For paper mode we can't use
+        # MT5Broker, so we record a synthetic close and skip the position.
+        _open_times = _load_open_times()
+        _rev_age = position_age_seconds(pos, _open_times)
+        _rev, _rev_reason = _check_signal_reversal(
+            side, symbol, features, config,
+            age_seconds=_rev_age,
+        )
+        if _rev:
+            _entry = float(pos.get("entry", 0) or 0)
+            _pnl = round((price - _entry) * float(pos.get("size", 0.01)), 2) if side == "BUY" else round((_entry - price) * float(pos.get("size", 0.01)), 2)
+            logger.info(
+                "Paper SIGNAL REVERSAL close: %s %s ticket=%s profit=$%.2f reason=%s",
+                symbol, side, ticket, _pnl, _rev_reason,
+            )
+            summary["actions"].append({
+                "ticket": ticket, "symbol": symbol, "side": side,
+                "actions": ["signal_reversal"],
+                "pnl": _pnl, "reason": _rev_reason,
+            })
+            summary["updated"] += 1
+            # Archive the close — row is now safely defined from mgmt lookup above
+            _archive_mgmt_row(
+                ticket, row,
+                reason="tp_close",
+                side=side, entry=_entry, symbol=symbol,
+            )
+            # Remove from mgmt so the position disappears (closed)
+            mgmt.get("positions", {}).pop(ticket, None)
+            continue  # Skip adding to updated_positions — effectively closes it
+
+        # Normal management path (below): row is already defined above
         # Stamp TP2 into mgmt_row from config if missing — persistent across
         # paper_positions.json overwrites (MT5 sync, fast_mode, recovery).
         # Without this, the partial-TP runner has no target and sits forever.
@@ -955,6 +1176,57 @@ def manage_mt5_positions(
             except Exception as _exc:
                 logger.warning("TIME STOP close FAILED: #%s %s -> %s", ticket, symbol, _exc)
                 summary["errors"].append({"ticket": ticket, "error": f"time_stop: {_exc}"})
+
+        # ----- SIGNAL REVERSAL EARLY CLOSE (Step 5 — Fast-Trade Sequence) ----
+        # When M5 or M15 trend flips against the position side, close early
+        # instead of waiting for SL/BE/trail.  This prevents winners from
+        # reversing to losses and losers from deepening.
+        #
+        # Minimum hold gate (default 60s) prevents immediate open-close
+        # loops when features data from the prior cycle shows conflicting
+        # trend vs the newly opened trade side.
+        _rev, _rev_reason = _check_signal_reversal(
+            side, symbol, features, config,
+            age_seconds=age,
+        )
+        if _rev:
+            try:
+                from core.mt5_broker import MT5Broker
+
+                _broker = MT5Broker(config, logger)
+                _cr = _broker.close_position(
+                    ticket,
+                    symbol,
+                    side,
+                    float(pos.get("size") or pos.get("volume") or 0.01),
+                    reason="signal_reversal",
+                )
+                if _cr.get("success"):
+                    logger.info(
+                        "SIGNAL REVERSAL close: #%s %s %s profit=$%.2f reason=%s",
+                        ticket, symbol, side, profit_usd, _rev_reason,
+                    )
+                    summary["audit"].append({
+                        "ticket": ticket, "symbol": symbol, "side": side,
+                        "profit_usd": round(profit_usd, 2),
+                        "status": "signal_reversal_closed",
+                        "reason": _rev_reason, "actions": ["signal_reversal"],
+                    })
+                    summary["actions"].append({"ticket": ticket, "symbol": symbol, "actions": ["signal_reversal"]})
+                    summary["updated"] += 1
+                    _archive_mgmt_row(
+                        ticket, row,
+                        reason="tp_close",  # Final close: archive as terminal
+                        side=side, entry=float(pos.get("entry", 0) or 0), symbol=symbol,
+                    )
+                    continue
+                _err = str(_cr.get("error") or "signal_reversal_failed")
+                logger.warning("SIGNAL REVERSAL close FAILED: #%s %s -> %s", ticket, symbol, _err)
+                summary["errors"].append({"ticket": ticket, "error": "signal_reversal: " + _err})
+            except Exception as _exc:
+                logger.warning("SIGNAL REVERSAL close FAILED: #%s %s -> %s", ticket, symbol, _exc)
+                summary["errors"].append({"ticket": ticket, "error": f"signal_reversal: {_exc}"})
+
         can_modify = not blue_guardian_enabled(config) or can_modify_position_sl(config, pos)
 
         audit_entry: dict[str, Any] = {

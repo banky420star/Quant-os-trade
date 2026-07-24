@@ -804,10 +804,14 @@
       border: 1px solid rgba(255,255,255,.06);
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
     }
-    .pq-meter-tile .pq-meter-label {
-      font-size: 9.5px; color: var(--muted2);
-      text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
-    }
+.pq-meter-tile .pq-meter-label {
+  font-size: 9.5px; color: var(--muted2);
+  text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+}
+.pq-meter-sub {
+  font-size: 10px; color: var(--muted2);
+  margin-top: 2px; font-variant-numeric: tabular-nums;
+}
     .pq-meter-tile .pq-meter-value {
       font-size: 16px; font-weight: 700; margin-top: 4px;
       font-variant-numeric: tabular-nums;
@@ -1026,6 +1030,12 @@
       th, td { padding: 8px 6px; }
       .trade-alert { font-size: 11px; padding: 10px 12px; }
       .status-pill { font-size: 10px; padding: 4px 8px; }
+      .ae-table th { background: var(--surface2); text-align: left; white-space: nowrap; }
+      .ae-table td { border-bottom: 1px solid var(--border); }
+      .ae-table tr:hover td { background: var(--surface2); }
+      .ae-green { color: var(--green); }
+      .ae-red { color: var(--red); }
+      .ae-warn { color: var(--orange); font-weight: 600; }
     }
   </style>
 </head>
@@ -1333,6 +1343,12 @@
             <div class="card-title">Living Parameters — Active Overrides</div>
             <div id="livingParamsTileBody">
               <p class="empty" style="grid-column:1/-1;margin:0;padding:16px 0">Living Params &mdash; waiting for data</p>
+            </div>
+          </div>
+          <div class="card ae-card" id="adaptiveExitCard">
+            <div class="card-title">Adaptive Exit — Per-Symbol SL/TP</div>
+            <div id="adaptiveExitTileBody">
+              <p class="empty" style="grid-column:1/-1;margin:0;padding:16px 0">Adaptive Exit &mdash; waiting for data</p>
             </div>
           </div>
           <div class="card profit-quality-card" id="profitQualityCard">
@@ -2615,6 +2631,7 @@
         renderLearning(data);
         renderLearningTimelineTile();
         renderLivingParamsTile();
+        renderAdaptiveExitTile();
         // Profit Quality tile is owned by the SSE stream (/api/profit_quality/stream)
         // once it has pushed its first snapshot. The 2s /api/state poll skips this
         // render so a stale read cannot overwrite a fresh server push. On SSE
@@ -2638,7 +2655,7 @@
       const pillCls = pct >= 80 ? "ok" : pct >= 30 ? "warn" : "bad";
       return `<span class="dq-pill ${pillCls}">${pct}% mgmt+R complete</span>
         <span>${dq.trades_with_r_multiple}/${dq.n_total} with R-multiple</span>
-        · <span>${dq.trades_with_mgmt_joined} with live mgmt join</span>
+        · <span>${dq.trades_from_exit_reason} from exit_reason</span> · <span>${dq.trades_from_mgmt_fallback} from mgmt fallback</span>
         · <span>${dq.trades_stale_flagged} stale-closed</span>
         <div style="margin-top:6px;color:var(--muted2);font-size:10.5px;line-height:1.5">${_pqEscape(dq.note || "")}</div>`;
     }
@@ -2710,6 +2727,11 @@
         +   '<div class="pq-meter-tile ' + suggCls + '">'
         +     '<div class="pq-meter-label">Next Floor ' + (delta > 0 ? '↑' : '·') + '</div>'
         +     '<div class="pq-meter-value">' + sugg + 'R</div>'
+        +   '</div>'
+        +   '<div class="pq-meter-tile ' + (Number(m.stoploss_hit_rate || 0) > 60 ? 'danger' : Number(m.stoploss_hit_rate || 0) > 40 ? 'warn' : 'ok') + '" title="Trades that hit stop_loss (DEAL_REASON-based). BE/trail fixes should reduce this.">'
+        +     '<div class="pq-meter-label">Stop-Loss Hit Rate</div>'
+        +     '<div class="pq-meter-value">' + (Number(m.stoploss_hit_rate || 0)).toFixed(1) + '%</div>'
+        +     '<div class="pq-meter-sub">' + (Number(m.stoploss_hit_n || 0)) + '/' + (Number(m.stoploss_hit_total || 1)) + ' trades</div>'
         +   '</div>'
         + '</div>'
         + '<div class="pq-meter-suggestion">'
@@ -3052,6 +3074,49 @@
           <div class="lp-footer">${patchCount} patches applied &middot; ${patchUpdated.slice(0,19) || '?'}</div>
         </div>
       </div>`;
+    }
+
+    function renderAdaptiveExitTile() {
+      const el = document.getElementById("adaptiveExitTileBody");
+      if (!el) return;
+      fetch("/api/adaptive_exit")
+        .then(r => r.json())
+        .then(d => {
+          if (!d.enabled || !d.symbols.length) {
+            el.innerHTML = '<p class="empty">Adaptive Exit — no open positions</p>';
+            return;
+          }
+          let h = '<div style="overflow-x:auto"><table class="ae-table" style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr>' +
+            '<th>Symbol</th><th>Side</th><th>Entry</th><th>SL</th><th>TP1</th><th>ATR</th>' +
+            '<th>SL mult</th><th>TP mult</th><th>Spread/TP</th><th>Trail</th><th>Profit</th></tr></thead><tbody>';
+          for (const r of d.symbols) {
+            const sl = r.adaptive_sl != null ? r.adaptive_sl.toFixed(2) : '—';
+            const tp = r.adaptive_tp1 != null ? r.adaptive_tp1.toFixed(2) : '—';
+            const slMult = r.sl_atr_mult != null ? r.sl_atr_mult : '—';
+            const tpMult = r.tp_atr_mult != null ? r.tp_atr_mult : '—';
+            const spr = r.spread_pct_of_tp != null ? (r.spread_pct_of_tp * 100).toFixed(1) + '%' : '—';
+            const trail = r.trail_atr != null ? r.trail_atr : '—';
+            const pnlCls = r.profit_usd > 0 ? 'ae-green' : r.profit_usd < 0 ? 'ae-red' : '';
+            const sprCls = r.spread_pct_of_tp > 0.25 ? 'ae-warn' : '';
+            h += '<tr>' +
+              `<td><b>${r.symbol}</b></td>` +
+              `<td>${r.side}</td>` +
+              `<td>${r.entry.toFixed(2)}</td>` +
+              `<td>${sl}</td>` +
+              `<td>${tp}</td>` +
+              `<td>${r.atr}</td>` +
+              `<td>${slMult}</td>` +
+              `<td>${tpMult}</td>` +
+              `<td class="${sprCls}">${spr}</td>` +
+              `<td>${trail}</td>` +
+              `<td class="${pnlCls}">$${r.profit_usd.toFixed(2)}</td></tr>`;
+          }
+          h += '</tbody></table></div>';
+          el.innerHTML = h;
+        })
+        .catch(() => {
+          el.innerHTML = '<p class="empty">Adaptive Exit — endpoint error</p>';
+        });
     }
 
     function renderProfitQuality(data) {
