@@ -1359,6 +1359,27 @@ thesis_reviewer:
 # config on its own. See core/reward_engine.py, core/learning_monitor.py,
 # core/shadow_experiment.py, loops/self_learning_loop.py.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Conviction engine (2026-07-24) — grade every setup like a professional.
+# Each candidate is graded A+/A/B/C on confluence (trend alignment, reward:risk,
+# regime fit, session, historical edge, confirmation, confidence). Risk sizing
+# scales with the grade, and setups below `min_grade_to_trade` are skipped.
+# size_by_grade multipliers are <= 1.0 by default: conviction only trims risk
+# on weaker setups. Raise A+ above 1.0 to upsize the best ideas (still clamped
+# by per-trade + exposure caps). See core/conviction.py.
+# ---------------------------------------------------------------------------
+conviction:
+  enabled: true
+  # Floor grade the bot will actually trade. "C" = trade everything but size
+  # weak setups down; raise to "B" or "A" to become progressively more
+  # selective (a pro trades less, and better).
+  min_grade_to_trade: C
+  size_by_grade:
+    "A+": 1.0
+    "A": 1.0
+    "B": 0.6
+    "C": 0.3
+
 self_learning:
   enabled: true
   loop_interval_seconds: 300

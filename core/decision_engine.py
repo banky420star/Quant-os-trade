@@ -15,6 +15,8 @@ from core.setup_triggers import describe_trigger, snapshot_trigger_context
 from core.strategy_arena import arena_enabled, arena_settings
 from core.strategy_ranker import StrategyRanker
 from core.strategy_entry import pin_strategy_entry, strategy_entries_enabled
+from core.conviction import grade_signal
+from core.setup_library import enrich_setup_stats
 from core.trade_score import compute_trade_score
 from core.utils import utc_now_iso
 from core.trade_limits import max_candidates_per_run
@@ -147,6 +149,29 @@ class DecisionEngine:
                         trade_score["passed"] = True
                         trade_score["gold_bypassed"] = True
                         signal["trade_score"] = trade_score
+
+                    # ----- Conviction grading (trade like a professional) -----
+                    # Grade the setup on confluence (trend, R:R, regime, session,
+                    # historical edge, confirmation, confidence) -> A+/A/B/C.
+                    # Size scales with conviction; C-grade can be skipped entirely
+                    # when conviction.min_grade_to_trade is raised above C.
+                    conv_cfg = self.config.get("conviction", {}) or {}
+                    if conv_cfg.get("enabled", True):
+                        setup_stats = enrich_setup_stats(
+                            setup["setup_type"], edge_scores, symbol=symbol
+                        )
+                        conviction = grade_signal(signal, feat, self.config, setup_stats)
+                        signal["conviction"] = conviction
+                        signal["conviction_size_mult"] = conviction["size_mult"]
+                        signal["reasons"].append(conviction["thesis"])
+                        if not conviction["take"] and not gold_ok:
+                            self.logger.info(
+                                "Conviction skip %s %s — grade %s (%.0f) below floor %s",
+                                symbol, setup["setup_type"], conviction["grade"],
+                                conviction["conviction"],
+                                conv_cfg.get("min_grade_to_trade", "C"),
+                            )
+                            continue
 
                     signal["strategy_rank"] = rank_info
                     if arena_on:

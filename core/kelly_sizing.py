@@ -218,4 +218,17 @@ def resolve_risk_percent(
     if default is None:
         default = float(config.get("signals", {}).get("default_risk_percent", 1))
     kelly = kelly_for_signal(signal, config, float(default))
-    return float(kelly.get("fraction", default)), kelly
+    fraction = float(kelly.get("fraction", default))
+    # Conviction sizing: a professional risks more on A-grade confluence and
+    # less on marginal setups. The multiplier is <= 1.0 by default, so this can
+    # only trim risk below the Kelly/base level unless the operator opts into
+    # upsizing the top tier (conviction.size_by_grade). Downstream per-trade and
+    # exposure caps still clamp the final size.
+    conv_mult = signal.get("conviction_size_mult")
+    if conv_mult is not None:
+        try:
+            fraction *= float(conv_mult)
+            kelly = {**kelly, "conviction_size_mult": float(conv_mult)}
+        except (TypeError, ValueError):
+            pass
+    return fraction, kelly

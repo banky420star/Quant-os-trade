@@ -431,6 +431,12 @@
     }
 
     .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    /* Conviction grade badges (A+ / A / B / C) */
+    .grade-badge { display: inline-block; min-width: 26px; text-align: center; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+    .grade-badge.g-aplus { background: rgba(50,215,75,.18); color: var(--green); }
+    .grade-badge.g-a { background: rgba(50,215,75,.12); color: var(--green); }
+    .grade-badge.g-b { background: rgba(255,159,10,.15); color: var(--orange); }
+    .grade-badge.g-c { background: rgba(142,142,147,.16); color: var(--muted); }
     .badge.ok { background: rgba(48,209,88,.15); color: var(--green); }
     .badge.bad { background: rgba(255,69,58,.15); color: var(--red); }
     .badge.warn { background: rgba(255,159,10,.15); color: var(--orange); }
@@ -2718,8 +2724,16 @@
       const approved = ((data.approved_signals||{}).approved)||[];
       const rejected = ((data.rejected_signals||{}).rejected)||[];
       const sigs = [...approved.map(r=>({...r,st:"approved",note:""})),...rejected.map(r=>({...r,st:"rejected",note:r.rejection_reason||((r.failures||[]).join(", "))}))].slice(0,8);
-      document.getElementById("signalsTable").innerHTML = sigs.length ? `<table><thead><tr><th>Status</th><th>Symbol</th><th>Side</th><th>Conf</th><th>Reason</th></tr></thead><tbody>
-        ${sigs.map(r=>`<tr><td><span class="badge ${r.st==="approved"?"ok":"bad"}">${r.st}</span></td><td>${r.symbol}</td><td>${r.side}</td><td>${r.confidence??"—"}</td><td style="color:var(--muted);font-size:11px">${r.note||"—"}</td></tr>`).join("")}
+      const gradeBadge = (r) => {
+        const cv = r.conviction || {};
+        const g = cv.grade;
+        if (!g) return "—";
+        const cls = g === "A+" ? "g-aplus" : (g === "A" ? "g-a" : (g === "B" ? "g-b" : "g-c"));
+        const tip = (cv.thesis || "").replace(/"/g, "&quot;");
+        return `<span class="grade-badge ${cls}" title="${tip}">${g}</span>`;
+      };
+      document.getElementById("signalsTable").innerHTML = sigs.length ? `<table><thead><tr><th>Status</th><th>Grade</th><th>Symbol</th><th>Side</th><th>Conf</th><th>Reason</th></tr></thead><tbody>
+        ${sigs.map(r=>`<tr><td><span class="badge ${r.st==="approved"?"ok":"bad"}">${r.st}</span></td><td>${gradeBadge(r)}</td><td>${r.symbol}</td><td>${r.side}</td><td>${r.confidence??"—"}</td><td style="color:var(--muted);font-size:11px">${(r.conviction&&r.conviction.thesis)||r.note||"—"}</td></tr>`).join("")}
         </tbody></table>` : '<p class="empty">No signals — waiting for market setup</p>';
 
       const trades = ((data.paper_trades||{}).trades)||[];
