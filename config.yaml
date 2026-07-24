@@ -1373,7 +1373,10 @@ conviction:
   # Floor grade the bot will actually trade. "C" = trade everything but size
   # weak setups down; raise to "B" or "A" to become progressively more
   # selective (a pro trades less, and better).
-  min_grade_to_trade: C
+  # 2026-07-24: set to B as the recommended professional default — skip the
+  # low-conviction C setups entirely, take fewer/better trades. Drop back to
+  # C if you want maximum trade frequency (weak setups still auto-sized-down).
+  min_grade_to_trade: B
   size_by_grade:
     "A+": 1.0
     "A": 1.0
