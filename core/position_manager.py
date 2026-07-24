@@ -869,14 +869,30 @@ def compute_managed_sl(
         if trail_armed:
             row["trailing"] = True
             row["trail_distance"] = round(trail_dist, 8)
+            # Capital-protection clamp: once trailing is armed on a position
+            # that is already in profit, the trailing stop must never lock
+            # BELOW break-even. A "protective" stop under entry only turns a
+            # scratch reversal into a realized loss — strictly worse than entry
+            # under every exit strategy. Ratchet to entry at worst, and record
+            # the break-even event so downstream analytics see it.
+            _clamped_to_be = False
             if side == "BUY":
                 trail_sl = peak - trail_dist
+                if profit_dist > 0 and trail_sl < entry:
+                    trail_sl = entry
+                    _clamped_to_be = True
                 if trail_sl > new_sl:
                     new_sl = trail_sl
             else:
                 trail_sl = peak + trail_dist
+                if profit_dist > 0 and trail_sl > entry:
+                    trail_sl = entry
+                    _clamped_to_be = True
                 if current_sl <= 0 or trail_sl < new_sl:
                     new_sl = trail_sl
+            if _clamped_to_be and not row.get("break_even"):
+                row["break_even"] = True
+                actions.append("break_even")
             actions.append("trail")
 
         # Trail-after-partial-TP (2026-07-22): when partial_tp_done is True
