@@ -110,6 +110,60 @@ class AdaptiveWeightOptimizer:
         )
         return result
 
+    def reward_weighted_weights(self, min_trades: int = 15) -> dict[str, Any]:
+        """Candidate weights from REALIZED-PROFIT credit assignment.
+
+        Unlike ``optimize`` (which credits engines by win/loss counts on their
+        confidence), this weights each engine's confidence contribution by the
+        realized R-multiple of the trade — so an engine that was confident on
+        big winners is rewarded in proportion to the money made, and confidence
+        on big losers is penalized proportionally. See core/reward_engine.py.
+
+        Never auto-deploys; returns a candidate for the same replay-gated
+        deploy path as ``optimize``.
+        """
+        from core.reward_engine import credit_to_weights, engine_credit, reward_score
+
+        records = self.edge_db.load().get("records", [])
+        engines = list(DEFAULT_WEIGHTS.keys())
+        baseline_total = sum(DEFAULT_WEIGHTS.values())
+        normalized_baseline = {e: round(DEFAULT_WEIGHTS[e] / baseline_total, 4) for e in engines}
+
+        if len(records) < min_trades:
+            return {
+                "timestamp": utc_now_iso(),
+                "status": "insufficient_data",
+                "trade_count": len(records),
+                "min_trades": min_trades,
+                "weights": dict(normalized_baseline),
+                "deployed": False,
+                "method": "reward_weighted_credit",
+            }
+
+        credit = engine_credit(records, engines=engines)
+        new_weights = credit_to_weights(credit, baseline=DEFAULT_WEIGHTS)
+        reward = reward_score(records)
+        deltas = {e: round((new_weights[e] - normalized_baseline[e]) * 100, 2) for e in engines}
+
+        self.logger.info(
+            "Reward-weighted candidate: expectancy=%.3fR score=%.2f (from %d trades)",
+            reward.get("expectancy_r", 0.0),
+            reward.get("score", 0.0),
+            len(records),
+        )
+        return {
+            "timestamp": utc_now_iso(),
+            "status": "candidate",
+            "trade_count": len(records),
+            "weights": new_weights,
+            "baseline_weights": normalized_baseline,
+            "deltas_pct": deltas,
+            "engine_credit": credit,
+            "reward": reward,
+            "deployed": False,
+            "method": "reward_weighted_credit",
+        }
+
     def propose_deployment(
         self,
         candidate: dict[str, Any],

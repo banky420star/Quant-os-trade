@@ -88,6 +88,11 @@ STATE_FILES = (
     "fast_mode_runtime.json",
     "learning_state.json",
     "learning_config_overrides.json",
+    # Self-learning loop outputs (reward-weighted weights, learning self-monitor,
+    # shadow experiments) — surfaced in the Self-Learning dashboard panel.
+    "reward_weight_candidate.json",
+    "learning_monitor.json",
+    "shadow_experiments.json",
     "thesis_review.json",
     "trade_log.json",
     "blue_guardian.json",

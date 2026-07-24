@@ -1353,6 +1353,20 @@ thesis_reviewer:
   close_reason: thesis_decay
 
 # ---------------------------------------------------------------------------
+# Self-learning loop (2026-07-24). OBSERVE-ONLY: reward-weighted weight
+# candidates + learning self-monitor (rollback recommendation) + bounded
+# shadow experiments. Proposes and reports; never trades or writes live
+# config on its own. See core/reward_engine.py, core/learning_monitor.py,
+# core/shadow_experiment.py, loops/self_learning_loop.py.
+# ---------------------------------------------------------------------------
+self_learning:
+  enabled: true
+  loop_interval_seconds: 300
+  # Minimum closed trades before the reward-weighted weight optimizer will
+  # emit a candidate (below this it returns the baseline, status=insufficient).
+  min_trades: 15
+
+# ---------------------------------------------------------------------------
 # Strategy diversification: 4 uncorrelated signal streams + meta-decision.
 # Added 2026-07-22 — Donchian trend + Bollinger FX reversion + ATR-volatility
 # expansion + the existing Decision Engine. Each stream sized via risk-parity.

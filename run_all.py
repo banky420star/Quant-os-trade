@@ -39,6 +39,7 @@ from loops import (
     memory_loop,
     research_loop,
     risk_loop,
+    self_learning_loop,
     signal_loop,
     verifier_loop,
 )
@@ -55,6 +56,7 @@ LOOPS = [
     ("risk_loop", risk_loop.run),
     ("memory_loop", memory_loop.run),
     ("health_loop", lambda: health_loop.run(connect=True)),
+    ("self_learning_loop", self_learning_loop.run),
 ]
 
 _shutdown = False

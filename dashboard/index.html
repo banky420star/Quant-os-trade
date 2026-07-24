@@ -510,6 +510,34 @@
     .daily-pnl-syms .chip.neg { color: var(--red); border-color: rgba(255,69,58,.25); }
     @media (max-width: 640px) { .daily-pnl-stats { grid-template-columns: repeat(2, 1fr); } .daily-pnl-hero .big { font-size: 28px; } }
 
+    /* Self-learning panel */
+    .self-learn-card { padding: 18px 20px; }
+    .sl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+    @media (max-width: 820px) { .sl-grid { grid-template-columns: 1fr; } }
+    .sl-tile { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; min-width: 0; }
+    .sl-tile .sl-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .sl-tile .sl-h .sl-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sl-badge { flex: none; }
+    .sl-tile .sl-t { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+    .sl-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; text-transform: uppercase; letter-spacing: .04em; }
+    .sl-badge.good { background: rgba(50,215,75,.14); color: var(--green); }
+    .sl-badge.warn { background: rgba(255,159,10,.14); color: var(--orange); }
+    .sl-badge.bad { background: rgba(255,69,58,.14); color: var(--red); }
+    .sl-badge.idle { background: rgba(255,255,255,.06); color: var(--muted); }
+    .sl-tile .sl-v { font-size: 20px; font-weight: 700; margin-top: 8px; font-variant-numeric: tabular-nums; }
+    .sl-tile .sl-v.pos { color: var(--green); } .sl-tile .sl-v.neg { color: var(--red); }
+    .sl-tile .sl-d { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.35; }
+    .sl-weights { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+    .sl-wrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; }
+    .sl-wrow .nm { width: 66px; color: var(--muted); flex: none; }
+    .sl-wrow .track { flex: 1; height: 5px; background: var(--surface3); border-radius: 99px; overflow: hidden; }
+    .sl-wrow .track > i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--blue), var(--purple)); }
+    .sl-wrow .pc { width: 40px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+    .sl-exp { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+    .sl-exp .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+    .sl-exp .row .hp { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sl-foot { font-size: 10.5px; color: var(--muted2); margin-top: 12px; line-height: 1.4; }
+
     /* Symbol cards */
     .sym-card {
       background: var(--surface2); border: 1px solid var(--border);
@@ -1351,6 +1379,13 @@
               <span class="daily-pnl-status tracking" id="dailyPnlStatus"><span class="dot"></span>Tracking</span>
             </div>
             <div id="dailyPnlBody"><p class="empty">Waiting for /api/daily_pnl…</p></div>
+          </div>
+          <div class="card self-learn-card" id="selfLearnCard" style="display:none">
+            <div class="daily-pnl-head">
+              <div class="card-title">Self-Learning — Reward · Monitor · Experiments</div>
+              <span class="hint">Observe-only · proposes &amp; reports, never trades</span>
+            </div>
+            <div id="selfLearnBody"><p class="empty">Waiting for self_learning_loop…</p></div>
           </div>
           <div>
             <div class="section-head">
@@ -2700,6 +2735,7 @@
         if (typeof renderPayoffParadoxMeter === "function") renderPayoffParadoxMeter(data);
       }
         renderCulturing(data);
+        if (typeof renderSelfLearning === "function") renderSelfLearning(data);
     }
 
     function _pqEscape(s) {
@@ -2828,6 +2864,83 @@
         const el = document.getElementById('livingParamsTileBody');
         if (el && typeof renderLivingParamsTile === 'function') renderLivingParamsTile(livingParamsCache);
       } catch (e) { /* swallow */ }
+    }
+
+    // ---------- Self-Learning panel (reward / monitor / experiments) ----------
+    function renderSelfLearning(data) {
+      const card = document.getElementById('selfLearnCard');
+      const body = document.getElementById('selfLearnBody');
+      if (!card || !body || !data) return;
+      const rw = data.reward_weight_candidate || {};
+      const mon = data.learning_monitor || {};
+      const exp = data.shadow_experiments || {};
+      // Only show once the loop has produced at least one artifact.
+      if (!rw.status && !mon.verdict && !(exp.experiments)) return;
+      card.style.display = '';
+
+      // --- Reward-weighted weights tile ---
+      const reward = rw.reward || {};
+      const hasCand = rw.status === 'candidate';
+      const rwBadge = hasCand ? '<span class="sl-badge good">candidate</span>'
+                              : '<span class="sl-badge idle">' + (rw.status || 'idle').replace(/_/g,' ') + '</span>';
+      let wRows = '';
+      if (hasCand && rw.weights) {
+        const entries = Object.entries(rw.weights).sort((a,b) => b[1]-a[1]).slice(0,7);
+        const maxW = Math.max.apply(null, entries.map(e => e[1])) || 1;
+        wRows = '<div class="sl-weights">' + entries.map(([k,v]) => {
+          const nm = k.replace('_engine','');
+          const pc = (v*100);
+          return '<div class="sl-wrow"><span class="nm">' + nm + '</span>' +
+                 '<span class="track"><i style="width:' + Math.max(3,(v/maxW*100)).toFixed(0) + '%"></i></span>' +
+                 '<span class="pc">' + pc.toFixed(1) + '%</span></div>';
+        }).join('') + '</div>';
+      }
+      const expc = reward.expectancy_r;
+      const rwDetail = hasCand
+        ? 'From ' + (rw.trade_count||0) + ' trades · expectancy ' +
+          (expc != null ? (expc>=0?'+':'') + expc.toFixed(3) + 'R' : '—') +
+          ' · risk-adj score ' + (reward.score != null ? reward.score.toFixed(2) : '—')
+        : 'Needs ' + (rw.min_trades || 15) + ' closed trades to propose weights';
+      const rwTile =
+        '<div class="sl-tile"><div class="sl-h"><span class="sl-t">Reward-Weighted Weights</span>' + rwBadge + '</div>' +
+        wRows +
+        '<div class="sl-d">' + rwDetail + '</div></div>';
+
+      // --- Learning self-monitor tile ---
+      const v = (mon.verdict || 'idle');
+      const monBadgeCls = v === 'degrading' ? 'bad' : (v === 'improving' ? 'good' : (v === 'stable' ? 'good' : 'idle'));
+      const sd = mon.score_delta;
+      const sdCls = sd == null ? '' : (sd > 0 ? 'pos' : (sd < 0 ? 'neg' : ''));
+      const monTile =
+        '<div class="sl-tile"><div class="sl-h"><span class="sl-t">Learning Self-Monitor</span>' +
+        '<span class="sl-badge ' + monBadgeCls + '">' + v + '</span></div>' +
+        '<div class="sl-v ' + sdCls + '">' + (sd == null ? '—' : (sd>0?'+':'') + sd.toFixed(2)) + '</div>' +
+        '<div class="sl-d">' + (mon.detail || 'Comparing recent vs baseline reward…') +
+        (mon.rollback_recommended ? ' <b style="color:var(--red)">Rollback advised.</b>' : '') + '</div></div>';
+
+      // --- Shadow experiments tile ---
+      const arms = Array.isArray(exp.experiments) ? exp.experiments : [];
+      const promoted = exp.promoted_count || 0;
+      const running = arms.filter(a => a.verdict === 'running').length;
+      const expBadge = promoted > 0 ? '<span class="sl-badge good">' + promoted + ' promotable</span>'
+                                    : '<span class="sl-badge idle">' + arms.length + ' arms</span>';
+      const topArms = arms.slice().sort((a,b) => (b.reward_margin||0)-(a.reward_margin||0)).slice(0,3);
+      const expRows = topArms.length
+        ? '<div class="sl-exp">' + topArms.map(a => {
+            const m = a.reward_margin;
+            const cls = a.verdict === 'promote' ? 'good' : (a.verdict === 'reject' ? 'bad' : 'idle');
+            return '<div class="row"><span class="hp" title="' + (a.hypothesis||'') + '">' + (a.hypothesis||a.id) + '</span>' +
+                   '<span class="sl-badge ' + cls + '">' + a.verdict + (m ? ' ' + (m>0?'+':'') + m.toFixed(2) : '') + '</span></div>';
+          }).join('') + '</div>'
+        : '';
+      const expTile =
+        '<div class="sl-tile"><div class="sl-h"><span class="sl-t">Shadow Experiments</span>' + expBadge + '</div>' +
+        expRows +
+        '<div class="sl-d">' + arms.length + ' bounded arms · ' + running + ' collecting data · promotion needs an out-of-sample win over control</div></div>';
+
+      body.innerHTML = '<div class="sl-grid">' + rwTile + monTile + expTile + '</div>' +
+        '<div class="sl-foot">All observe-only. The bot proposes weight changes and experiments and monitors its own results, ' +
+        'but never trades or edits live config on its own — promotions and rollbacks are gated, reversible operator actions.</div>';
     }
 
     // ---------- Daily P&L / Profit-Halt panel ----------
