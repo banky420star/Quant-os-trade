@@ -470,6 +470,46 @@
     .kpi-tile .sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
     @media (max-width: 900px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
 
+    /* Daily P&L — profit target & loss halt */
+    .daily-pnl-card { padding: 18px 20px; }
+    .daily-pnl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .daily-pnl-head .card-title { margin: 0; }
+    .daily-pnl-status {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 700;
+      letter-spacing: .04em; text-transform: uppercase;
+    }
+    .daily-pnl-status .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .daily-pnl-status.tracking { background: rgba(41,151,255,.12); color: var(--blue); }
+    .daily-pnl-status.tracking .dot { background: var(--blue); box-shadow: 0 0 6px var(--glow-blue); }
+    .daily-pnl-status.halted { background: rgba(255,159,10,.14); color: var(--orange); }
+    .daily-pnl-status.halted .dot { background: var(--orange); box-shadow: 0 0 6px rgba(255,159,10,.5); }
+    .daily-pnl-status.loss-halt { background: rgba(255,69,58,.14); color: var(--red); }
+    .daily-pnl-status.loss-halt .dot { background: var(--red); box-shadow: 0 0 6px rgba(255,69,58,.5); }
+    .daily-pnl-hero { display: flex; align-items: flex-end; gap: 14px; margin: 14px 0 6px; flex-wrap: wrap; }
+    .daily-pnl-hero .big { font-size: 34px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1; }
+    .daily-pnl-hero .big.pos { color: var(--green); }
+    .daily-pnl-hero .big.neg { color: var(--red); }
+    .daily-pnl-hero .big.flat { color: var(--text); }
+    .daily-pnl-hero .goal { font-size: 12px; color: var(--muted); padding-bottom: 3px; }
+    .daily-pnl-bar { position: relative; height: 12px; background: var(--surface3); border-radius: 99px; overflow: hidden; margin: 10px 0 4px; }
+    .daily-pnl-bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 99px; transition: width .5s ease; background: linear-gradient(90deg, var(--green), #7cf0a0); }
+    .daily-pnl-bar .fill.loss { background: linear-gradient(90deg, var(--red), #ff7a70); }
+    .daily-pnl-bar .fill.halted { background: linear-gradient(90deg, var(--orange), #ffce70); }
+    .daily-pnl-scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted2); font-variant-numeric: tabular-nums; }
+    .daily-pnl-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+    .daily-pnl-stats .st { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+    .daily-pnl-stats .st .k { font-size: 9.5px; color: var(--muted2); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+    .daily-pnl-stats .st .v { font-size: 16px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .daily-pnl-stats .st .v.pos { color: var(--green); }
+    .daily-pnl-stats .st .v.neg { color: var(--red); }
+    .daily-pnl-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+    .daily-pnl-syms { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .daily-pnl-syms .chip { font-size: 10.5px; padding: 3px 8px; border-radius: 8px; background: var(--surface3); border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+    .daily-pnl-syms .chip.pos { color: var(--green); border-color: rgba(50,215,75,.25); }
+    .daily-pnl-syms .chip.neg { color: var(--red); border-color: rgba(255,69,58,.25); }
+    @media (max-width: 640px) { .daily-pnl-stats { grid-template-columns: repeat(2, 1fr); } .daily-pnl-hero .big { font-size: 28px; } }
+
     /* Symbol cards */
     .sym-card {
       background: var(--surface2); border: 1px solid var(--border);
@@ -1088,6 +1128,18 @@
             // Reveal the empty app shell so users see SOMETHING on a true failure
             // (otherwise appRoot stays opacity:0 and the screen looks broken).
             if (app) app.classList.add("ready");
+            // If the main script actually rendered content before this 10s
+            // watchdog fired (slow loader-hide transition raced past 10s, e.g.
+            // on a throttled or headless browser), do NOT show the alarming
+            // failure banner — the dashboard loaded fine. The MutationObserver
+            // path below only removes the banner on a *future* mutation, so a
+            // fully-rendered-but-late reveal would otherwise strand the banner
+            // for the full 30s safety window.
+            var kpi = document.getElementById("kpiRow");
+            var syms = document.getElementById("symbolCards");
+            var mainRendered = (kpi && kpi.children.length > 0) ||
+                               (syms && syms.children.length > 0);
+            if (mainRendered) { return; }
             var b = document.createElement("div");
             b.id = "bootFailsafeBanner";
             b.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#1c1c1e;color:#f5f5f7;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 14px;font:13px system-ui,sans-serif;";
@@ -1293,6 +1345,13 @@
           </div>
           <div class="card hero-card" id="heroCard"></div>
           <div class="kpi-row" id="kpiRow"></div>
+          <div class="card daily-pnl-card" id="dailyPnlCard" style="display:none">
+            <div class="daily-pnl-head">
+              <div class="card-title">Daily P&amp;L — Profit Target &amp; Loss Halt</div>
+              <span class="daily-pnl-status tracking" id="dailyPnlStatus"><span class="dot"></span>Tracking</span>
+            </div>
+            <div id="dailyPnlBody"><p class="empty">Waiting for /api/daily_pnl…</p></div>
+          </div>
           <div>
             <div class="section-head">
               <div class="card-title">Market Watch</div>
@@ -2771,6 +2830,92 @@
       } catch (e) { /* swallow */ }
     }
 
+    // ---------- Daily P&L / Profit-Halt panel ----------
+    let dailyPnlCache = null;
+
+    async function fetchDailyPnl() {
+      try {
+        const resp = await fetch('/api/daily_pnl');
+        if (!resp.ok) return;
+        dailyPnlCache = await resp.json();
+        renderDailyPnl(dailyPnlCache);
+      } catch (e) { /* swallow */ }
+    }
+
+    function _dpUsd(v) {
+      const n = Number(v);
+      if (!isFinite(n)) return '—';
+      const sign = n < 0 ? '-' : '';
+      return sign + '$' + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function renderDailyPnl(d) {
+      const card = document.getElementById('dailyPnlCard');
+      const body = document.getElementById('dailyPnlBody');
+      const statusEl = document.getElementById('dailyPnlStatus');
+      if (!card || !body || !d) return;
+      card.style.display = '';
+
+      const realized = Number(d.today_realized_usd || 0);
+      const threshold = Number(d.threshold_usd || 0);
+      const remaining = Number(d.remaining_usd != null ? d.remaining_usd : (threshold - realized));
+      const trades = Number(d.trade_count_today || 0);
+      const wins = Number(d.wins_today || 0);
+      const losses = Number(d.losses_today || 0);
+      const winRate = trades > 0 ? Math.round((wins / trades) * 100) : null;
+      const haltActive = !!d.halt_active;
+      const lossHalt = (d.halt_reason || '').toLowerCase().includes('loss');
+
+      // Status badge
+      statusEl.className = 'daily-pnl-status ' + (haltActive ? (lossHalt ? 'loss-halt' : 'halted') : 'tracking');
+      statusEl.innerHTML = '<span class="dot"></span>' + (
+        haltActive ? (lossHalt ? 'Loss Halt' : 'Target Hit — Halted') : 'Tracking'
+      );
+
+      // Progress toward the profit-halt target (0..100), clamped
+      let pct = threshold > 0 ? (realized / threshold) * 100 : 0;
+      if (!isFinite(pct)) pct = 0;
+      const barPct = Math.max(0, Math.min(100, pct));
+      const fillClass = haltActive ? (lossHalt ? 'loss' : 'halted') : (realized < 0 ? 'loss' : '');
+      const bigClass = realized > 0 ? 'pos' : (realized < 0 ? 'neg' : 'flat');
+
+      const goalTxt = threshold > 0
+        ? (haltActive
+            ? 'Target reached — new entries paused until reset'
+            : _dpUsd(remaining) + ' to daily target of ' + _dpUsd(threshold))
+        : 'No daily profit target set';
+
+      const syms = Array.isArray(d.by_symbol) ? d.by_symbol.slice(0, 8) : [];
+      const symChips = syms.length
+        ? '<div class="daily-pnl-syms">' + syms.map(s => {
+            const p = Number(s.pnl_usd != null ? s.pnl_usd : s.pnl || 0);
+            const cls = p > 0 ? 'pos' : (p < 0 ? 'neg' : '');
+            const sym = (s.symbol || s.sym || '?');
+            return '<span class="chip ' + cls + '">' + sym + ' ' + _dpUsd(p) + '</span>';
+          }).join('') + '</div>'
+        : '';
+
+      const resetTxt = d.day_resets_at_iso
+        ? 'Resets ' + new Date(d.day_resets_at_iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' UTC'
+        : '';
+
+      body.innerHTML =
+        '<div class="daily-pnl-hero">' +
+          '<div class="big ' + bigClass + '">' + _dpUsd(realized) + '</div>' +
+          '<div class="goal">' + goalTxt + '</div>' +
+        '</div>' +
+        '<div class="daily-pnl-bar"><div class="fill ' + fillClass + '" style="width:' + barPct.toFixed(1) + '%"></div></div>' +
+        '<div class="daily-pnl-scale"><span>$0</span><span>' + Math.round(pct) + '% of target</span><span>' + (threshold > 0 ? _dpUsd(threshold) : '—') + '</span></div>' +
+        '<div class="daily-pnl-stats">' +
+          '<div class="st"><div class="k">Realized Today</div><div class="v ' + bigClass + '">' + _dpUsd(realized) + '</div></div>' +
+          '<div class="st"><div class="k">Trades</div><div class="v">' + trades + '</div></div>' +
+          '<div class="st"><div class="k">Win / Loss</div><div class="v">' + wins + ' / ' + losses + '</div></div>' +
+          '<div class="st"><div class="k">Win Rate</div><div class="v">' + (winRate == null ? '—' : winRate + '%') + '</div></div>' +
+        '</div>' +
+        symChips +
+        (resetTxt ? '<div class="daily-pnl-foot"><span>' + (d.status || 'tracking') + '</span><span>' + resetTxt + '</span></div>' : '');
+    }
+
     // ---------- CLI Overrides (Layer x Key Diff Tree) ----------
     let cliOverridesCache = null;
     let _cliOverridesLastRender = '';
@@ -4088,6 +4233,7 @@
       if (bootDone) {
     fetchLearningTimeline();
     fetchLivingParams();
+    fetchDailyPnl();
     // cli_overrides is server-cached for 5s and rarely mutates between restarts
     if (!_coNextTickAt || Date.now() >= _coNextTickAt) {
       _coNextTickAt = Date.now() + 20000;
@@ -4095,12 +4241,23 @@
     }
         ensureLearningTimelinePolling();
         ensureLivingParamsPolling();
+        ensureDailyPnlPolling();
       }
+    }
+
+    let _dpTimer = null;
+    function ensureDailyPnlPolling() {
+      if (_dpTimer) return;
+      _dpTimer = setInterval(() => { fetchDailyPnl(); }, 8000);
     }
 
     // Start fetching learning timeline every 10s after boot
     let _tlTimer = null;
     let _lpTimer = null;
+    // Declared explicitly: reading an undeclared identifier throws a
+    // ReferenceError under strict/module scope, which previously aborted the
+    // tail of refresh() (cli-overrides + sub-panel polling never armed).
+    let _coNextTickAt = 0;
 
     function ensureLivingParamsPolling() {
       if (_lpTimer) return;

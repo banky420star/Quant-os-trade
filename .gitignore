@@ -72,3 +72,7 @@ _check_full_sl.py
 
 # macOS / Windows metadata fork garbage
 ._*
+
+# stray grok-goal tooling artifacts (Windows temp paths)
+grok-goal-*
+C:\\*

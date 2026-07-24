@@ -315,7 +315,10 @@ def deflated_sharpe(
     mean = sum(r_multiples) / n
     var = sum((x - mean) ** 2 for x in r_multiples) / n
     std = math.sqrt(var)
-    if std == 0:
+    # Tolerance guard: identical R-multiples produce a std that floating-point
+    # rounding leaves as a tiny non-zero value rather than exactly 0.0. Treat
+    # anything below this floor as a degenerate (zero-variance) series.
+    if std <= 1e-12 * (abs(mean) + 1.0):
         return 0.0
     sr = mean / std  # per-trade Sharpe (annualization cancels in the test)
     m3 = sum((x - mean) ** 3 for x in r_multiples) / n
@@ -330,9 +333,13 @@ def deflated_sharpe(
     else:
         sr_0 = 0.0
     num = (sr - sr_0) * math.sqrt(n - 1)
-    den = math.sqrt(1 - skew * sr + (kurt - 1) / 4 * sr ** 2)
-    if den <= 0:
+    # Discriminant of the DSR variance term; can go negative for extreme
+    # skew/kurtosis. Guard before sqrt so we return 0.0 instead of crashing
+    # with a math domain error.
+    disc = 1 - skew * sr + (kurt - 1) / 4 * sr ** 2
+    if disc <= 0:
         return 0.0
+    den = math.sqrt(disc)
     return float(NormalDist().cdf(num / den))
 
 
