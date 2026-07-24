@@ -32,15 +32,24 @@ def independent_symbol_exposure(config: dict[str, Any]) -> bool:
 
 
 def micro_reference_equity(config: dict[str, Any]) -> float:
-    """Sizing reference: live MT5 balance on micro-live, else configured account_size_usd."""
-    micro = micro_settings(config)
-    if bool(micro.get("live_mode", False)):
-        account = read_json_state("account.json", default={})
-        for key in ("equity", "balance"):
-            val = account.get(key)
+    """Sizing reference — the REAL account size whenever we can see it.
+
+    Reads the live MT5 balance/equity from account.json whenever it is present
+    (written every cycle by data_loop), regardless of the ``live_mode`` flag: a
+    demo account with $10k is still a $10k account to size against, and pinning
+    it to a static ``account_size_usd`` is exactly the "ignores account size"
+    bug. Falls back to the configured account_size_usd only when no live account
+    reading exists yet (pure paper / pre-connection startup).
+    """
+    account = read_json_state("account.json", default={}) or {}
+    for key in ("equity", "balance"):
+        val = account.get(key)
+        try:
             if val is not None and float(val) > 0:
                 return float(val)
-    return float(micro.get("account_size_usd", 30))
+        except (TypeError, ValueError):
+            continue
+    return float(micro_settings(config).get("account_size_usd", 30))
 
 
 def sync_micro_profile(config: dict[str, Any]) -> dict[str, Any]:

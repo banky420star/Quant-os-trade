@@ -1244,6 +1244,13 @@ execution:
   market_closed_backoff_minutes: 5
 risk:
   unlimited_trades: false
+  # 2026-07-24: ACCOUNT-SIZE-AWARE per-trade risk. Caps the dollars risked on a
+  # single trade at this percent of *live* account equity (read from MT5 each
+  # cycle), so risk scales with the account instead of a fixed dollar figure.
+  # 1.0% is the professional standard. Combined with any static
+  # max_loss_per_trade_usd below via min() — the tighter of the two wins. Set to
+  # null/omit to use only the static dollar cap (legacy behaviour).
+  max_risk_per_trade_pct: 1.0
   # 2026-07-21 v2: 3500 -> 4500 to absorb the $2656 BTCUSDm ghost exposure
   # without vetoing the other 13 symbols (per-symbol cap is structurally
   # higher than the residual so any 0.01-lot live entry on the 13 active

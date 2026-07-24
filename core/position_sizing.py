@@ -8,7 +8,12 @@ from core.blue_guardian import max_lot_for_symbol
 from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer
 from core.kelly_sizing import kelly_for_signal
 from core.micro_profile import micro_profile_enabled
-from core.risk_cap import effective_risk_cap, estimate_stop_loss_usd, risk_per_trade_cap
+from core.risk_cap import (
+    effective_risk_cap,
+    estimate_stop_loss_usd,
+    has_per_trade_cap,
+    risk_per_trade_cap,
+)
 
 
 # Conservative fallbacks when MT5 symbol_info is unavailable (verifier / replay).
@@ -21,7 +26,10 @@ DEFAULT_SYMBOL_SPECS: dict[str, dict[str, float]] = {
 
 def requires_executable_sizing(config: dict[str, Any]) -> bool:
     """True when verifier must mirror broker min-lot + risk-cap gates."""
-    if risk_per_trade_cap(config) is not None:
+    # Recognise a percent-of-equity cap too (priced later against live balance),
+    # not only a static dollar cap — otherwise account-aware sizing wouldn't
+    # trigger the executable-sizing path.
+    if has_per_trade_cap(config):
         return True
     return micro_profile_enabled(config)
 

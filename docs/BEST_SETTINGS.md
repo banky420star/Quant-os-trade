@@ -46,6 +46,7 @@ backtest — treat that as the bar to clear.
 | `trading.allow_pyramiding` | **false** | No adding to positions — it multiplies drawdown faster than edge. |
 | `trading.max_open_per_symbol` | **1** | One idea per symbol at a time. |
 | `learning.overtrading_cap` | **4** | Hard cap on entries per window — kills revenge-trading. |
+| `risk.max_risk_per_trade_pct` | **1%** | Per-trade dollar risk = 1% of your **live** account equity — scales with the account, read from MT5 every cycle. |
 | `risk.max_daily_loss_pct` | **5%** | Pause the day before a bad run cascades. The #1 ruin control. |
 | `risk.max_consecutive_losses` | **4** | Stop after 4 losses in a row and reassess. |
 | `risk.daily_profit_halt_usd` | **15** | Bank the day once you're up ~12% on a micro account. |
@@ -56,7 +57,29 @@ To be **even more selective**, raise `conviction.min_grade_to_trade` to `A`
 
 ---
 
-## 3. Graduating to micro-live (profile `30-real`)
+## Risk scales with your account size
+
+The per-trade risk is **1% of your live account equity** (`risk.max_risk_per_trade_pct`),
+read from MT5 every cycle — not a fixed dollar figure. So the same setup risks:
+
+| Account | Risk per trade (1%) |
+|---|---|
+| $100 | $1 |
+| $1,000 | $10 |
+| $10,000 | $100 |
+
+Any `max_loss_per_trade_usd` you set is an **absolute ceiling** on top of that
+(the tighter of the two wins), and an explicit **per-symbol** dollar cap always
+takes precedence for that symbol.
+
+> **Tiny accounts:** at 1%, a very small account ($30–50) risks so little
+> ($0.30–0.50) that a broker's minimum 0.01 lot may risk *more* than 1% — those
+> trades will be correctly rejected. That's honest risk management, not a bug: a
+> $30 account can't be properly risk-managed on high-notional instruments. If
+> you want to trade a tiny account aggressively anyway, raise
+> `risk.max_risk_per_trade_pct` (e.g. to 5–10%) — deliberately, knowing the risk.
+
+## Graduating to micro-live (profile `30-real`)
 
 Only after paper proves out:
 
