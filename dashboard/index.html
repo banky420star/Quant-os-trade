@@ -1163,10 +1163,16 @@
             // path below only removes the banner on a *future* mutation, so a
             // fully-rendered-but-late reveal would otherwise strand the banner
             // for the full 30s safety window.
-            var kpi = document.getElementById("kpiRow");
-            var syms = document.getElementById("symbolCards");
-            var mainRendered = (kpi && kpi.children.length > 0) ||
-                               (syms && syms.children.length > 0);
+            // Check every container the main render targets — desktop uses
+            // kpiRow/symbolCards, mobile renders into mobileSummary/mobileSymbols.
+            // If ANY carries content, the app loaded fine and the banner (which
+            // is fixed to the bottom and would otherwise cover the mobile tab
+            // bar) must not appear.
+            var renderTargets = ["kpiRow", "symbolCards", "mobileSummary", "mobileSymbols", "dailyPnlBody"];
+            var mainRendered = renderTargets.some(function (id) {
+              var el = document.getElementById(id);
+              return el && el.children.length > 0;
+            });
             if (mainRendered) { return; }
             var b = document.createElement("div");
             b.id = "bootFailsafeBanner";
@@ -1480,7 +1486,7 @@
             <div class="card-title">Culturing Ledger — Data-Driven Veto</div>
             <div id="culturingPanel"><p class="empty">Waiting for forward_test_loop…</p></div>
           </div>
-          <div class="card" id="livingParamsCard" style="display:none">
+          <div class="card" id="livingParamsCardLegacy" style="display:none">
             <div class="section-head">
               <div class="card-title">Living Parameters — Active Overrides</div>
               <span class="hint">BE/Trail per symbol (left) + Learning-loop patches (right)</span>
@@ -1652,7 +1658,7 @@
             </p>
             <button type="button" class="btn secondary" id="resetSessionBtn">Reset session state</button>
             <div id="resetSessionStatus" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
-            <button type="button" class="btn" id="unblockTradesBtn" style="margin-top:12px;background:var(--orange);color:#fff;border:none;padding:10px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">UNBLOCK ALL TRADES</button>
+            <button type="button" class="btn" id="unblockTradesBtnSettings" style="margin-top:12px;background:var(--orange);color:#fff;border:none;padding:10px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">UNBLOCK ALL TRADES</button>
             <div id="unblockStatus" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
           </div>
         </div>
@@ -4212,7 +4218,7 @@
       }
     }
 
-    document.getElementById("unblockTradesBtn")?.addEventListener("click", (e) => {
+    document.getElementById("unblockTradesBtnSettings")?.addEventListener("click", (e) => {
       unblockTrades(e.currentTarget);
     });
     document.getElementById("resetSessionLink")?.addEventListener("click", (e) => {
