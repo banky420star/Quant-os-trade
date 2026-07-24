@@ -50,6 +50,29 @@ def test_exposure_used_pct():
     assert exposure_used_pct(150.0, 100.0) == 100.0
 
 
+def test_capped_size_notional_never_exceeds_limit():
+    """Regression: cap_size_to_exposure_limits must floor (not round up) the
+    size, so the resulting notional never breaches the exposure cap. Rounding
+    up pushed notional a few cents over the cap, and check_exposure_limits
+    (tolerance +$0.01) then rejected an otherwise-valid trade.
+    """
+    cfg = {
+        "execution": {"mode": "paper"},
+        "risk": {"max_symbol_exposure_usd": 6000.0, "max_total_exposure_usd": 12000.0},
+        "signals": {"default_risk_percent": 2.5},
+    }
+    # entry that makes the exact fit a non-round number (6000 / 2650 = 2.26415…)
+    entry = 2650.0
+    capped, allowed = cap_size_to_exposure_limits(
+        size=16.0, entry=entry, symbol="XAUUSDm", positions=[], config=cfg,
+    )
+    assert allowed is True
+    # Notional must be <= the cap, never over it.
+    assert capped * entry <= 6000.0 + 1e-9
+    # And it should be close to the cap (floored, not needlessly small).
+    assert capped * entry >= 6000.0 - entry * 0.0001
+
+
 def test_micro_xau_passes_risk_exposure_not_price_notional(config):
     """Min-lot gold must not be blocked by price×lot notional on a ~$37 account."""
     config["execution"]["mode"] = "mt5"
