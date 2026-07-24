@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.learning_schema import MISTAKE_TYPES
+from core.session_scorer import resolve_trading_session, utc_hour
 
 _EARLY_EXIT_REASONS = {"take_profit", "tp", "partial_take_profit", "tp1", "tp_hit"}
 _SL_EXIT_REASONS = {"stop_loss", "sl", "sl_hit", "break_even_stop", "break_even"}
@@ -85,7 +86,18 @@ def detect_chop_zone(trade: dict[str, Any]) -> bool:
 
 
 def detect_bad_session(trade: dict[str, Any]) -> bool:
-    return str(trade.get("session") or "unknown").lower() in _BAD_SESSIONS
+    session_raw = trade.get("session")
+    if session_raw:
+        return str(session_raw).lower() in _BAD_SESSIONS
+    # Session field missing — recover from the trade's open time.
+    # Every trade has a UTC timestamp; resolve the session from it.
+    opened = _parse_iso(trade.get("opened_at"))
+    if opened:
+        resolved_hour = utc_hour(opened)
+        session = resolve_trading_session(resolved_hour)
+        return session in _BAD_SESSIONS
+    # No session, no opened_at -> flag it (can't be good if we have no data)
+    return True
 
 
 def detect_spread_spike(

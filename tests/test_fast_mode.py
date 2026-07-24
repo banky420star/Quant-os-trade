@@ -17,9 +17,21 @@ def fast_config(monkeypatch):
     return load_config()
 
 
+@pytest.fixture
+def fast_live_config(fast_config):
+    """30-real ships live_enabled: false (observe-only on the real account);
+    force the live path on so the live-blocking mechanisms stay covered."""
+    import copy
+    cfg = copy.deepcopy(fast_config)
+    cfg.setdefault("fast_mode", {})["live_enabled"] = True
+    return cfg
+
+
 def test_fast_mode_enabled_on_micro_profile(fast_config):
     assert fast_mode_enabled(fast_config) is True
-    assert fast_mode_live(fast_config) is True
+    # 30-real deliberately keeps the fast layer observe-only on the real
+    # account (profiles/30-real.yaml: live_enabled: false).
+    assert fast_mode_live(fast_config) is False
     syms = fast_mode_symbols(fast_config)
     assert "XAUUSDm" in syms
     assert "USOILm" not in syms
@@ -72,7 +84,8 @@ def test_refresh_cache_from_evaluated(fast_config, tmp_path, monkeypatch):
     assert doc["symbols"]["XAUUSDm"]["anchor"] == 2400.0
 
 
-def test_evaluate_entry_observe_would_enter(fast_config, monkeypatch):
+def test_evaluate_entry_observe_would_enter(fast_live_config, monkeypatch):
+    fast_config = fast_live_config
     monkeypatch.setattr(
         "core.fast_entry_executor.read_json_state",
         lambda name, default=None: (
@@ -156,7 +169,8 @@ def test_apply_preset_observe(tmp_path, monkeypatch):
     assert "observe" in saved
 
 
-def test_fast_live_blocked_without_verifier_approval(fast_config, monkeypatch):
+def test_fast_live_blocked_without_verifier_approval(fast_live_config, monkeypatch):
+    fast_config = fast_live_config
     from core.fast_live_executor import execute_fast_entry
 
     monkeypatch.setattr(
@@ -245,7 +259,8 @@ def test_refresh_cache_from_approved_unwraps_verifier_record(fast_config, tmp_pa
     assert doc["symbols"]["XAUUSDm"]["signal_id"] == "sig-approved"
 
 
-def test_fast_live_blocked_entry_does_not_increment_trade_counter(fast_config, monkeypatch):
+def test_fast_live_blocked_entry_does_not_increment_trade_counter(fast_live_config, monkeypatch):
+    fast_config = fast_live_config
     from core.fast_live_executor import execute_fast_entry
 
     monkeypatch.setattr(
@@ -309,7 +324,8 @@ def test_fast_guard_emergency_uses_feature_price(fast_config):
     )
     assert any(a["action"] == "would_emergency_exit" for a in actions)
 
-def test_fast_limit_decision_forces_limit_entry_type(fast_config, monkeypatch):
+def test_fast_limit_decision_forces_limit_entry_type(fast_live_config, monkeypatch):
+    fast_config = fast_live_config
     monkeypatch.setattr(
         "core.fast_entry_executor.read_json_state",
         lambda name, default=None: (

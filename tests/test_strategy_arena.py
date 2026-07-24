@@ -167,7 +167,10 @@ def test_arena_symbols_have_trailing_config():
     trail_parent = _trail_cfg(config)
     for sym in arena_settings(config)["symbols"]:
         trail_sym = _symbol_overrides(trail_parent, sym)
-        assert trail_sym.get("activation_profit_usd") == 3 or trail_parent.get("activation_profit_usd") == 3
+        # Activation threshold must exist and be positive; the exact USD value
+        # is tuning (was 3, retuned per-symbol to 15-25 on 2026-07-21).
+        act_usd = trail_sym.get("activation_profit_usd") or trail_parent.get("activation_profit_usd")
+        assert act_usd and act_usd > 0
         has_dist = (
             trail_sym.get("trail_points")
             or trail_sym.get("trail_points_atr_mult")

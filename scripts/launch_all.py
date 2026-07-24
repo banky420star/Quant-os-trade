@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single launcher — trading bot + all dashboard frontends.
+"""Single launcher - trading bot + all dashboard frontends.
 
 Starts in one command:
   - MT5 Quant OS agent (start.py)           -> :8080 main dashboard
@@ -199,11 +199,11 @@ def launch_all(
 def _print_summary(manifest: dict[str, Any]) -> None:
     urls = manifest.get("urls") or {}
     print()
-    print("  MT5 Quant OS — full stack launched")
-    print("  " + "─" * 44)
+    print("  MT5 Quant OS - full stack launched")
+    print("  " + "-" * 44)
     for svc in manifest.get("services") or []:
         print(f"  {svc['name']:<18} PID {svc['pid']}  log: {svc['log']}")
-    print("  " + "─" * 44)
+    print("  " + "-" * 44)
     print("  Views (open in browser):")
     print(f"    Main dashboard   {urls.get('main_dashboard')}")
     print(f"    No-JS dashboard  {urls.get('nojs_dashboard')}  <- recommended")
@@ -213,7 +213,7 @@ def _print_summary(manifest: dict[str, Any]) -> None:
         print(f"    Main dashboard   {urls.get('main_dashboard_remote')}")
         print(f"    No-JS dashboard  {urls.get('nojs_dashboard_remote')}")
         print(f"    Terminal web     {urls.get('terminal_web_remote')}")
-    print("  " + "─" * 44)
+    print("  " + "-" * 44)
     print(f"  Terminal TUI (this window): {manifest.get('terminal_tui')}")
     print(f"  Stop everything:          {manifest.get('stop_command')}")
     print()

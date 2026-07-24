@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from core.adaptive_exit import (
+    adaptive_exit_enabled,
+    compute_adaptive_levels,
+    get_symbol_config,
+)
 from core.utils import read_json_state
 
 
@@ -24,11 +30,11 @@ def _round_price(value: float, digits: int = 5) -> float:
 # live override in state/symbol_sltp_live.json (written by
 # scripts/calibrate_sltp.py once a symbol has enough clean trades).
 _SLTP_DEFAULTS = {
-    "sl_atr_mult": 0.5,         # ATR beyond structure for the stop
-    "risk_floor_atr_mult": 1.5, # minimum stop distance, in ATR
-    "risk_floor_pct": 0.001,    # minimum stop distance, as a fraction of price
-    "tp1_rr": 1.5,              # TP1 in R (risk = entry - sl)
-    "tp2_rr": 2.5,              # TP2 in R
+    "sl_atr_mult": 0.5,
+    "risk_floor_atr_mult": 1.5,
+    "risk_floor_pct": 0.001,
+    "tp1_rr": 1.5,
+    "tp2_rr": 2.5,
 }
 
 
@@ -131,7 +137,41 @@ def _levels_from_entry(
     atr: float,
     symbol: str | None,
     config: dict[str, Any],
-) -> tuple[float, float, float]:
+) -> dict[str, Any]:
+    """
+    Compute SL/TP levels for a trade.
+
+    When adaptive exit is enabled, returns ATR-based levels with spread info.
+    Otherwise returns legacy RR-based levels.
+
+    Returns dict with keys: sl, tp1, tp2, spread_pct_of_tp (0 if N/A).
+    """
+    # ---- ADAPTIVE EXIT ENGINE (2026-07-22) ------------------------------
+    if adaptive_exit_enabled(config) and symbol:
+        try:
+            price = float(feat.get("price", entry))
+            spread_points = int(feat.get("spread_points", 0) or 0)
+            _adaptive = compute_adaptive_levels(
+                symbol=symbol,
+                side=side,
+                entry=entry,
+                atr=atr,
+                price=price,
+                spread_points=spread_points,
+                config=config,
+            )
+            return {
+                "sl": _adaptive["sl"],
+                "tp1": _adaptive["tp1"],
+                "tp2": _adaptive["tp2"],
+                "spread_pct_of_tp": _adaptive["spread_pct_of_tp"],
+            }
+        except Exception as _aexc:
+            logging.getLogger("strategy_entry").warning(
+                "Adaptive exit fallback for %s %s: %s", symbol, side, _aexc,
+            )
+
+    # ---- LEGACY RR-BASED SL/TP ------------------------------------------
     c = _sltp_cfg(config, symbol)
     sl_atr_mult = float(c.get("sl_atr_mult", 0.5))
     risk_floor_atr_mult = float(c.get("risk_floor_atr_mult", 1.5))
@@ -154,7 +194,7 @@ def _levels_from_entry(
         tp1 = entry - risk * tp1_rr
         tp2 = entry - risk * tp2_rr
 
-    return sl, tp1, tp2
+    return {"sl": sl, "tp1": tp1, "tp2": tp2, "spread_pct_of_tp": 0.0}
 
 
 def resolve_entry_mode(
@@ -205,10 +245,11 @@ def pin_strategy_entry(
         entry = _round_price(price)
 
     # SL/TP must use the final entry (market snap can move entry away from the anchor).
-    sl, tp1, tp2 = _levels_from_entry(entry, side, feat, atr, symbol, config)
-    sl = _round_price(sl)
-    tp1 = _round_price(tp1)
-    tp2 = _round_price(tp2)
+    _levels = _levels_from_entry(entry, side, feat, atr, symbol, config)
+    sl = _round_price(_levels["sl"])
+    tp1 = _round_price(_levels["tp1"])
+    tp2 = _round_price(_levels["tp2"])
+    spread_pct_of_tp = _levels.get("spread_pct_of_tp", 0.0)
 
     max_wait = float(cfg.get("max_entry_wait_atr", 2.0)) * atr
     distance_atr = abs(price - entry) / atr if atr > 0 else 0.0
@@ -219,6 +260,7 @@ def pin_strategy_entry(
         "sl": sl,
         "tp1": tp1,
         "tp2": tp2,
+        "spread_pct_of_tp": spread_pct_of_tp,
         "entry_mode": entry_mode,
         "entry_anchor": anchor_name,
         "entry_anchor_price": _round_price(anchor),

@@ -1,16 +1,161 @@
 # Full 14-symbol growth campaign (demo)
 label: "Full Growth"
-description: "All 14 symbols, full-Kelly growth campaign, pyramiding on"
+description: "All 14 symbols, fractional-Kelly growth campaign"
 mode: growth
 practice:
   micro:
     enabled: false
   growth:
     enabled: true
+    # 2026-07-24: restored sane campaign math. 50%/day target with 12%/day
+    # loss tolerance and 0.35 min RR was a negative-expectancy churn config —
+    # at WR~31% and payoff 0.63 every extra trade admitted below 1R lost money.
     daily_target_pct: 20
     max_daily_loss_pct: 10
+    min_confidence: 30
+    min_risk_reward: 0.7
+    min_trade_score: 12
+    aggressive_mode: true
+    relax_consensus: true
+    risk_veto_threshold: 4
+    loop_interval_seconds: 15
+    max_symbol_exposure_fraction: 6.0
+    max_total_exposure_fraction: 12.0
+    # base config.yaml has max_consecutive_losses: 0 which SURVIVES deep_merge
+    # since growth.yaml didn't override it. Value 0 was pausing the bot on the
+    # first losing trade. 8 absorbs normal variance streaks (P(8 straight
+    # losses | WR=31%) ≈ 5%) while still halting a real bleed.
+    max_consecutive_losses: 8
+    max_drawdown_pct: 20
+    max_lot: 0.25
+    risk_percent_per_trade: 2.5
+    strategy_ranking_enabled: false
+    session_scoring_enabled: false
+    continuous_through_campaign: true
+    lock_profit_when_target_hit: false
 trading:
-  allow_pyramiding: true
+  allow_pyramiding: false
   max_open_per_symbol: 3
+  max_total_open_positions: 6
+  max_session_trades_per_symbol: 24
+  signal_reversal_early_close:
+    enabled: true
+    check_trend: m15
+    min_hold_seconds: 120
 strategy_arena:
   max_open_per_symbol: 3
+  emit_all_setups: true
+risk:
+  # 2026-07-24: removed unlimited_trades / max_consecutive_losses 50 /
+  # max_daily_loss_pct 50 — those disabled every ruin control at once.
+  # Base risk section values apply. Daily profit halt kept per user request.
+  # Reset happens automatically at UTC midnight.
+  daily_profit_halt_usd: 400
+evaluation:
+  min_policy_score: 8
+  skip_below_score: 4
+  symbol_blocklist: []
+  setup_blocklist: []
+  recent_cold_skip_win_rate: 10
+  recent_cold_skip_min_n: 12
+signals:
+  min_confidence: 30
+  min_risk_reward: 0.7
+  symbol_rules:
+    XAUUSDm:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid, new_york]
+    USOILm:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    BTCUSDm:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, new_york]
+    EURUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    GBPUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, london_mid]
+    USDJPYm:
+      preferred_setups: [pullback, range_fade, trend_continuation, ma_crossover]
+      preferred_sessions: [tokyo, london_open, new_york]
+    USDCHFm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny, new_york]
+    AUDUSDm:
+      preferred_setups: [pullback, range_fade, mean_reversion, ma_crossover]
+      preferred_sessions: [sydney, tokyo, london_open]
+    US500m:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    US30m:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    NAS100m:
+      preferred_setups: [trend_continuation, breakout, pullback, ma_crossover]
+      preferred_sessions: [new_york, overlap_london_ny]
+    UK100m:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny]
+    FR40m:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [london_open, overlap_london_ny]
+    JP225m:
+      preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
+      preferred_sessions: [tokyo, london_open]
+  regime_overrides:
+    strong_trend:
+      min_risk_reward: 0.7
+      bias_aligned: false
+    weak_trend:
+      min_risk_reward: 0.7
+      bias_aligned: false
+    compression:
+      min_risk_reward: 0.7
+      bias_aligned: false
+    expansion:
+      min_risk_reward: 0.7
+      bias_aligned: false
+    range:
+      min_risk_reward: 0.7
+    transitional:
+      skip: false
+    volatility_spike:
+      skip: true
+bankbot:
+  enabled: true
+  period: 8
+  atr_threshold: 0.0001
+  min_confidence: 50
+  # Empty = all symbols. Uncomment to restrict:
+  # symbols:
+  #   - XAUUSDm
+  #   - EURUSDm
+
+# Growth overlay on strategies.diversification — weight decision_engine heaviest
+# (existing 7-engine tree trusted), keep donchian trend + ATR-expansion active,
+# restrict bollinger to FX (EURUSDm/GBPUSDm/USDJPYm/USDCHFm/AUDUSDm) with
+# conservative min_meta_score so it fills gaps instead of dominating.
+strategies:
+  diversification:
+    enabled: true
+    per_symbol_cap: 1
+    min_meta_score: 0.25
+    cooldown_seconds: 120
+    risk_shares:
+      donchian_breakout:   0.30
+      bollinger_reversion: 0.10
+      atr_expansion:       0.20
+      decision_engine:     0.40
+    donchian_enabled: true
+    bollinger_enabled: true
+    atr_expansion_enabled: true
+filters:
+  spread_mult: 5.0
+  min_volume_ratio: 0.08
+# 2026-07-24: removed the intelligence block that force-disabled
+# consensus_gates / regime vetoes / memory vetoes. The growth mode already
+# relaxes gates in a controlled way via practice.growth.relax_consensus;
+# turning off ALL vetoes (including memory) removed the only feedback that
+# stops repeating a losing setup.

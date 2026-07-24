@@ -143,6 +143,30 @@ def run(config: dict | None = None) -> dict | None:
         )
         if dec.get("action", "").startswith("enter"):
             from core.fast_live_executor import execute_fast_entry
+            try:
+                from core.mt5_terminal_manager import MT5TerminalManager
+                _mgr = MT5TerminalManager(config, logger)
+                _side = (
+                    dec.get("side")
+                    or (entry.get("side") if isinstance(entry, dict) else None)
+                    or "BUY"
+                )
+                _mgr.push_intent({
+                    "action": "open",
+                    "symbol": sym,
+                    "side": _side,
+                    "signal_id": (
+                        entry.get("signal_id")
+                        if isinstance(entry, dict)
+                        else f"fast-{sym}"
+                    ),
+                    "payload": {
+                        "entry": dec,
+                        "cache": entry,
+                    },
+                })
+            except Exception as _push_exc:
+                logger.debug("push_intent skipped (non-fatal): %s", _push_exc)
 
             exec_result = execute_fast_entry(
                 dec,

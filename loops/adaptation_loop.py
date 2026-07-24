@@ -32,16 +32,24 @@ from core.positive_evolution import (  # noqa: E402
     positive_evolution_active,
     refresh_positive_evolution,
 )
+from core.regime_evolution import (  # noqa: E402
+    regime_evolution_enabled,
+    refresh_regime_evolution,
+)
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state  # noqa: E402
 
 
 def _adaptation_cfg(config: dict[str, Any]) -> dict[str, Any]:
     cfg = config.get("adaptation") or {}
+    revo = cfg.get("regime_evolution") or {}
     return {
         "enabled": bool(cfg.get("enabled", True)),
         "calibrate_be_trail": bool(cfg.get("calibrate_be_trail", True)),
         "rebuild_trade_log": bool(cfg.get("rebuild_trade_log", True)),
         "refresh_positive_evolution": bool(cfg.get("refresh_positive_evolution", True)),
+        "refresh_regime_evolution": bool(
+            revo.get("enabled", True) if isinstance(revo, dict) else True
+        ),
         "auto_evolve_cells": bool(cfg.get("auto_evolve_cells", False)),
     }
 
@@ -78,6 +86,20 @@ def run() -> dict[str, Any]:
         ledger_payload = forward_test_run() or {}
     except Exception as exc:  # noqa: BLE001
         logger.error("Forward-test adaptation failed: %s", exc)
+
+    # Regime-conditioned progression: promote/demote symbol|regime|setup cells
+    # from closed trades so verify/eval apply different gates per market state.
+    if acfg["refresh_regime_evolution"] and regime_evolution_enabled(config):
+        try:
+            revo = refresh_regime_evolution(config)
+            logger.info(
+                "Regime evolution: cells=%s promoted=%s demoted=%s",
+                revo.get("n_cells"),
+                revo.get("n_promoted"),
+                revo.get("n_demoted"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Regime evolution refresh failed: %s", exc)
 
     # Session-edge evolution: auto-promote winning cells, keep culturing vetoes.
     if acfg["auto_evolve_cells"]:

@@ -106,6 +106,11 @@ def test_be_locks_profit_not_breakeven(config):
 
 
 def test_post_partial_sl_locks_above_entry(config):
+    # The runner locks the post-partial stop at lock_profit_rr of the initial
+    # risk above entry. Derive the expected R from config rather than pinning a
+    # literal, so tuning lock_profit_rr doesn't make this stale.
+    from core.exit_manager import runner_cfg
+    expected_rr = float(runner_cfg(config).get("lock_profit_rr", 0.35))
     sl = post_partial_sl("BUY", 100.0, 98.0, atr=1.0, config=config)
     assert sl > 100.0
-    assert profit_rr("BUY", 100.0, 98.0, sl) == pytest.approx(0.35, rel=0.05)
+    assert profit_rr("BUY", 100.0, 98.0, sl) == pytest.approx(expected_rr, rel=0.05)

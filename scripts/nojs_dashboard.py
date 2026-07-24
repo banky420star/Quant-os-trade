@@ -1,4 +1,4 @@
-﻿"""Standalone no-JavaScript dashboard -- the reliable UI when the bot's in-process
+"""Standalone no-JavaScript dashboard -- the reliable UI when the bot's in-process
 SPA dashboard stalls.
 
 Why this exists: the live bot (start.py) serves its dashboard IN-PROCESS on :8080.
@@ -46,21 +46,21 @@ def _num(x, fmt="{:.2f}"):
     try:
         return fmt.format(float(x))
     except Exception:
-        return str(x) if x is not None else "â€”"
+        return str(x) if x is not None else "-"
 
 
 def _money(x):
     try:
         return "${:.2f}".format(float(x))
     except Exception:
-        return "â€”"
+        return "-"
 
 
 def _pct(x):
     try:
         return "{:+.2f}%".format(float(x))
     except Exception:
-        return "â€”"
+        return "-"
 
 
 def _cls_pos(v):
@@ -98,7 +98,7 @@ def render():
 
     positions = pos.get("positions", []) if isinstance(pos, dict) else []
     kill = bool(ks.get("kill_switch")) if isinstance(ks, dict) else False
-    hstatus = hlt.get("status", "â€”") if isinstance(hlt, dict) else "â€”"
+    hstatus = hlt.get("status", "-") if isinstance(hlt, dict) else "-"
 
     rows = []
     for p in positions:
@@ -123,8 +123,8 @@ def render():
     # approved/rejected signal counts (cheap: just count list keys)
     ap = _load("approved_signals.json")
     rej = _load("rejected_signals.json")
-    ap_n = len(ap) if isinstance(ap, list) else (len(ap.get("signals", [])) if isinstance(ap, dict) and "signals" in ap else "â€”")
-    rej_n = len(rej) if isinstance(rej, list) else (len(rej.get("signals", [])) if isinstance(rej, dict) and "signals" in rej else "â€”")
+    ap_n = len(ap) if isinstance(ap, list) else (len(ap.get("signals", [])) if isinstance(ap, dict) and "signals" in ap else "-")
+    rej_n = len(rej) if isinstance(rej, list) else (len(rej.get("signals", [])) if isinstance(rej, dict) and "signals" in rej else "-")
 
     # supervisor loop timestamps
     sup_lines = []
@@ -163,7 +163,7 @@ def render():
     head = f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
 <meta http-equiv='refresh' content='{REFRESH}'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>MT5 Quant OS â€” live (no-JS)</title>
+<title>MT5 Quant OS - live (no-JS)</title>
 <style>
 *{{box-sizing:border-box}}
 body{{background:#07070a;color:#f5f5f7;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:16px;font-size:14px}}
@@ -190,9 +190,9 @@ th{{background:#1c1c1e;color:#8e8e93;text-transform:uppercase;font-size:11px;let
 </style></head><body>"""
 
     body = f"""
-<h2>MT5 Quant OS â€” live status</h2>
-<div class='muted'>account <b>{acc.get('login','â€”')}</b> Â· {acc.get('server','â€”')} Â· mode=<b>{acc.get('account_mode','â€”')}</b>
-Â· runtime=<b>{rt.get('label','â€”')}</b> Â· updated {time.strftime('%H:%M:%S')} (auto-refresh {REFRESH}s, no JS)</div>
+<h2>MT5 Quant OS - live status</h2>
+<div class='muted'>account <b>{acc.get('login','-')}</b> - {acc.get('server','-')} - mode=<b>{acc.get('account_mode','-')}</b>
+- runtime=<b>{rt.get('label','-')}</b> - updated {time.strftime('%H:%M:%S')} (auto-refresh {REFRESH}s, no JS)</div>
 
 <div class='wrap'>
 {K('Balance', _money(bal))}
@@ -201,8 +201,8 @@ th{{background:#1c1c1e;color:#8e8e93;text-transform:uppercase;font-size:11px;let
 {K('Kill switch', 'ON' if kill else 'OFF', 'bad' if kill else 'ok')}
 {K('Health', html.escape(str(hstatus)), 'ok' if hstatus=='healthy' else 'bad')}
 {K('Open positions', str(len(positions)))}
-{K('BG day P/L', _money(bg.get('daily_pnl')) if isinstance(bg, dict) and bg.get('enabled') else 'â€”', _cls_pos(bg.get('daily_pnl')) if isinstance(bg, dict) else '')}
-{K('BG target', '+6% ($300)' if isinstance(bg, dict) and bg.get('enabled') else 'â€”')}
+{K('BG day P/L', _money(bg.get('daily_pnl')) if isinstance(bg, dict) and bg.get('enabled') else '-', _cls_pos(bg.get('daily_pnl')) if isinstance(bg, dict) else '')}
+{K('BG target', '+6% ($300)' if isinstance(bg, dict) and bg.get('enabled') else '-')}
 {K('BG paused', 'YES' if isinstance(bg, dict) and bg.get('trading_paused') else 'no', 'bad' if isinstance(bg, dict) and bg.get('trading_paused') else 'ok')}
 {K('Approved signals', str(ap_n))}
 {K('Rejected signals', str(rej_n))}
@@ -235,8 +235,8 @@ th{{background:#1c1c1e;color:#8e8e93;text-transform:uppercase;font-size:11px;let
 <div class='note'>
 <b>This is the reliable no-JS mirror.</b> It reads the bot's state files directly and refreshes every {REFRESH}s.
 The full SPA is at <a href='http://localhost:8080/'>localhost:8080</a>
-{(' Â· phone/Tailscale: <a href="http://'+str(tipscale)+':8081/">'+str(tipscale)+':8081</a>') if tipscale else ''}.
-Bot is untouched â€” this only reads files.
+{(' - phone/Tailscale: <a href="http://'+str(tipscale)+':8081/">'+str(tipscale)+':8081</a>') if tipscale else ''}.
+Bot is untouched - this only reads files.
 </div>
 """
     return head + body + "</body></html>"
@@ -253,7 +253,7 @@ def _growth_card(dg):
         bar = max(0, min(100, pct / max(tgt, 0.01) * 100)) if tgt else 0
         return f"""<div class='section'>
 <h3 style='margin:0 0 6px'>Growth campaign</h3>
-<div class='muted'>target {tgt:.1f}%/day Â· start ${start:.2f} Â· now ${cur:.2f} Â· session {_pct(pct)} of day-target</div>
+<div class='muted'>target {tgt:.1f}%/day - start ${start:.2f} - now ${cur:.2f} - session {_pct(pct)} of day-target</div>
 <div class='bar'><i style='width:{bar:.1f}%'></i></div>
 </div>"""
     except Exception:
@@ -264,18 +264,18 @@ def _research_card(rr, rv):
     if not isinstance(rr, dict) or not rr:
         return ""
     try:
-        status = html.escape(str(rr.get("status", "â€”")))
-        reason = html.escape(str(rr.get("status_reason") or "â€”"))
+        status = html.escape(str(rr.get("status", "-")))
+        reason = html.escape(str(rr.get("status_reason") or "-"))
         summary = rr.get("summary", {}) if isinstance(rr.get("summary"), dict) else {}
-        edge_records = rr.get("edge_records", "â€”")
-        ctx_cells = summary.get("context_cells", "â€”")
-        setup_cells = summary.get("setup_cells", "â€”")
-        pattern_count = summary.get("pattern_count", len(rr.get("patterns", [])) if isinstance(rr.get("patterns"), list) else "â€”")
-        val_status = html.escape(str(rv.get("status", "â€”"))) if isinstance(rv, dict) else "â€”"
-        proposal = html.escape(str(rv.get("proposal") or "â€”")) if isinstance(rv, dict) else "â€”"
+        edge_records = rr.get("edge_records", "-")
+        ctx_cells = summary.get("context_cells", "-")
+        setup_cells = summary.get("setup_cells", "-")
+        pattern_count = summary.get("pattern_count", len(rr.get("patterns", [])) if isinstance(rr.get("patterns"), list) else "-")
+        val_status = html.escape(str(rv.get("status", "-"))) if isinstance(rv, dict) else "-"
+        proposal = html.escape(str(rv.get("proposal") or "-")) if isinstance(rv, dict) else "-"
         return f"""<div class='section'>
 <h3 style='margin:0 0 6px'>Research engine</h3>
-<div class='muted'>status <b>{status}</b> · {reason} · edge records <b>{edge_records}</b> · context cells <b>{ctx_cells}</b> · setup cells <b>{setup_cells}</b> · patterns <b>{pattern_count}</b> · validation <b>{val_status}</b> · proposal <b>{proposal}</b></div>
+<div class='muted'>status <b>{status}</b> - {reason} - edge records <b>{edge_records}</b> - context cells <b>{ctx_cells}</b> - setup cells <b>{setup_cells}</b> - patterns <b>{pattern_count}</b> - validation <b>{val_status}</b> - proposal <b>{proposal}</b></div>
 </div>"""
     except Exception:
         return ""
@@ -291,10 +291,10 @@ def _culturing_card(ledger, policy):
         total = int(ledger.get("total_cells", 0) or 0)
         vetoed = int(ledger.get("total_vetoed", 0) or 0)
         cfg = ledger.get("config", {}) or {}
-        min_n = cfg.get("min_n", "â€”")
-        vwr = cfg.get("veto_win_rate_pct", "â€”")
+        min_n = cfg.get("min_n", "-")
+        vwr = cfg.get("veto_win_rate_pct", "-")
         if not cells:
-            return (f"<div class='section'><h3 style='margin:0 0 6px'>Culturing ledger â€” data-driven veto</h3>"
+            return (f"<div class='section'><h3 style='margin:0 0 6px'>Culturing ledger - data-driven veto</h3>"
                     f"<div class='muted'>no cells yet (min_n={min_n}, veto when wr&lt;{vwr}% &amp; netR&lt;0)</div></div>")
         rows = []
         for sym, sym_cells in cells.items():
@@ -316,19 +316,19 @@ def _culturing_card(ledger, policy):
             if worst:
                 wnet, wcell, wst = worst
                 wc = html.escape(wcell if len(wcell) <= 44 else wcell[:41] + "...")
-                wc += (f" Â· n={wst.get('n',0)} wr={int(float(wst.get('win_rate_pct',0) or 0))}% "
+                wc += (f" - n={wst.get('n',0)} wr={int(float(wst.get('win_rate_pct',0) or 0))}% "
                        f"netR={_pct(wnet*100)} avgL={_money(wst.get('avg_loss_usd'))} "
                        f"maxL={_money(wst.get('max_loss_usd'))} br25={wst.get('breach_25_count',0)} "
                        f"[{wst.get('verdict','')}]")
-            vlist = "".join(f"<li class='bad'>âœ• {html.escape(c if len(c)<=60 else c[:57]+'...')}</li>" for c in sorted(v_set)[:5])
+            vlist = "".join(f"<li class='bad'>œ* {html.escape(c if len(c)<=60 else c[:57]+'...')}</li>" for c in sorted(v_set)[:5])
             rows.append(
                 f"<tr><td><b>{html.escape(str(sym))}</b><br><span class='muted'>cells={n_cells} vetoed={v_n}</span></td>"
                 f"<td class='muted'>{wc}</td>"
                 f"<td><ul style='margin:0;padding-left:18px'>{vlist}</ul></td></tr>"
             )
         return f"""<div class='section'>
-<h3 style='margin:0 0 6px'>Culturing ledger â€” data-driven veto</h3>
-<div class='muted'>cells <b>{total}</b> Â· vetoed <b style='color:#ff453a'>{vetoed}</b> Â· min_n={min_n} Â· veto when wr&lt;{vwr}% &amp; netR&lt;0</div>
+<h3 style='margin:0 0 6px'>Culturing ledger - data-driven veto</h3>
+<div class='muted'>cells <b>{total}</b> - vetoed <b style='color:#ff453a'>{vetoed}</b> - min_n={min_n} - veto when wr&lt;{vwr}% &amp; netR&lt;0</div>
 <table><tr><th>Symbol</th><th>Worst cell (by net R)</th><th>Vetoed cells</th></tr>
 {''.join(rows)}
 </table></div>"""
@@ -344,7 +344,7 @@ def _sltp_card(sltp):
     recorded (thin data / ci95<=0 -> seeded values stay active).
     """
     if not isinstance(sltp, dict) or not sltp.get("symbols"):
-        return ("<div class='section'><h3 style='margin:0 0 6px'>SL/TP calibration â€” per symbol</h3>"
+        return ("<div class='section'><h3 style='margin:0 0 6px'>SL/TP calibration - per symbol</h3>"
                 "<div class='muted'>no data-driven calibration yet (seeds from config active; "
                 "run scripts/calibrate_sltp.py)</div></div>")
     try:
@@ -353,22 +353,22 @@ def _sltp_card(sltp):
             if not isinstance(s, dict):
                 continue
             trusted = bool(s.get("trusted"))
-            n = s.get("n", "â€”")
+            n = s.get("n", "-")
             exp = s.get("expectancy_r")
             seed_exp = s.get("seed_expectancy_r")
             ci = s.get("ci95") or [None, None]
-            exp_s = "â€”" if exp is None else f"{float(exp):+.3f}R"
-            seed_s = "â€”" if seed_exp is None else f"{float(seed_exp):+.3f}R"
-            ci_s = "â€”" if ci[0] is None else f"[{float(ci[0]):+.3f},{float(ci[1]):+.3f}]"
+            exp_s = "-" if exp is None else f"{float(exp):+.3f}R"
+            seed_s = "-" if seed_exp is None else f"{float(seed_exp):+.3f}R"
+            ci_s = "-" if ci[0] is None else f"[{float(ci[0]):+.3f},{float(ci[1]):+.3f}]"
             applied = "<b class='ok'>APPLIED</b>" if trusted else f"<span class='muted'>recorded ({html.escape(str(s.get('reason','')))})</span>"
             rows.append(
                 f"<tr><td><b>{html.escape(str(sym))}</b></td><td class='muted'>{n}</td>"
-                f"<td>{s.get('sl_atr_mult','â€”')}</td><td>{s.get('tp1_rr','â€”')}/{s.get('tp2_rr','â€”')}</td>"
+                f"<td>{s.get('sl_atr_mult','-')}</td><td>{s.get('tp1_rr','-')}/{s.get('tp2_rr','-')}</td>"
                 f"<td>{exp_s}</td><td class='muted'>seed {seed_s}</td>"
                 f"<td class='muted'>{ci_s}</td><td>{applied}</td></tr>"
             )
         return f"""<div class='section'>
-<h3 style='margin:0 0 6px'>SL/TP calibration â€” per symbol (data-driven auto-tune)</h3>
+<h3 style='margin:0 0 6px'>SL/TP calibration - per symbol (data-driven auto-tune)</h3>
 <div class='muted'>seeded values from config active unless a row is <b class='ok'>APPLIED</b>; auto-tune only applies when n&gt;=50 AND beats seed AND ci95 lo&gt;0</div>
 <div class='swipe'><table style='font-size:11px'><tr><th>Symbol</th><th>n</th><th>sl_atr</th><th>tp1/tp2 RR</th><th>best exp</th><th>seed exp</th><th>ci95</th><th>status</th></tr>
 {''.join(rows)}
@@ -380,7 +380,7 @@ def _sltp_card(sltp):
 def _betrail_card(betr):
     """No-JS mirror of the per-symbol break-even/trailing calibration."""
     if not isinstance(betr, dict) or not betr.get("symbols"):
-        return ("<div class='section'><h3 style='margin:0 0 6px'>Break-even / trailing calibration â€” per symbol</h3>"
+        return ("<div class='section'><h3 style='margin:0 0 6px'>Break-even / trailing calibration - per symbol</h3>"
                 "<div class='muted'>no data-driven calibration yet (seeds from config active; "
                 "run scripts/calibrate_be_trail.py)</div></div>")
     try:
@@ -393,19 +393,19 @@ def _betrail_card(betr):
             tr = s.get("trailing") or {}
             exp = s.get("expectancy_r"); seed_exp = s.get("seed_expectancy_r")
             ci = s.get("ci95") or [None, None]
-            exp_s = "â€”" if exp is None else f"{float(exp):+.3f}R"
-            seed_s = "â€”" if seed_exp is None else f"{float(seed_exp):+.3f}R"
-            ci_s = "â€”" if ci[0] is None else f"[{float(ci[0]):+.3f},{float(ci[1]):+.3f}]"
+            exp_s = "-" if exp is None else f"{float(exp):+.3f}R"
+            seed_s = "-" if seed_exp is None else f"{float(seed_exp):+.3f}R"
+            ci_s = "-" if ci[0] is None else f"[{float(ci[0]):+.3f},{float(ci[1]):+.3f}]"
             applied = "<b class='ok'>APPLIED</b>" if trusted else f"<span class='muted'>recorded ({html.escape(str(s.get('reason','')))})</span>"
             rows.append(
-                f"<tr><td><b>{html.escape(str(sym))}</b></td><td class='muted'>{s.get('n','â€”')}</td>"
-                f"<td>{be.get('trigger_atr_mult','â€”')}/{be.get('lock_profit_atr_mult','â€”')}</td>"
-                f"<td>{tr.get('activation_atr_mult','â€”')}/{tr.get('trail_atr_mult','â€”')}</td>"
+                f"<tr><td><b>{html.escape(str(sym))}</b></td><td class='muted'>{s.get('n','-')}</td>"
+                f"<td>{be.get('trigger_atr_mult','-')}/{be.get('lock_profit_atr_mult','-')}</td>"
+                f"<td>{tr.get('activation_atr_mult','-')}/{tr.get('trail_atr_mult','-')}</td>"
                 f"<td>{exp_s}</td><td class='muted'>seed {seed_s}</td>"
                 f"<td class='muted'>{ci_s}</td><td>{applied}</td></tr>"
             )
         return f"""<div class='section'>
-<h3 style='margin:0 0 6px'>Break-even / trailing calibration â€” per symbol</h3>
+<h3 style='margin:0 0 6px'>Break-even / trailing calibration - per symbol</h3>
 <div class='muted'>seeds active unless <b class='ok'>APPLIED</b>; auto-tune applies only when n&gt;=50 AND beats seed AND ci95 lo&gt;0 (path-unknown model -> conservative)</div>
 <div class='swipe'><table style='font-size:11px'><tr><th>Symbol</th><th>n</th><th>BE trig/lock</th><th>trail act/dist</th><th>best exp</th><th>seed exp</th><th>ci95</th><th>status</th></tr>
 {''.join(rows)}
@@ -429,63 +429,63 @@ def _trade_log_card(tlog):
             return "<div class='section'><h3 style='margin:0 0 6px'>Trade log</h3><div class='muted'>no closed trades yet</div></div>"
         wins = int(tlog.get("wins", 0) or 0)
         losses = int(tlog.get("losses", 0) or 0)
-        wr = tlog.get("win_rate_pct", "â€”")
+        wr = tlog.get("win_rate_pct", "-")
         pnl = tlog.get("total_pnl", 0)
         avg_r = tlog.get("avg_R")
-        r_s = "â€”" if avg_r is None else f"{float(avg_r):+.3f}R"
+        r_s = "-" if avg_r is None else f"{float(avg_r):+.3f}R"
         ks = tlog.get("kelly") or {}
         ks_sized = int(ks.get("sized_trades", 0) or 0)
         ks_fb = int(ks.get("fallback_trades", 0) or 0)
         trades = tlog.get("trades", []) if isinstance(tlog.get("trades"), list) else []
         rows = []
         for t in trades[:25]:
-            sym = html.escape(str(t.get("symbol") or "â€”"))
-            side = html.escape(str(t.get("side") or "â€”"))
-            setup = html.escape(str(t.get("setup") or "â€”"))
-            res = str(t.get("result") or "â€”")
+            sym = html.escape(str(t.get("symbol") or "-"))
+            side = html.escape(str(t.get("side") or "-"))
+            setup = html.escape(str(t.get("setup") or "-"))
+            res = str(t.get("result") or "-")
             res_cls = "ok" if res == "win" else "bad"
             pnl_v = t.get("pnl")
             try:
                 pnl_s = f"${float(pnl_v):+.2f}"
             except Exception:
-                pnl_s = "â€”"
+                pnl_s = "-"
             r = t.get("r_multiple")
-            r_s2 = "â€”" if r is None else f"{float(r):+.2f}R"
+            r_s2 = "-" if r is None else f"{float(r):+.2f}R"
             mae = t.get("mae_R")
-            mae_s = "â€”" if mae is None else f"{float(mae):.2f}R"
+            mae_s = "-" if mae is None else f"{float(mae):.2f}R"
             mfe = t.get("mfe_R")
-            mfe_s = "â€”" if mfe is None else f"{float(mfe):.2f}R"
-            opened = html.escape(str(t.get("opened_at") or "â€”")[5:16].replace("T", " "))
-            closed = html.escape(str(t.get("closed_at") or "â€”")[5:16].replace("T", " "))
-            hold = html.escape(str(t.get("hold_human") or "â€”"))
-            conf = t.get("confidence") or "â€”"
+            mfe_s = "-" if mfe is None else f"{float(mfe):.2f}R"
+            opened = html.escape(str(t.get("opened_at") or "-")[5:16].replace("T", " "))
+            closed = html.escape(str(t.get("closed_at") or "-")[5:16].replace("T", " "))
+            hold = html.escape(str(t.get("hold_human") or "-"))
+            conf = t.get("confidence") or "-"
             # Kelly verdict for this trade's cell: fraction (risk-%) + reason.
             k = t.get("kelly") if isinstance(t.get("kelly"), dict) else None
             if k:
                 kcls = "ok" if not k.get("gated") else "muted"
                 kfrac = k.get("fraction")
-                kfrac_s = "â€”" if kfrac is None else f"{float(kfrac):.2f}%"
+                kfrac_s = "-" if kfrac is None else f"{float(kfrac):.2f}%"
                 kreason = html.escape(str(k.get("reason") or ""))
                 k_s = f"<span class='{kcls}'>{kfrac_s}</span><br><span class='muted' style='font-size:10px'>{kreason}</span>"
             else:
-                k_s = "<span class='muted'>â€”</span>"
+                k_s = "<span class='muted'>-</span>"
             rows.append(
                 f"<tr><td class='muted'>{opened}</td><td class='muted'>{closed}</td>"
                 f"<td>{hold}</td><td><b>{sym}</b></td><td>{side}</td><td>{setup}</td>"
-                f"<td class='muted'>{html.escape(str(t.get('regime_primary') or 'â€”'))}</td>"
-                f"<td class='muted'>{html.escape(str(t.get('session') or 'â€”'))}</td>"
+                f"<td class='muted'>{html.escape(str(t.get('regime_primary') or '-'))}</td>"
+                f"<td class='muted'>{html.escape(str(t.get('session') or '-'))}</td>"
                 f"<td>{conf}</td><td class='{res_cls}'>{res}</td>"
                 f"<td class='{_cls_pos(pnl_v)}'>{pnl_s}</td><td class='{_cls_pos(r)}'>{r_s2}</td>"
                 f"<td class='bad'>{mae_s}</td><td class='ok'>{mfe_s}</td>"
                 f"<td>{k_s}</td></tr>"
             )
         return f"""<div class='section'>
-<h3 style='margin:0 0 6px'>Trade log â€” every closed trade (open/close, win/loss, setup, drawdown, R, Kelly)</h3>
-<div class='muted'>trades <b>{total}</b> Â· wins <b class='ok'>{wins}</b> Â· losses <b class='bad'>{losses}</b> Â· win% <b>{wr}</b> Â· net PnL <b class='{_cls_pos(pnl)}'>${float(pnl):+.2f}</b> Â· avg R <b class='{_cls_pos(avg_r)}'>{r_s}</b> Â· Kelly sized-up <b class='ok'>{ks_sized}</b> / fallback <b class='muted'>{ks_fb}</b> Â· opened_at known {tlog.get('opened_at_known','â€”')} Â· drawdown known {tlog.get('drawdown_known','â€”')}</div>
+<h3 style='margin:0 0 6px'>Trade log - every closed trade (open/close, win/loss, setup, drawdown, R, Kelly)</h3>
+<div class='muted'>trades <b>{total}</b> - wins <b class='ok'>{wins}</b> - losses <b class='bad'>{losses}</b> - win% <b>{wr}</b> - net PnL <b class='{_cls_pos(pnl)}'>${float(pnl):+.2f}</b> - avg R <b class='{_cls_pos(avg_r)}'>{r_s}</b> - Kelly sized-up <b class='ok'>{ks_sized}</b> / fallback <b class='muted'>{ks_fb}</b> - opened_at known {tlog.get('opened_at_known','-')} - drawdown known {tlog.get('drawdown_known','-')}</div>
 <div class='swipe'><table style='font-size:11px'><tr><th>Opened</th><th>Closed</th><th>Hold</th><th>Symbol</th><th>Side</th><th>Setup</th><th>Regime</th><th>Session</th><th>Conf</th><th>Result</th><th>PnL</th><th>R</th><th>MAE(R)</th><th>MFE(R)</th><th>Kelly</th></tr>
 {''.join(rows)}
 </table></div>
-<div class='muted' style='margin-top:4px'>showing most recent 25 of {total} trades Â· full log with all fields (entry/exit/SL/TP/size/tags/exit_reason) on the SPA Trade Log tab</div>
+<div class='muted' style='margin-top:4px'>showing most recent 25 of {total} trades - full log with all fields (entry/exit/SL/TP/size/tags/exit_reason) on the SPA Trade Log tab</div>
 </div>"""
     except Exception:
         return ""

@@ -48,3 +48,31 @@ config.local.yaml
 .pytest_tmp_fast_limit_review/
 pytest_tmp/
 manual_state_check/
+
+# Scratch directories + ephemeral runtime artifacts (NOT for commit)
+tmp/
+nul
+output.txt
+.freebuff/
+mcps/
+
+# Profile backup snapshots
+profiles/*.bak_*
+profiles/*.bak
+
+# Single-use / apply-by-hand utilities (underscore-prefixed, NOT for commit)
+scripts/_*.py
+scripts/._*
+
+# Root-level scratch helpers (NOT for commit)
+_x.py
+_fix2.py
+_patch_meter.py
+_check_full_sl.py
+
+# macOS / Windows metadata fork garbage
+._*
+
+# stray grok-goal tooling artifacts (Windows temp paths)
+grok-goal-*
+C:\\*

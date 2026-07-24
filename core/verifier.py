@@ -15,6 +15,11 @@ from core.positive_evolution import (
     positive_evolution_active,
     positive_evolution_settings,
 )
+from core.regime_evolution import (
+    effective_regime_settings,
+    load_regime_evolution,
+    regime_evolution_enabled,
+)
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
 from core.strategy_policy import culturing_cell_key, setup_allowed, symbol_rule, threshold_overrides
 from core.entry_staging import touch_and_check
@@ -23,6 +28,7 @@ from core.trade_limits import (
     is_duplicate_position,
     session_trade_capacity_available,
     symbol_reentry_available,
+    total_position_capacity_available,
     unlimited_trades,
 )
 from core.utils import read_json_state, utc_now_iso
@@ -69,6 +75,8 @@ class Verifier:
         self._live_veto = read_json_state("symbol_policy_live.json", default={}) or {}
         self._positive_evolution = read_json_state("positive_evolution.json", default={}) or {}
         self._positive_evolution_cfg = positive_evolution_settings(config)
+        self._regime_evolution = load_regime_evolution() if regime_evolution_enabled(config) else {}
+        self._regime_evolution_on = regime_evolution_enabled(config)
         self._reference_time: Any = None
 
     def _max_open_confidence(self, active_signals: list[dict[str, Any]] | None) -> float | None:
@@ -136,6 +144,8 @@ class Verifier:
         self._live_veto = read_json_state("symbol_policy_live.json", default={}) or {}
         if positive_evolution_active(self.config):
             self._positive_evolution = read_json_state("positive_evolution.json", default={}) or {}
+        if self._regime_evolution_on:
+            self._regime_evolution = load_regime_evolution()
 
         for signal in candidates:
             feat = features.get(signal["symbol"], {})
@@ -165,22 +175,52 @@ class Verifier:
         failures: list[str] = []
 
         # --- Regime-conditional strategy (dynamic / flowing) -----------------
-        # Read the regime the decision engine stamped on this signal and, if
-        # regime_overrides is configured for that regime, switch the gates.
-        # No overrides -> eff_* fall back to the global config (legacy path).
+        # Base map + YAML regime_overrides + evolved cells (state/regime_evolution.json)
+        # yield distinct min_confidence / min_rr / setup bias per market regime.
         mc = signal.get("market_context", {}) or {}
         regime = mc.get("market_regime") or {}
         regime_primary = regime.get("primary")
         regime_bias = regime.get("bias")
+        setup_type = signal.get("setup_type") or "unknown"
         ov = self.regime_overrides.get(regime_primary, {}) if regime_primary else {}
-        eff_min_confidence = ov.get("min_confidence", self.config["signals"]["min_confidence"])
-        eff_min_rr = float(ov.get("min_risk_reward", self.config.get("signals", {}).get("min_risk_reward", 1.2)))
 
-        if ov.get("skip"):
-            # Regime is explicitly untradeable under this strategy -> reject.
-            checks["regime_allowed"] = False
+        if self._regime_evolution_on:
+            revo = effective_regime_settings(
+                self.config,
+                symbol=str(signal.get("symbol") or ""),
+                regime=regime_primary,
+                setup=setup_type,
+                state=self._regime_evolution,
+            )
+            eff_min_confidence = float(revo.get("min_confidence") or self.config["signals"]["min_confidence"])
+            eff_min_rr = float(
+                revo.get("min_risk_reward")
+                or self.config.get("signals", {}).get("min_risk_reward", 1.2)
+            )
+            if revo.get("skip") or ov.get("skip"):
+                checks["regime_allowed"] = False
+            else:
+                checks["regime_allowed"] = True
+            # Soft fit only — do NOT put preferred/demoted into `checks` as
+            # pass/fail (any False check is a hard reject). Bias is already in
+            # eff_min_confidence / eff_min_rr via effective_regime_settings.
+            signal["regime_evolution"] = {
+                "regime": revo.get("regime"),
+                "min_confidence": eff_min_confidence,
+                "min_risk_reward": eff_min_rr,
+                "source": revo.get("source"),
+                "setup_preferred": revo.get("setup_preferred"),
+                "setup_demoted": revo.get("setup_demoted"),
+                "skip": revo.get("skip"),
+            }
         else:
-            checks["regime_allowed"] = True
+            # Legacy path: YAML regime_overrides only.
+            eff_min_confidence = ov.get("min_confidence", self.config["signals"]["min_confidence"])
+            eff_min_rr = float(ov.get("min_risk_reward", self.config.get("signals", {}).get("min_risk_reward", 1.2)))
+            if ov.get("skip"):
+                checks["regime_allowed"] = False
+            else:
+                checks["regime_allowed"] = True
 
         if ov.get("bias_aligned") and regime_bias and regime_bias not in ("neutral", "mixed", "none", "", None):
             # Only take trades whose side agrees with the regime's bias.
@@ -200,7 +240,6 @@ class Verifier:
         # historically won for this setup_type) -------------------------------
         # cell = setup | regime | bias-aligned-with-side. This is the faithful
         # implementation of "save the conditions where it won, only use those".
-        setup_type = signal.get("setup_type") or "unknown"
         checks["symbol_setup_allowed"] = setup_allowed(symbol_rule_data, setup_type)
         bias_aligned_side = (
             (regime_bias in ("bullish", "up") and signal.get("side") == "BUY")
@@ -311,6 +350,10 @@ class Verifier:
             signal["symbol"],
             active_signals,
         )
+        total_ok, _total_limit = total_position_capacity_available(
+            self.config, active_signals,
+        )
+        checks["total_position_capacity"] = total_ok
         # Confidence floor: a new position must be at least as confident as the
         # strongest currently-open position (don't add a weaker trade on top of
         # a stronger one). Open-position confidences are persisted by the broker
@@ -357,11 +400,19 @@ class Verifier:
         else:
             checks["blue_guardian_entry"] = True
 
+        # Diagnostic / soft-bias keys must never fail approval.
+        _SOFT_CHECK_KEYS = frozenset({
+            "preferred_session_bias",
+            "regime_setup_preferred",
+            "regime_setup_demoted",
+            "gold_never_rejectable",
+            "gold_forced_approve",
+        })
         failure_codes: list[str] = []
         for name, passed in checks.items():
             if passed:
                 continue
-            if name == "preferred_session_bias":
+            if name in _SOFT_CHECK_KEYS or name.startswith("bypassed_"):
                 continue
             if name == "blue_guardian_entry" and bg_code:
                 failure_codes.append(bg_code)
@@ -390,6 +441,110 @@ class Verifier:
         ]
 
         approved = len(failures) == 0
+        gold_forced = False
+        # USER 2026-07-15: gold quality bypass only — hard safety never cleared.
+        # Review bug: prior code wiped exposure/news/capacity/guardian failures.
+        _GOLD_HARD_SAFETY = frozenset({
+            "kill_switch_safe",
+            "valid_levels",
+            "exposure_safe",
+            "exposure_limit_exceeded",
+            "symbol_capacity",
+            "no_duplicate",
+            "news_safe",
+            "macro_news_safe",
+            "blue_guardian_entry",
+            "session_trade_capacity",
+            "reentry_cooldown",
+        })
+        try:
+            from core.gold_policy import gold_force_pass
+
+            if (
+                not approved
+                and gold_force_pass(signal.get("symbol"), self.config)
+                and not kill_switch
+                and checks.get("valid_levels", True)
+            ):
+                remaining_codes: list[str] = []
+                bypassed: list[str] = []
+                for code in failure_codes:
+                    # Map check names that were pushed as failure_codes
+                    hard = (
+                        code in _GOLD_HARD_SAFETY
+                        or code.startswith("exposure")
+                        or code in (
+                            "kill_switch",
+                            "valid_levels",
+                            "symbol_capacity",
+                            "no_duplicate",
+                            "news_safe",
+                            "macro_news_safe",
+                            "blue_guardian_entry",
+                            "session_trade_capacity",
+                            "reentry_cooldown",
+                        )
+                        or (bg_code is not None and code == bg_code)
+                    )
+                    # Also respect failed hard *checks* even if code name differs
+                    if code in (
+                        "exposure_limit_exceeded",
+                    ) or not checks.get(code, True) and code in (
+                        "exposure_safe", "symbol_capacity", "no_duplicate",
+                        "news_safe", "macro_news_safe", "blue_guardian_entry",
+                        "kill_switch_safe", "valid_levels",
+                        "session_trade_capacity", "reentry_cooldown",
+                    ):
+                        hard = True
+                    if hard:
+                        remaining_codes.append(code)
+                    else:
+                        bypassed.append(code)
+                # If any hard *check* failed, keep unapproved
+                hard_check_failed = any(
+                    not checks.get(k, True)
+                    for k in (
+                        "kill_switch_safe", "valid_levels", "exposure_safe",
+                        "symbol_capacity", "no_duplicate", "news_safe",
+                        "macro_news_safe", "blue_guardian_entry",
+                        "session_trade_capacity", "reentry_cooldown",
+                    )
+                )
+                if not remaining_codes and not hard_check_failed:
+                    approved = True
+                    gold_forced = True
+                    failure_codes = []
+                    failures = []
+                    checks["gold_never_rejectable"] = True
+                    checks["gold_forced_approve"] = True
+                    for c in bypassed:
+                        checks[f"bypassed_{c}"] = True
+                else:
+                    # Keep only hard failures
+                    failure_codes = remaining_codes or [
+                        k for k in (
+                            "kill_switch_safe", "valid_levels", "exposure_safe",
+                            "symbol_capacity", "no_duplicate", "news_safe",
+                            "macro_news_safe", "blue_guardian_entry",
+                            "session_trade_capacity", "reentry_cooldown",
+                        )
+                        if not checks.get(k, True)
+                    ]
+                    failures = [
+                        humanize_verifier_failure(
+                            code,
+                            signal,
+                            self.config,
+                            active_positions=active_signals,
+                            closed_trades=closed_trades,
+                        )
+                        for code in failure_codes
+                    ]
+                    for c in bypassed:
+                        checks[f"bypassed_{c}"] = True
+        except Exception:
+            pass
+
         record = {
             "signal_id": signal["signal_id"],
             "symbol": signal["symbol"],
@@ -404,10 +559,13 @@ class Verifier:
             "reason": signal.get("reason"),
             "verified_at": utc_now_iso(),
             "exposure": exposure_details,
+            "gold_forced_approve": gold_forced,
         }
         if approved:
             record["approved_at"] = utc_now_iso()
             record["signal"] = adjusted_signal if dyn_ok else signal
+            if gold_forced:
+                record["approval_reason"] = "gold_never_rejectable"
         else:
             record["rejected_at"] = utc_now_iso()
             record["rejection_reason"] = "; ".join(failures)

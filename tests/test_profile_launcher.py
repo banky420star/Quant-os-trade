@@ -7,6 +7,7 @@ import os
 from core.profile_launcher import (
     auto_select_profile,
     list_profiles,
+    load_profile_overlay,
     resolve_profile_for_account,
     set_active_profile,
 )
@@ -29,7 +30,9 @@ def test_profile_30_loads_micro():
         c = load_config()
         assert c.get("active_profile") == "30"
         assert c["practice"]["micro"]["account_size_usd"] == 30
-        assert c["mt5"]["symbols"] == ["XAUUSDm", "USOILm", "UK100m"]
+        assert c["mt5"]["symbols"] == list(
+            load_profile_overlay("30")["practice"]["micro"]["symbols"]
+        )
         assert c["practice"]["micro"]["positive_evolution_enabled"] is True
         assert c["adaptation"]["auto_evolve_cells"] is True
         assert c["execution"]["starting_cash"] == 30
@@ -126,7 +129,9 @@ def test_profile_30_real_loads_micro_live():
         assert c["practice"]["growth"]["enabled"] is False
         assert c["mt5"]["account_mode"] == "real"
         assert c["trading"]["aggressive_mode"] is True
-        assert c["mt5"]["symbols"] == ["XAUUSDm", "USOILm", "UK100m"]
+        assert c["mt5"]["symbols"] == list(
+            load_profile_overlay("30-real")["practice"]["micro"]["symbols"]
+        )
         assert c["execution"]["live_trading_enabled"] is True
     finally:
         os.environ.pop("MT5_QUANT_PROFILE", None)

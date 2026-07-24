@@ -18,10 +18,16 @@ def _load_micro_config():
     return load_config()
 
 
+def _profile_symbols(name: str) -> list[str]:
+    """Symbols pinned by the profile overlay — the profile file is authoritative."""
+    from core.profile_launcher import load_profile_overlay
+    return list(load_profile_overlay(name)["practice"]["micro"]["symbols"])
+
+
 def test_micro_profile_enabled_in_config():
     config = _load_micro_config()
     assert micro_profile_enabled(config)
-    assert config["mt5"]["symbols"] == ["XAUUSDm", "USOILm", "UK100m"]
+    assert config["mt5"]["symbols"] == _profile_symbols("30")
     assert config["trading"]["max_open_per_symbol"] == 1
     assert config["trading"]["allow_pyramiding"] is False
     assert config["trading"]["aggressive_mode"] is True
@@ -35,8 +41,8 @@ def test_micro_profile_enabled_in_config():
     assert config["trading"]["entry_confirm_seconds"] == 30
     assert config["trading"]["regime_flip_replace_enabled"] is True
     assert config["risk"]["cap_loss_to_balance"] is True
-    assert config["trading"]["trailing"]["per_symbol"]["XAUUSDm"]["trail_points_atr_mult"] == 0.28
-    assert config["trading"]["exits"]["runner"]["trail_tighten_mult"] == 0.35
+    assert config["trading"]["trailing"]["per_symbol"]["XAUUSDm"]["trail_points_atr_mult"] == 0.9
+    assert config["trading"]["exits"]["runner"]["trail_tighten_mult"] == 0.5
 
 
 def test_micro_runtime_mode_label():

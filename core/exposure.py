@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from core.kelly_sizing import resolve_risk_percent
@@ -309,4 +310,13 @@ def cap_size_to_exposure_limits(
 
     if capped < min_size:
         return 0.0, False
-    return round(capped, 4), True
+    # Floor (never round up) to lot precision: rounding a capped size UP would
+    # push its notional back over the very exposure cap we just enforced, and
+    # the downstream check_exposure_limits (tolerance +$0.01) would then reject
+    # the trade for being a few cents over. Truncating keeps notional <= cap.
+    floored = math.floor(capped * 10000) / 10000
+    if floored < min_size:
+        # Capped size rounds below the min lot — fall back to min_size only if
+        # min_size itself fits (max_allowed >= min_size), else disallow.
+        return (min_size, True) if max_allowed >= min_size else (0.0, False)
+    return floored, True

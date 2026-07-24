@@ -1,4 +1,24 @@
-"""MT5 Broker — place real orders on the connected MT5 account (demo or live)."""
+"""MT5 Broker — place real orders on the connected MT5 account (demo or live).
+
+Concurrency model (2026-07-22)
+==============================
+Every MT5 mutation path (``process_approved_signals``, ``close_position``)
+runs under ``MT5TerminalManager._shared_trade_lock`` so fast_tick_loop
+live entries, the slow execution_loop path, and fast_position_guard SL
+ratchets all funnel through the SAME lock. The class exposes two wrapper
+methods (lock-acquiring, safe) and two ``_unsafe`` methods (the
+actual implementations). Tests + the (rare) non-Python MT5
+environment call the unsafe variants directly.
+
+Public API contract:
+* ``process_approved_signals(approved, ...)`` — place orders
+* ``close_position(ticket, symbol, side, volume, reason)`` — close position
+* ``_process_approved_signals_unsafe(...)`` — lock-free impl
+* ``_close_position_unsafe(...)`` — lock-free impl
+
+The non-underscore wrappers ALWAYS acquire the shared lock first;
+``_unsafe`` is reserved for callers that already hold it.
+"""
 
 from __future__ import annotations
 
@@ -12,8 +32,9 @@ from core.blue_guardian import (
     can_close_position,
     entry_gates,
     record_position_open,
-
 )
+from core.learning_logger import log_decision
+from core.learning_schema import build_decision_event, config_snapshot_hash
 from core.position_sizing import calc_executable_volume, symbol_spec_from_mt5
 from core.position_sync import _setup_type_from_comment
 from core.dynamic_entry import symbol_capacity_available
@@ -32,6 +53,19 @@ try:
     import MetaTrader5 as mt5
 except ImportError:
     mt5 = None  # type: ignore
+
+# Cross-loop race elimination (2026-07-22). Every MT5 mutation path
+# (process_approved_signals, close_position) is serialized via
+# MT5TerminalManager._shared_trade_lock so fast_tick_loop live
+# entries, the slow execution_loop path, and fast_position_guard SL
+# ratchets all funnel through the SAME lock. Without this, fast_mode
+# could open a position while main_pipeline's next cycle was still
+# inside its own broker call, producing the historic "open and close
+# immediately" race.
+try:
+    from core.mt5_terminal_manager import MT5TerminalManager  # noqa: E402
+except ImportError:  # pragma: no cover — circular-import safe
+    MT5TerminalManager = None  # type: ignore
 
 
 def _json_safe_kelly(kelly: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -59,6 +93,34 @@ class MT5Broker:
         self.magic = int(self.exec_cfg.get("magic_number", 20250625))
         self.deviation = int(self.exec_cfg.get("deviation", 20))
 
+    def _log_decision(self, signal: dict[str, Any], decision: str, reason: str,
+                      features_at_entry: dict[str, Any] | None = None) -> None:
+        """Log one decision event to logs/decisions.jsonl."""
+        try:
+            feat = features_at_entry or {}
+            log_decision(build_decision_event(
+                symbol=signal.get("symbol"),
+                side=signal.get("side"),
+                timeframe="M5",
+                mode=self.config.get("execution", {}).get("mode", "mt5"),
+                price=signal.get("entry"),
+                spread_points=feat.get("spread_points") if isinstance(feat, dict) else None,
+                atr=feat.get("atr") if isinstance(feat, dict) else None,
+                volatility_regime=feat.get("volatility_regime") if isinstance(feat, dict) else None,
+                confidence=signal.get("confidence"),
+                decision=decision,
+                entry_type=signal.get("entry_mode", "market"),
+                guards={},
+                reason=reason,
+                config_hash=config_snapshot_hash(self.config),
+                profile=self.config.get("active_profile"),
+            ))
+        except Exception:
+            self.logger.debug("Decision log skipped for %s: %s", signal.get("signal_id"), decision)
+
+    # ----------------------------------------------------------------------
+    # Wrapped (lock-acquiring) public API
+    # ----------------------------------------------------------------------
     def process_approved_signals(
         self,
         approved: list[dict[str, Any]],
@@ -67,10 +129,60 @@ class MT5Broker:
         existing_positions: list[dict] | None = None,
         executed_signal_ids: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Place market orders on MT5 for approved signals."""
+        """Place market orders on MT5 for approved signals.
+
+        Concurrency contract: ALL MT5 mutations inside this method run
+        under ``MT5TerminalManager._shared_trade_lock``. Both the slow
+        pipeline (execution_loop runs once per cycle) and the fast
+        tick loop (fast_tick_loop at 1Hz) reach MT5 via this method,
+        so the lock guarantees a single mutator at a time.
+        """
         if mt5 is None:
             raise RuntimeError("MetaTrader5 package not installed")
+        if MT5TerminalManager is None:
+            return self._process_approved_signals_unsafe(
+                approved, existing_orders, existing_trades,
+                existing_positions, executed_signal_ids,
+            )
+        with MT5TerminalManager._shared_trade_lock:
+            return self._process_approved_signals_unsafe(
+                approved, existing_orders, existing_trades,
+                existing_positions, executed_signal_ids,
+            )
 
+    def close_position(
+        self, ticket: int, symbol: str, side: str, volume: float,
+        reason: str = "regime_flip_replace",
+    ) -> dict[str, Any]:
+        """Close an open MT5 position via an opposite market deal.
+
+        Concurrency contract: runs under ``MT5TerminalManager._shared_trade_lock``.
+        The slow execution_loop, fast_tick_loop, fast_position_guard,
+        and position_manager_loop all reach ``mt5.order_send`` via
+        this method — the lock guarantees single-mutator-at-a-time.
+        """
+        if blue_guardian_enabled(self.config):
+            pos_stub = {"ticket": ticket, "opened_at": None}
+            ok, hold_reason = can_close_position(self.config, pos_stub, reason=reason)
+            if not ok:
+                return {"success": False, "error": hold_reason or "min_hold_active"}
+        if MT5TerminalManager is None:
+            return self._close_position_unsafe(ticket, symbol, side, volume, reason)
+        with MT5TerminalManager._shared_trade_lock:
+            return self._close_position_unsafe(ticket, symbol, side, volume, reason)
+
+    # ----------------------------------------------------------------------
+    # Unsafe (lock-free) implementations — internal use only
+    # ----------------------------------------------------------------------
+    def _process_approved_signals_unsafe(
+        self,
+        approved: list[dict[str, Any]],
+        existing_orders: list[dict] | None = None,
+        existing_trades: list[dict] | None = None,
+        existing_positions: list[dict] | None = None,
+        executed_signal_ids: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Actual broker logic — caller MUST hold MT5TerminalManager._shared_trade_lock."""
         account = mt5.account_info()
         if account is None:
             raise RuntimeError(f"Not logged in to MT5: {mt5.last_error()}")
@@ -91,15 +203,10 @@ class MT5Broker:
             sid = signal.get("signal_id")
             if sid in executed:
                 self.logger.info("Skip %s — signal already executed", sid)
+                self._log_decision(signal, "skip", "already_executed")
                 continue
 
             # --- Regime-flip trade replacement (USER-AUTHORIZED 2026-06-30) ---
-            # When M15 trend AND market_regime bias both flipped (bullish<->bearish)
-            # vs the prior tick, and this signal has high confidence (>=
-            # regime_flip_min_confidence) in the OPPOSITE direction to an OPEN
-            # position that is currently LOSING (profit < 0), close that losing
-            # position and let this signal replace it. Cuts losers on a confirmed
-            # turn; never touches a winning runner. See state/regime_history.json.
             flip_cfg = self.config.get("trading", {}) or {}
             if bool(flip_cfg.get("regime_flip_replace_enabled", False)):
                 flip = self._detect_regime_flip(signal["symbol"], flip_cfg)
@@ -118,14 +225,11 @@ class MT5Broker:
                                 signal["symbol"], signal["side"],
                                 signal.get("confidence"),
                             )
-                            cr = self.close_position(
+                            cr = self._close_position_unsafe(
                                 loser["ticket"], loser["symbol"],
                                 loser["side"], loser["size"],
                             )
                             if cr.get("success"):
-                                # Free the slot locally so the skip-chain + sizing
-                                # below see the freed capacity (the MT5 close is
-                                # async; the sync at the end of the loop re-reads).
                                 open_positions = [
                                     p for p in open_positions
                                     if p.get("ticket") != loser["ticket"]
@@ -141,6 +245,7 @@ class MT5Broker:
                                     "-> skip replacement",
                                     loser["ticket"], cr.get("error"),
                                 )
+                                self._log_decision(signal, "skip", f"regime_flip_replace_failed: {cr.get('error')}")
                                 continue
                     else:
                         self.logger.info(
@@ -148,41 +253,33 @@ class MT5Broker:
                             "no replace",
                             signal["symbol"], signal.get("confidence"), min_conf,
                         )
+                        self._log_decision(signal, "skip", "regime_flip_confidence_too_low")
 
             bg_ok, _bg_code, _bg = entry_gates(self.config, open_positions, signal)
             if not bg_ok:
-                self.logger.info(
-                    "Skip %s — Blue Guardian entry gate",
-                    signal["symbol"],
-                )
+                self.logger.info("Skip %s — Blue Guardian entry gate", signal["symbol"])
+                self._log_decision(signal, "skip", "blue_guardian_entry_gate")
                 continue
 
             if not symbol_capacity_available(self.config, signal["symbol"], open_positions):
-                self.logger.info(
-                    "Skip %s — max open positions per symbol reached",
-                    signal["symbol"],
-                )
+                self.logger.info("Skip %s — max open positions per symbol reached", signal["symbol"])
+                self._log_decision(signal, "skip", "symbol_capacity_exceeded")
                 continue
 
             if not session_trade_capacity_available(self.config, signal["symbol"], trades):
-                self.logger.info(
-                    "Skip %s — max session trades per symbol reached",
-                    signal["symbol"],
-                )
+                self.logger.info("Skip %s — max session trades per symbol reached", signal["symbol"])
+                self._log_decision(signal, "skip", "session_trade_capacity_exceeded")
                 continue
 
             if is_duplicate_position(
-                self.config,
-                signal,
-                open_positions,
+                self.config, signal, open_positions,
                 executed_signal_ids=executed,
             ):
                 self.logger.info(
                     "Skip %s %s %s — pyramid/duplicate rules",
-                    signal["symbol"],
-                    signal["side"],
-                    signal.get("setup_type"),
+                    signal["symbol"], signal["side"], signal.get("setup_type"),
                 )
+                self._log_decision(signal, "skip", "duplicate_position")
                 continue
 
             result = self._place_order(signal, account, open_positions)
@@ -198,20 +295,18 @@ class MT5Broker:
                 self._record_open_confidence(result.get("ticket"), signal.get("confidence"))
                 # Re-sync so Blue Guardian max-total gate applies within this batch.
                 open_positions = enrich_positions_with_orders(self._sync_positions(), orders)
+                self._log_decision(signal, "execute", "order_placed", features_at_entry=sym_feat)
                 self.logger.info(
                     "MT5 order placed: %s %s lot=%s ticket=%s",
-                    signal["symbol"],
-                    signal["side"],
-                    result.get("volume"),
-                    result.get("ticket"),
+                    signal["symbol"], signal["side"],
+                    result.get("volume"), result.get("ticket"),
                 )
             else:
                 errors.append(order_record)
+                self._log_decision(signal, "error", str(result.get("error", "order_failed")))
                 self.logger.error(
                     "MT5 order failed: %s %s — %s",
-                    signal["symbol"],
-                    signal["side"],
-                    result.get("error"),
+                    signal["symbol"], signal["side"], result.get("error"),
                 )
 
         positions = enrich_positions_with_orders(self._sync_positions(), orders)
@@ -239,6 +334,50 @@ class MT5Broker:
             "new_closed_trades": new_closed,
         }
 
+    def _close_position_unsafe(
+        self, ticket: int, symbol: str, side: str, volume: float, reason: str,
+    ) -> dict[str, Any]:
+        """Actual close logic — caller MUST hold MT5TerminalManager._shared_trade_lock."""
+        broker_sym = broker_symbol(symbol)
+        if not mt5.symbol_select(broker_sym, True):
+            return {"success": False, "error": f"symbol_select failed: {mt5.last_error()}"}
+        info = mt5.symbol_info(broker_sym)
+        tick = mt5.symbol_info_tick(broker_sym)
+        if info is None or tick is None:
+            return {"success": False, "error": f"no symbol info: {mt5.last_error()}"}
+        if side == "BUY":
+            order_type = mt5.ORDER_TYPE_SELL
+            price = float(tick.bid)
+        else:
+            order_type = mt5.ORDER_TYPE_BUY
+            price = float(tick.ask)
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": broker_sym,
+            "volume": float(volume),
+            "type": order_type,
+            "position": int(ticket),
+            "price": price,
+            "deviation": self.deviation,
+            "magic": self.magic,
+            "comment": f"qagent_{reason[:20]}",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": self._filling_mode(info),
+        }
+        self.logger.info("Closing position #%s %s %s vol=%s", ticket, symbol, side, volume)
+        result = mt5.order_send(request)
+        if result is None:
+            return {"success": False, "error": str(mt5.last_error())}
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            return {"success": False,
+                    "error": f"retcode={result.retcode} {result.comment}",
+                    "retcode": result.retcode}
+        return {"success": True, "ticket": result.order, "deal": result.deal,
+                "price": result.price}
+
+    # ----------------------------------------------------------------------
+    # Validation + helpers
+    # ----------------------------------------------------------------------
     def _validate_account_mode(self, account: Any) -> None:
         expected = self.config.get("mt5", {}).get("account_mode", "demo")
         trade_mode = int(getattr(account, "trade_mode", -1))
@@ -288,7 +427,12 @@ class MT5Broker:
             return {"success": False, "error": "exposure_limit_exceeded"}
 
         sl = float(signal["sl"])
-        tp = float(signal["tp1"])
+        # 2026-07-21 partial-TP fix: broker pre-empts the bot's
+        # partial TP at TP1 if we send TP1 as limit here. Send TP2
+        # so the bot can partial-close 50% at TP1, then the broker
+        # fires the remaining 50% at TP2 — exactly the partial-TP
+        # semantics. Falls back to TP1 if signal lacks tp2.
+        tp = float(signal.get("tp2") or signal.get("tp1") or 0)
         filling = self._filling_mode(info)
         strategy_entry = float(signal.get("entry", 0))
         use_strategy = strategy_entries_enabled(self.config)
@@ -453,12 +597,7 @@ class MT5Broker:
         return synced
 
     def _record_open_confidence(self, ticket: Any, confidence: Any) -> None:
-        """Persist {ticket: confidence} for the confidence-floor verifier gate.
-
-        MT5 positions don't carry a confidence field, so we keep a sidecar map in
-        state/position_confidence.json. On each fill we add the new ticket, then
-        prune to currently-open tickets so closed positions can't inflate the floor.
-        """
+        """Persist {ticket: confidence} for the confidence-floor verifier gate."""
         if ticket is None or confidence is None:
             return
         try:
@@ -518,54 +657,6 @@ class MT5Broker:
             ):
                 return p
         return None
-
-    def close_position(
-        self, ticket: int, symbol: str, side: str, volume: float,
-        reason: str = "regime_flip_replace",
-    ) -> dict[str, Any]:
-        """Close an open MT5 position via an opposite market deal."""
-        if blue_guardian_enabled(self.config):
-            pos_stub = {"ticket": ticket, "opened_at": None}
-            ok, hold_reason = can_close_position(self.config, pos_stub, reason=reason)
-            if not ok:
-                return {"success": False, "error": hold_reason or "min_hold_active"}
-        broker_sym = broker_symbol(symbol)
-        if not mt5.symbol_select(broker_sym, True):
-            return {"success": False, "error": f"symbol_select failed: {mt5.last_error()}"}
-        info = mt5.symbol_info(broker_sym)
-        tick = mt5.symbol_info_tick(broker_sym)
-        if info is None or tick is None:
-            return {"success": False, "error": f"no symbol info: {mt5.last_error()}"}
-        if side == "BUY":
-            order_type = mt5.ORDER_TYPE_SELL
-            price = float(tick.bid)
-        else:
-            order_type = mt5.ORDER_TYPE_BUY
-            price = float(tick.ask)
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": broker_sym,
-            "volume": float(volume),
-            "type": order_type,
-            "position": int(ticket),
-            "price": price,
-            "deviation": self.deviation,
-            "magic": self.magic,
-            "comment": f"qagent_{reason[:20]}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": self._filling_mode(info),
-        }
-        self.logger.info("Closing position #%s %s %s vol=%s",
-                         ticket, symbol, side, volume)
-        result = mt5.order_send(request)
-        if result is None:
-            return {"success": False, "error": str(mt5.last_error())}
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
-            return {"success": False,
-                    "error": f"retcode={result.retcode} {result.comment}",
-                    "retcode": result.retcode}
-        return {"success": True, "ticket": result.order, "deal": result.deal,
-                "price": result.price}
 
     def _account_balance(self, account: Any) -> dict[str, float]:
         baseline = read_json_state("mt5_baseline.json", default={})

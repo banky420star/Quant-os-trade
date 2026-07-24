@@ -357,6 +357,12 @@ def humanize_verifier_failure(
     if check_name == "blue_guardian_daily_pause":
         bg = read_json_state("blue_guardian.json", default={}) or {}
         return f"Blue Guardian daily pause — {bg.get('pause_reason') or 'limit hit'}"
+    if check_name == "total_position_capacity":
+        _ok, _limit = total_position_capacity_available(config, active_positions)
+        return (
+            f"Total position cap full — {len(active_positions)}/{_limit} "
+            f"open trades (close one before a new entry)"
+        )
     if check_name == "kill_switch_safe":
         return "Kill switch is ON — trading paused"
     if check_name == "risk_reward_safe":
@@ -403,6 +409,37 @@ def humanize_verifier_failure(
             f"cell blocked until culturing data improves"
         )
     return check_name.replace("_", " ")
+
+
+def count_open_positions(positions: list[dict[str, Any]]) -> int:
+    """Count unique open positions (by ticket or position_id)."""
+    seen: set[str] = set()
+    for p in positions:
+        t = str(p.get("ticket") or p.get("position_id") or "")
+        if t:
+            seen.add(t)
+    return len(seen)
+
+
+def total_position_capacity_available(
+    config: dict[str, Any],
+    active_positions: list[dict[str, Any]],
+) -> tuple[bool, int | None]:
+    """True when total open positions are below max_total_open_positions cap.
+
+    Returns (available, limit). limit is None when no cap is set.
+    """
+    limit = config.get("trading", {}).get("max_total_open_positions")
+    if limit is None:
+        return True, None
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return True, None
+    if limit <= 0:
+        return True, None
+    used = count_open_positions(active_positions)
+    return used < limit, limit
 
 
 def max_candidates_per_run(config: dict[str, Any]) -> int | None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from core.adaptive_exit import adaptive_exit_enabled
 from core.dynamic_entry import refresh_entry_levels, symbol_capacity_available
 from core.entry_staging import prune_stale
 from core.strategy_entry import pin_strategy_entry, strategy_entries_enabled
@@ -78,6 +79,7 @@ def _refresh_strategy_levels(
             "entry", "sl", "tp1", "tp2", "entry_mode", "order_type",
             "entry_anchor", "entry_anchor_price", "entry_reason",
             "market_price", "distance_atr", "within_reach",
+            "spread_pct_of_tp",
         ):
             if key in levels:
                 out[key] = levels[key]
@@ -130,6 +132,19 @@ def refine_candidates(
             "entry_mode": signal.get("entry_mode"),
             "status": "ready",
         }
+
+        # ---- ADAPTIVE EXIT: SPREAD / TP RATIO GATE (2026-07-22) ---------
+        # Reject trade when spread > 25% of calculated TP. This prevents entries
+        # when spread cost erodes too much of the target.
+        if adaptive_exit_enabled(config):
+            _sp = signal.get("spread_pct_of_tp", 0.0)
+            if _sp > 0.25:
+                pipeline["status"] = "spread_too_wide"
+                log.info(
+                    "Entry pipeline drop %s %s — spread/TP ratio %.1f%% > 25%%",
+                    symbol, signal.get("side"), _sp * 100,
+                )
+                continue
 
         if signal.get("within_reach") is False and reject_unreachable:
             pipeline["status"] = "unreachable"

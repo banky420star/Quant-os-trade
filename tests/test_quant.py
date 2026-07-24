@@ -453,7 +453,7 @@ def test_blue_guardian_caps_new_fx_symbols(growth_profile):
     assert bg["max_total_open_positions"] == len(symbols) * per_sym
     assert max_lot_for_symbol(config, "EURUSDm", 0.1) == 0.02
     assert max_lot_for_symbol(config, "GBPUSDm", 0.1) == 0.02
-    assert max_lot_for_symbol(config, "USOILm", 0.1) == 0.03
+    assert max_lot_for_symbol(config, "USOILm", 0.1) == 0.01
 
 
 def test_cell_memory_veto_prefers_cell_over_global(config):
@@ -500,14 +500,16 @@ def test_memory_veto_requires_full_min_trades_for_global_fallback(config):
         "market_context": {"session": "london_open"},
     }
     votes = {"risk_engine": 80, "trend_engine": 70, "structure_engine": 70}
+    # Samples below intelligence.memory_veto_min_trades (5 since 2026-07-21)
+    # must not trigger the memory veto — too little evidence to act on.
     edge_scores = {
         "setup_stats": {
             "global": {
-                "pullback": {"total": 14, "win_rate_pct": 20.0},
+                "pullback": {"total": 4, "win_rate_pct": 20.0},
             },
             "by_symbol": {
                 "XAUUSDm": {
-                    "pullback": {"total": 14, "win_rate_pct": 20.0},
+                    "pullback": {"total": 4, "win_rate_pct": 20.0},
                 }
             },
             "by_cell": {},
