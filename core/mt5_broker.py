@@ -14,6 +14,8 @@ from core.blue_guardian import (
     record_position_open,
 
 )
+from core.learning_logger import log_decision
+from core.learning_schema import build_decision_event, config_snapshot_hash
 from core.position_sizing import calc_executable_volume, symbol_spec_from_mt5
 from core.position_sync import _setup_type_from_comment
 from core.dynamic_entry import symbol_capacity_available
@@ -59,6 +61,31 @@ class MT5Broker:
         self.magic = int(self.exec_cfg.get("magic_number", 20250625))
         self.deviation = int(self.exec_cfg.get("deviation", 20))
 
+    def _log_decision(self, signal: dict[str, Any], decision: str, reason: str,
+                        features_at_entry: dict[str, Any] | None = None) -> None:
+        """Log one decision event to logs/decisions.jsonl."""
+        try:
+            feat = features_at_entry or {}
+            log_decision(build_decision_event(
+                symbol=signal.get("symbol"),
+                side=signal.get("side"),
+                timeframe="M5",
+                mode=self.config.get("execution", {}).get("mode", "mt5"),
+                price=signal.get("entry"),
+                spread_points=feat.get("spread_points") if isinstance(feat, dict) else None,
+                atr=feat.get("atr") if isinstance(feat, dict) else None,
+                volatility_regime=feat.get("volatility_regime") if isinstance(feat, dict) else None,
+                confidence=signal.get("confidence"),
+                decision=decision,
+                entry_type=signal.get("entry_mode", "market"),
+                guards={},
+                reason=reason,
+                config_hash=config_snapshot_hash(self.config),
+                profile=self.config.get("active_profile"),
+            ))
+        except Exception:
+            self.logger.debug("Decision log skipped for %s: %s", signal.get("signal_id"), decision)
+
     def process_approved_signals(
         self,
         approved: list[dict[str, Any]],
@@ -91,6 +118,7 @@ class MT5Broker:
             sid = signal.get("signal_id")
             if sid in executed:
                 self.logger.info("Skip %s — signal already executed", sid)
+                self._log_decision(signal, "skip", "already_executed")
                 continue
 
             # --- Regime-flip trade replacement (USER-AUTHORIZED 2026-06-30) ---
@@ -141,6 +169,7 @@ class MT5Broker:
                                     "-> skip replacement",
                                     loser["ticket"], cr.get("error"),
                                 )
+                                self._log_decision(signal, "skip", f"regime_flip_replace_failed: {cr.get('error')}")
                                 continue
                     else:
                         self.logger.info(
@@ -148,6 +177,7 @@ class MT5Broker:
                             "no replace",
                             signal["symbol"], signal.get("confidence"), min_conf,
                         )
+                        self._log_decision(signal, "skip", "regime_flip_confidence_too_low")
 
             bg_ok, _bg_code, _bg = entry_gates(self.config, open_positions, signal)
             if not bg_ok:
@@ -155,6 +185,7 @@ class MT5Broker:
                     "Skip %s — Blue Guardian entry gate",
                     signal["symbol"],
                 )
+                self._log_decision(signal, "skip", "blue_guardian_entry_gate")
                 continue
 
             if not symbol_capacity_available(self.config, signal["symbol"], open_positions):
@@ -162,6 +193,7 @@ class MT5Broker:
                     "Skip %s — max open positions per symbol reached",
                     signal["symbol"],
                 )
+                self._log_decision(signal, "skip", "symbol_capacity_exceeded")
                 continue
 
             if not session_trade_capacity_available(self.config, signal["symbol"], trades):
@@ -169,6 +201,7 @@ class MT5Broker:
                     "Skip %s — max session trades per symbol reached",
                     signal["symbol"],
                 )
+                self._log_decision(signal, "skip", "session_trade_capacity_exceeded")
                 continue
 
             if is_duplicate_position(
@@ -183,6 +216,7 @@ class MT5Broker:
                     signal["side"],
                     signal.get("setup_type"),
                 )
+                self._log_decision(signal, "skip", "duplicate_position")
                 continue
 
             result = self._place_order(signal, account, open_positions)
@@ -198,6 +232,7 @@ class MT5Broker:
                 self._record_open_confidence(result.get("ticket"), signal.get("confidence"))
                 # Re-sync so Blue Guardian max-total gate applies within this batch.
                 open_positions = enrich_positions_with_orders(self._sync_positions(), orders)
+                self._log_decision(signal, "execute", "order_placed", features_at_entry=sym_feat)
                 self.logger.info(
                     "MT5 order placed: %s %s lot=%s ticket=%s",
                     signal["symbol"],
@@ -207,6 +242,7 @@ class MT5Broker:
                 )
             else:
                 errors.append(order_record)
+                self._log_decision(signal, "error", str(result.get("error", "order_failed")))
                 self.logger.error(
                     "MT5 order failed: %s %s — %s",
                     signal["symbol"],
@@ -288,7 +324,12 @@ class MT5Broker:
             return {"success": False, "error": "exposure_limit_exceeded"}
 
         sl = float(signal["sl"])
-        tp = float(signal["tp1"])
+        # 2026-07-21 partial-TP fix: broker pre-empts the bot's
+        # partial TP at TP1 if we send TP1 as limit here. Send TP2
+        # so the bot can partial-close 50% at TP1, then the broker
+        # fires the remaining 50% at TP2 = exactly the partial-TP
+        # semantics. Falls back to TP1 if signal lacks tp2.
+        tp = float(signal.get("tp2") or signal.get("tp1") or 0)
         filling = self._filling_mode(info)
         strategy_entry = float(signal.get("entry", 0))
         use_strategy = strategy_entries_enabled(self.config)

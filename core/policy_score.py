@@ -36,34 +36,36 @@ def recent_symbol_stats(
 
 
 def session_entry_bias(session: str) -> dict[str, Any]:
-    """Session defaults — rollover is high caution."""
+    """Session defaults — wider BE/trail (tight locks killed live expectancy)."""
     s = (session or "unknown").lower()
     if s == "rollover":
         return {
             "entry_type": "limit",
             "limit_offset_atr": 0.15,
             "sl_atr_mult": 1.0,
-            "tp1_r": 0.8,
-            "tp2_r": 1.1,
-            "break_even_trigger_r": 0.35,
-            "trail_start_r": 0.55,
-            "trail_atr_mult": 0.4,
+            "tp1_r": 0.95,
+            "tp2_r": 1.3,
+            "break_even_trigger_r": 0.65,
+            "break_even_lock_r": 0.15,
+            "trail_start_r": 0.9,
+            "trail_atr_mult": 0.45,
             "session_weight": -12,
-            "max_hold_minutes": 12,
+            "max_hold_minutes": 18,
             "cancel_if_not_filled_seconds": 90,
         }
     if s in ("overlap_london_ny", "london_open", "new_york"):
         return {
             "entry_type": "market",
             "limit_offset_atr": 0.08,
-            "sl_atr_mult": 1.2,
-            "tp1_r": 1.0,
-            "tp2_r": 1.5,
-            "break_even_trigger_r": 0.45,
-            "trail_start_r": 0.7,
-            "trail_atr_mult": 0.45,
+            "sl_atr_mult": 1.25,
+            "tp1_r": 1.35,
+            "tp2_r": 2.0,
+            "break_even_trigger_r": 0.85,
+            "break_even_lock_r": 0.25,
+            "trail_start_r": 1.15,
+            "trail_atr_mult": 0.55,
             "session_weight": 8,
-            "max_hold_minutes": 25,
+            "max_hold_minutes": 45,
             "cancel_if_not_filled_seconds": 120,
         }
     if s == "tokyo":
@@ -71,26 +73,28 @@ def session_entry_bias(session: str) -> dict[str, Any]:
             "entry_type": "limit",
             "limit_offset_atr": 0.12,
             "sl_atr_mult": 1.1,
-            "tp1_r": 0.9,
-            "tp2_r": 1.2,
-            "break_even_trigger_r": 0.4,
-            "trail_start_r": 0.6,
-            "trail_atr_mult": 0.42,
+            "tp1_r": 1.1,
+            "tp2_r": 1.5,
+            "break_even_trigger_r": 0.7,
+            "break_even_lock_r": 0.18,
+            "trail_start_r": 0.95,
+            "trail_atr_mult": 0.48,
             "session_weight": 4,
-            "max_hold_minutes": 18,
+            "max_hold_minutes": 30,
             "cancel_if_not_filled_seconds": 100,
         }
     return {
         "entry_type": "limit",
         "limit_offset_atr": 0.1,
         "sl_atr_mult": 1.15,
-        "tp1_r": 0.95,
-        "tp2_r": 1.25,
-        "break_even_trigger_r": 0.4,
-        "trail_start_r": 0.65,
-        "trail_atr_mult": 0.43,
+        "tp1_r": 1.2,
+        "tp2_r": 1.7,
+        "break_even_trigger_r": 0.75,
+        "break_even_lock_r": 0.2,
+        "trail_start_r": 1.0,
+        "trail_atr_mult": 0.5,
         "session_weight": 0,
-        "max_hold_minutes": 20,
+        "max_hold_minutes": 35,
         "cancel_if_not_filled_seconds": 110,
     }
 

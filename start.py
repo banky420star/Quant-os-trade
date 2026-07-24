@@ -304,6 +304,29 @@ def start(once: bool = False, profile: str | None = None) -> None:
             learn_interval, learn_cfg.get("mode", "observe_only"),
         )
 
+    # Live-trade thesis reviewer (net-new 2026-07-13). Re-scores OPEN positions
+    # against the current regime/trend to detect thesis decay. OBSERVE-ONLY by
+    # default (never closes unless config.thesis_reviewer.live_close_enabled).
+    thesis_cfg = config.get("thesis_reviewer") or {}
+    if thesis_cfg.get("enabled", False):
+        thesis_interval = float(thesis_cfg.get("loop_interval_seconds", 60))
+
+        def _thesis_review() -> dict:
+            from loops import thesis_review_loop
+            return thesis_review_loop.run(config) or {}
+
+        supervisor.register(ManagedService(
+            "thesis_review",
+            "Thesis Review",
+            _thesis_review,
+            thesis_interval,
+            logger,
+        ))
+        logger.info(
+            "Thesis review loop registered (interval=%.0fs, live_close=%s)",
+            thesis_interval, thesis_cfg.get("live_close_enabled", False),
+        )
+
     supervisor.start_all()
 
     try:

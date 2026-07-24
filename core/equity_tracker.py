@@ -110,8 +110,15 @@ def build_equity_curve(
 
     balance = paper_orders.get("balance", {})
     order_account = paper_orders.get("account", {})
+    # Prefer the first recorded snapshot equity as the curve baseline.
+    # mt5_baseline.starting_cash / paper_orders starting_cash can be stale from
+    # an earlier session (was $34 here while the account later grew to $129 via
+    # deposits), which detached the trade-close reconstruction from reality and
+    # made pnl_total/pnl_pct wildly wrong.
+    _first_snap_eq = hist_points[0].get("equity") if hist_points else None
     starting = float(
-        balance.get("starting_cash")
+        _first_snap_eq
+        or balance.get("starting_cash")
         or baseline.get("starting_cash")
         or account.get("balance")
         or 1000.0
@@ -137,38 +144,23 @@ def build_equity_curve(
         trade_rows = trade_rows[-40:]
     trades = sorted(trade_rows, key=lambda t: t.get("closed_at") or "")
 
+    # LIVE equity curve from real MT5 snapshots: moves in real time with the
+    # actual account equity (incl. unrealized PnL of open bot + manual
+    # positions). Trade closes are overlaid as markers re-anchored to the
+    # nearest snapshot. A light despike drops isolated bad MT5 reads (a single
+    # point that spikes far from BOTH neighbours and reverts next tick).
     trade_points: list[dict[str, Any]] = []
     equity = starting
     markers: list[dict[str, Any]] = []
     if trades:
-        first_ts = trades[0].get("closed_at") or utc_now_iso()
-        trade_points.append({
-            "ts": first_ts,
-            "equity": round(starting, 2),
-            "cash": round(starting, 2),
-            "event": "start",
-        })
         for trade in trades:
             pnl = float(trade.get("pnl", 0))
             equity += pnl
             ts = trade.get("closed_at") or utc_now_iso()
-            trade_points.append({
-                "ts": ts,
-                "equity": round(equity, 2),
-                "cash": round(equity, 2),
-                "event": "trade_close",
-                "pnl": round(pnl, 2),
-                "symbol": trade.get("symbol"),
-                "result": trade.get("result"),
-            })
             markers.append({
-                "ts": ts,
-                "equity": round(equity, 2),
-                "event": "trade_close",
-                "pnl": round(pnl, 2),
-                "symbol": trade.get("symbol"),
-                "side": trade.get("side"),
-                "result": trade.get("result"),
+                "ts": ts, "equity": round(equity, 2), "event": "trade_close",
+                "pnl": round(pnl, 2), "symbol": trade.get("symbol"),
+                "side": trade.get("side"), "result": trade.get("result"),
             })
 
     snapshot_points = [
@@ -183,7 +175,30 @@ def build_equity_curve(
         }
         for p in history.get("points", [])
     ]
-    merged = _merge_points(trade_points, snapshot_points)
+    if snapshot_points:
+        import bisect
+        merged = list(snapshot_points)
+        _snap_ts = [s["ts"] for s in snapshot_points]
+        for m in markers:
+            k = bisect.bisect_right(_snap_ts, m["ts"]) - 1
+            if 0 <= k < len(snapshot_points):
+                m["equity"] = snapshot_points[k]["equity"]
+        if len(merged) >= 3:
+            _kept = [merged[0]]
+            for i in range(1, len(merged) - 1):
+                eq = float(merged[i].get("equity", 0))
+                pe = float(merged[i - 1].get("equity", 0))
+                ne = float(merged[i + 1].get("equity", 0))
+                ref = min(pe, ne) if (pe > 0 and ne > 0) else max(pe, ne)
+                if ref > 0 and (eq < 0.4 * ref or eq > 2.2 * ref):
+                    continue  # isolated bad read (down or up spike that reverts)
+                _kept.append(merged[i])
+            _kept.append(merged[-1])
+            merged = _kept
+    elif trade_points:
+        merged = _merge_points(trade_points, [])
+    else:
+        merged = []
 
     now = utc_now_iso()
     if not merged:
@@ -220,6 +235,7 @@ def build_equity_curve(
             "unrealized_pnl": point.get("unrealized_pnl", round(eq - cash, 2)),
         })
 
+    # pnl_total reflects live account equity (incl. unrealized) vs the start.
     pnl_total = round(current_equity - starting, 2)
     pnl_pct = round((pnl_total / starting * 100) if starting else 0.0, 2)
     session_start = enriched[0]["equity"] if enriched else starting

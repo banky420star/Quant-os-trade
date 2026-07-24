@@ -4,9 +4,22 @@ description: "Aggressive edge sessions on XAUUSDm/USOILm/UK100m, 0.01 lot, $10 m
 mode: growth
 trading:
   aggressive_mode: true
-  # USER request 2026-07-12: disable trailing stop for now
+  # 2026-07-15: re-enable WIDE trail — tight/off trail caused high WR + negative $ 
   trailing:
-    enabled: false
+    enabled: true
+    activation_profit_usd: 15
+    activation_atr_mult: 1.1
+    trail_points_atr_mult: 0.85
+  break_even:
+    trigger_profit_usd: 20
+    lock_profit_usd: 8
+    trigger_atr_mult: 0.85
+    lock_profit_atr_mult: 0.25
+    per_symbol:
+      XAUUSDm:
+        trigger_points: 5000
+        lock_profit_points: 3000
+        trigger_profit_usd: 25
 practice:
   relax_structure_checks: true
   relax_volume_check: true
@@ -32,7 +45,7 @@ practice:
     enabled: true
     aggressive_mode: true
     account_size_usd: 30
-    symbols: [XAUUSDm, USOILm, UK100m]
+    symbols: [XAUUSDm, EURUSDm, USDCHFm, GBPUSDm]
     max_open_per_symbol: 1
     max_open_per_setup: 1
     allow_pyramiding: false
@@ -50,25 +63,24 @@ practice:
     reentry_cooldown_seconds: 30
     entry_confirm_seconds: 30
     trailing:
-      enabled: true   # trailing ON but tuned to maximize profit
-      # Activate later (trade well in profit before trailing starts)
-      # Trail looser (give winners room to breathe, don't get stopped on pullbacks)
-      activation_profit_usd: 2
-      activation_atr_mult: 0.75   # was 0.35 ? activate at 0.75 ATR profit
-      trail_points_atr_mult: 0.6  # was 0.28 ? looser trail so winners run
+      enabled: true
+      # Wide activation — let winners run; trade_manager ghosts can promote further
+      activation_profit_usd: 15
+      activation_atr_mult: 1.1
+      trail_points_atr_mult: 0.85
       per_symbol:
         XAUUSDm:
-          activation_profit_usd: 2
-          activation_atr_mult: 0.75
-          trail_points_atr_mult: 0.6  # was 0.28 ? let gold breathe
+          activation_profit_usd: 25
+          activation_points: 5500
+          trail_points_atr_mult: 0.9
         USOILm:
-          activation_profit_usd: 1.5
-          activation_points: 18    # was 8 ? activate later
-          trail_points: 25        # was 10 ? looser trail
+          activation_profit_usd: 12
+          activation_points: 50
+          trail_points: 80
         UK100m:
-          activation_profit_usd: 2
-          activation_atr_mult: 0.6  # was 0.3
-          trail_points_atr_mult: 0.5  # was 0.2 ? let FTSE breathe
+          activation_profit_usd: 12
+          activation_atr_mult: 1.0
+          trail_points_atr_mult: 0.55
     regime_flip_replace_enabled: true
     regime_flip_min_confidence: 65
     regime_flip_window_sec: 90
@@ -93,8 +105,8 @@ practice:
         preferred_sessions: [tokyo]
         strict_sessions: false
       UK100m:
-        allowed_setups: [trend_continuation, pullback]
-        preferred_setups: [trend_continuation, pullback]
+        allowed_setups: [pullback]
+        preferred_setups: [pullback]
         preferred_sessions: [london_open]
         strict_sessions: false
 culturing:
@@ -110,20 +122,20 @@ adaptation:
   rebuild_trade_log: true
   refresh_positive_evolution: true
   auto_evolve_cells: true
-  evolve_symbols: [XAUUSDm, USOILm, UK100m]
+  evolve_symbols: [XAUUSDm, EURUSDm, USDCHFm, GBPUSDm]
   seed_edge_cells:
     - symbol: XAUUSDm
       setup: pullback
-      sessions: [rollover, tokyo]
-    - symbol: USOILm
+      sessions: [rollover, tokyo, london_open]
+    - symbol: EURUSDm
       setup: pullback
-      sessions: [tokyo]
-    - symbol: UK100m
-      setup: trend_continuation
-      sessions: [london_open]
-    - symbol: UK100m
+      sessions: [london_open, new_york]
+    - symbol: USDCHFm
       setup: pullback
-      sessions: [london_open]
+      sessions: [london_open, new_york]
+    - symbol: GBPUSDm
+      setup: pullback
+      sessions: [london_open, new_york]
 quant:
   positive_evolution_enabled: true
   positive_evolution:
@@ -147,16 +159,21 @@ quant:
       min_rank_sample_size: 3
       preferred_setups: [pullback]
       preferred_sessions: [rollover, tokyo]
-    USOILm:
+    EURUSDm:
       require_top_ranked_setup: true
-      min_rank_win_rate: 38
+      min_rank_win_rate: 45
       preferred_setups: [pullback]
-      preferred_sessions: [tokyo]
-    UK100m:
+      preferred_sessions: [london_open, new_york]
+    USDCHFm:
       require_top_ranked_setup: true
-      min_rank_win_rate: 40
-      preferred_setups: [trend_continuation, pullback]
-      preferred_sessions: [london_open]
+      min_rank_win_rate: 45
+      preferred_setups: [pullback]
+      preferred_sessions: [london_open, new_york]
+    GBPUSDm:
+      require_top_ranked_setup: true
+      min_rank_win_rate: 45
+      preferred_setups: [pullback]
+      preferred_sessions: [london_open, new_york]
 session_scoring:
   enabled: true
   min_trade_score: 50
@@ -198,13 +215,18 @@ signals:
       preferred_setups: [pullback]
       preferred_sessions: [rollover, tokyo]
       strict_sessions: false
-    USOILm:
+    EURUSDm:
       allowed_setups: [pullback]
       preferred_setups: [pullback]
-      preferred_sessions: [tokyo]
+      preferred_sessions: [london_open, new_york]
       strict_sessions: false
-    UK100m:
-      allowed_setups: [trend_continuation, pullback]
-      preferred_setups: [trend_continuation, pullback]
-      preferred_sessions: [london_open]
+    USDCHFm:
+      allowed_setups: [pullback]
+      preferred_setups: [pullback]
+      preferred_sessions: [london_open, new_york]
+      strict_sessions: false
+    GBPUSDm:
+      allowed_setups: [pullback]
+      preferred_setups: [pullback]
+      preferred_sessions: [london_open, new_york]
       strict_sessions: false

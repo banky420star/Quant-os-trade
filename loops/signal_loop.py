@@ -78,8 +78,11 @@ def run() -> dict | None:
 
     strategy_rankings: dict[str, list] = {}
     for symbol, feat in features.get("symbols", {}).items():
-        ctx = context_data.get("symbols", {}).get(symbol, {})
-        strategy_rankings[symbol] = ranker.rank_for_symbol(symbol, ctx, feat)
+        try:
+            ctx = context_data.get("symbols", {}).get(symbol, {})
+            strategy_rankings[symbol] = ranker.rank_for_symbol(symbol, ctx, feat)
+        except Exception as exc:
+            logger.warning("Rank failed for %s: %s", symbol, exc)
 
     top_explain = candidates[0].get("explain") if candidates else None
     output = {

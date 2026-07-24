@@ -201,16 +201,21 @@ def _new_closes(state: dict[str, Any], trades: list[dict[str, Any]]) -> list[dic
     last = state.get("last_reviewed_trade_id")
     if not last:
         return trades[-25:]
+    # trades are sorted newest-first (descending trade_id/closed_at).
+    # New closes appear at the front of the list. Collect every trade
+    # from index 0 until (not including) the one matching `last`.
     out: list[dict[str, Any]] = []
-    seen_last = False
     for t in trades:
-        if seen_last:
-            out.append(t)
-        if t.get("trade_id") == last:
-            seen_last = True
-    if not out and trades:
-        # last id not found (log rotated) -> review the most recent few
-        out = trades[-10:]
+        if str(t.get("trade_id")) == str(last):
+            break
+        out.append(t)
+    # Fallback for log rotation: when `last` genuinely vanished from the
+    # list, ghost-scroll the 25 most recent trades to avoid re-reviewing
+    # the entire trade log every cycle.
+    if trades:
+        last_exists = any(str(t.get("trade_id")) == str(last) for t in trades[:50])
+        if not last_exists:
+            out = trades[-25:]  # log rotation: cap batch size
     return out
 
 
@@ -277,8 +282,8 @@ def run() -> dict | None:
         logger.info("Learning loop observe_only — no review/proposal/apply.")
         return state
 
-    tl = read_json_state("trade_log.json", default={}) or {}
-    trades = list(tl.get("trades") or [])
+    tl = read_json_state("trade_log.json", default=[]) or []
+    trades = list(tl if isinstance(tl, list) else (tl or {}).get("trades") or [])
     new_trades = _new_closes(state, trades)
     if not new_trades:
         write_json_state(STATE_FILE, state)

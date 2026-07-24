@@ -1,11 +1,180 @@
-# $100 small account — room for 0.02 lot on best symbols
-label: "$100 Small"
-description: "4 symbols, up to 0.02 lot, $20 max loss, tight trail, no pyramiding"
+label: $100 Small
+description: 4 symbols, up to 0.02 lot, $20 max loss, tight trail, no pyramiding (real account)
+mode: live
+mt5:
+  account_mode: real
+  use_logged_in_account: true
+  ignore_stored_credentials: true
+performance:
+  apply_when: never
+trading:
+  aggressive_mode: true
+  sl_tp:
+    per_symbol:
+      XAUUSDm:
+        sl_atr_mult: 0.55
+        risk_floor_atr_mult: 1.1
+        tp1_rr: 1.6
+        tp2_rr: 2.8
+      USOILm:
+        sl_atr_mult: 0.55
+        risk_floor_atr_mult: 1.0
+        tp1_rr: 1.3
+        tp2_rr: 2.4
+      US30m:
+        sl_atr_mult: 0.6
+        risk_floor_atr_mult: 1.0
+        tp1_rr: 1.3
+        tp2_rr: 2.4
+      USDJPYm:
+        sl_atr_mult: 0.6
+        risk_floor_atr_mult: 1.0
+        tp1_rr: 1.3
+        tp2_rr: 2.4
+      GBPUSDm:
+        sl_atr_mult: 0.65
+        risk_floor_atr_mult: 1.05
+        tp1_rr: 1.7
+        tp2_rr: 2.6
+      EURUSDm:
+        sl_atr_mult: 0.65
+        risk_floor_atr_mult: 1.05
+        tp1_rr: 1.7
+        tp2_rr: 2.6
+      AUDUSDm:
+        sl_atr_mult: 0.65
+        risk_floor_atr_mult: 1.05
+        tp1_rr: 1.7
+        tp2_rr: 2.6
+      USDCHFm:
+        sl_atr_mult: 0.65
+        risk_floor_atr_mult: 1.05
+        tp1_rr: 1.7
+        tp2_rr: 2.6
+  break_even:
+    per_symbol:
+      XAUUSDm:
+        trigger_profit_usd: 25
+        trigger_points: 5000
+        lock_profit_points: 3000
+        trigger_atr_mult: 1.0
+        lock_profit_atr_mult: 0.35
+      USOILm:
+        trigger_profit_usd: null
+        trigger_points: null
+        trigger_atr_mult: 0.75
+        lock_profit_atr_mult: 0.1
+      US30m:
+        trigger_profit_usd: null
+        trigger_points: null
+        trigger_atr_mult: 0.75
+        lock_profit_atr_mult: 0.1
+      USDJPYm:
+        trigger_profit_usd: null
+        trigger_points: null
+        trigger_atr_mult: 0.75
+        lock_profit_atr_mult: 0.1
+      GBPUSDm:
+        trigger_profit_usd: 15
+        trigger_points: 90
+        trigger_atr_mult: 0.85
+        lock_profit_atr_mult: 0.25
+      EURUSDm:
+        trigger_profit_usd: 15
+        trigger_points: 80
+        trigger_atr_mult: 0.85
+        lock_profit_atr_mult: 0.25
+      AUDUSDm:
+        trigger_profit_usd: 15
+        trigger_points: 80
+        trigger_atr_mult: 0.85
+        lock_profit_atr_mult: 0.25
+      USDCHFm:
+        trigger_profit_usd: 15
+        trigger_points: 70
+        trigger_atr_mult: 0.85
+        lock_profit_atr_mult: 0.25
+  trailing:
+    enabled: true
+    per_symbol:
+      XAUUSDm:
+        activation_profit_usd: 25
+        activation_points: 5500
+        activation_atr_mult: 1.2
+        trail_points_atr_mult: 0.9
+      USOILm:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+      US30m:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+      USDJPYm:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+      GBPUSDm:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+      EURUSDm:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+      AUDUSDm:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+      USDCHFm:
+        activation_profit_usd: null
+        activation_points: null
+        activation_atr_mult: 0.5
+        trail_points_atr_mult: 0.4
+  max_session_trades_per_symbol: 0
+risk:
+  max_drawdown_pct: 15
+  max_order_age_minutes: 30
+  kill_switch: false
+  strategy_entries:
+    use_limit_orders: true
+    refresh_each_cycle: true
+    reject_unreachable_entries: true
+    skip_at_capacity_in_candidates: true
+    market_if_within_atr: 0.35
+    max_entry_wait_atr: 1.0
+  stale_close_minutes: 20
 practice:
+  relax_structure_checks: true
+  relax_volume_check: true
+  max_drawdown_pct: 15
+  min_confidence: 48
+  min_risk_reward: 1.15
+  min_trade_score: 28
+  min_trade_score_aggressive: 28
+  growth:
+    enabled: false
   micro:
     enabled: true
+    live_mode: true
+    growth_enabled: false
+    aggressive_mode: true
+    disable_arena: true
     account_size_usd: 100
-    symbols: [XAUUSDm, USOILm, UK100m, US30m]
+    symbols:
+    - XAUUSDm
+    - EURUSDm
+    - USDCHFm
+    - GBPUSDm
+    - AUDUSDm
+    - US30m
+    - USDJPYm
     max_open_per_symbol: 1
     max_open_per_setup: 1
     allow_pyramiding: false
@@ -15,13 +184,471 @@ practice:
     daily_target_pct: 15
     max_daily_loss_pct: 8
     max_drawdown_pct: 15
-    max_symbol_exposure_fraction: 0.35
+    independent_symbol_exposure: true
+    max_symbol_exposure_fraction: 0.5
     max_total_exposure_fraction: 0.55
-    max_session_trades_per_symbol: 8
-    max_loss_per_trade_usd: 20
+    max_session_trades_per_symbol: 0
+    max_loss_per_trade_usd: 12
     cap_loss_to_balance: true
-    reentry_cooldown_seconds: 30
+    reentry_cooldown_seconds: 20
     entry_confirm_seconds: 30
     regime_flip_replace_enabled: true
     regime_flip_min_confidence: 60
     regime_flip_window_sec: 90
+    avoid_news: true
+    campaign_days: 30
+    positive_evolution_enabled: true
+    positive_evolution:
+      enabled: true
+      min_n: 3
+      min_expectancy_net_r: 0.0
+      edge_db_min_samples: 3
+      edge_db_min_win_rate_pct: 55
+    symbol_rules:
+      XAUUSDm:
+        allowed_setups:
+        - pullback
+        - trend_continuation
+        preferred_setups:
+        - pullback
+        preferred_sessions:
+        - london_open
+        - overlap_london_ny
+        - london_mid
+        - new_york
+        - tokyo
+        - rollover
+        strict_sessions: true
+        max_loss_per_trade_usd: 20
+      USDJPYm:
+        allowed_setups: &id001
+        - pullback
+        - trend_continuation
+        preferred_setups: *id001
+        preferred_sessions: &id006
+        - tokyo
+        - london_open
+        - overlap_london_ny
+        - new_york
+        - london_mid
+        - rollover
+        strict_sessions: true
+      GBPUSDm:
+        allowed_setups:
+        - pullback
+        preferred_setups:
+        - pullback
+        preferred_sessions:
+        - london_open
+        - overlap_london_ny
+        - new_york
+        - london_mid
+        - rollover
+        strict_sessions: true
+      EURUSDm:
+        allowed_setups:
+        - pullback
+        preferred_setups:
+        - pullback
+        preferred_sessions:
+        - london_open
+        - overlap_london_ny
+        - new_york
+        - london_mid
+        - rollover
+        strict_sessions: true
+      AUDUSDm:
+        allowed_setups:
+        - pullback
+        preferred_setups:
+        - pullback
+        preferred_sessions:
+        - tokyo
+        - london_open
+        - overlap_london_ny
+        - new_york
+        - rollover
+        strict_sessions: true
+      USDCHFm:
+        allowed_setups:
+        - pullback
+        preferred_setups:
+        - pullback
+        preferred_sessions:
+        - london_open
+        - london_mid
+        - overlap_london_ny
+        - new_york
+        - rollover
+        strict_sessions: true
+      USOILm:
+        allowed_setups: &id002
+        - trend_continuation
+        preferred_setups: *id002
+        preferred_sessions: &id004
+        - tokyo
+        - new_york
+        - overlap_london_ny
+        - london_open
+        - rollover
+        strict_sessions: true
+      US30m:
+        allowed_setups: &id003
+        - pullback
+        - trend_continuation
+        preferred_setups: *id003
+        preferred_sessions: &id005
+        - london_open
+        - overlap_london_ny
+        - new_york
+        - rollover
+        strict_sessions: true
+culturing:
+  min_n: 3
+  veto_win_rate_pct: 45
+  cost_r: 0.0
+  promote_min_n: 2
+  promote_min_win_rate_pct: 0
+  promote_min_expectancy_r: 0.03
+adaptation:
+  enabled: true
+  calibrate_be_trail: true
+  rebuild_trade_log: true
+  refresh_positive_evolution: true
+  auto_evolve_cells: true
+  evolve_symbols:
+  - XAUUSDm
+  - EURUSDm
+  - USDCHFm
+  - GBPUSDm
+  seed_edge_cells:
+  - symbol: XAUUSDm
+    setup: pullback
+    sessions:
+    - rollover
+    - tokyo
+    - london_open
+  - symbol: EURUSDm
+    setup: pullback
+    sessions:
+    - london_open
+    - new_york
+  - symbol: USDCHFm
+    setup: pullback
+    sessions:
+    - london_open
+    - new_york
+  - symbol: GBPUSDm
+    setup: pullback
+    sessions:
+    - london_open
+    - new_york
+  min_n: 3
+quant:
+  positive_evolution_enabled: true
+  positive_evolution:
+    enabled: true
+    min_n: 3
+    min_expectancy_net_r: 0.0
+  strategy_ranking_enabled: true
+  require_top_ranked_setup: false
+  ranking_flex_enabled: true
+  ranking_flex_min_win_rate: 0
+  ranking_flex_min_samples: 6
+  ranking_flex_top_n: 2
+  ranking_context_align: true
+  min_rank_sample_size: 3
+  min_rank_win_rate: 0
+  cell_veto_demote: true
+  per_symbol:
+    XAUUSDm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups:
+      - trend_continuation
+      - pullback
+      preferred_sessions:
+      - london_open
+      - overlap_london_ny
+      - london_mid
+      - new_york
+      - tokyo
+    USOILm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups: *id002
+      preferred_sessions: *id004
+    US30m:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups: *id003
+      preferred_sessions: *id005
+    USDJPYm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups: *id001
+      preferred_sessions: *id006
+    GBPUSDm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups:
+      - trend_continuation
+      - pullback
+      preferred_sessions:
+      - london_open
+      - overlap_london_ny
+      - new_york
+    EURUSDm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups:
+      - trend_continuation
+      - pullback
+      preferred_sessions:
+      - london_open
+      - overlap_london_ny
+      - new_york
+    AUDUSDm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups:
+      - trend_continuation
+      - pullback
+      preferred_sessions:
+      - tokyo
+      - london_open
+      - overlap_london_ny
+      - new_york
+    USDCHFm:
+      require_top_ranked_setup: false
+      min_rank_win_rate: 0
+      min_rank_sample_size: 3
+      preferred_setups:
+      - trend_continuation
+      - pullback
+      preferred_sessions:
+      - london_open
+      - london_mid
+      - overlap_london_ny
+      - new_york
+session_scoring:
+  enabled: true
+  min_trade_score: 20
+  min_trade_score_aggressive: 20
+  symbol_session_boost:
+    XAUUSDm:
+      tokyo: 4
+      rollover: 3
+    USOILm:
+      tokyo: 5
+    US30m:
+      london_open: 4
+    USDJPYm:
+      tokyo: 5
+    GBPUSDm:
+      london_open: 4
+      new_york: 3
+    EURUSDm:
+      london_open: 4
+      overlap_london_ny: 3
+    AUDUSDm:
+      tokyo: 5
+      london_open: 3
+    USDCHFm:
+      london_open: 4
+      london_mid: 3
+news:
+  macro_awareness: true
+  macro_blackout_minutes: 5
+  sentiment_gate: false
+filters:
+  avoid_news: true
+  news_blackout_minutes: 5
+  news_release_times_utc:
+  - '12:30'
+  - '13:30'
+  - '14:00'
+  - '14:30'
+  - '15:00'
+fast_mode:
+  enabled: true
+  live_enabled: false
+  tick_interval_ms: 1000
+  symbols:
+  - XAUUSDm
+  require_evaluated_signal: true
+  require_verifier_approval: true
+  allow_market_entries: false
+  allow_limit_entries: true
+  max_anchor_distance_atr: 0.35
+  market_if_distance_atr_below: 0.05
+  trigger_zone_atr: 0.08
+  max_spread_mult: 1.2
+  min_tick_momentum_score: 55
+  cancel_stale_seconds: 60
+  max_open_positions: 1
+  max_trades_per_symbol_per_hour: 4
+  max_consecutive_losses_per_symbol: 2
+  cooldown_after_loss_seconds: 180
+  break_even_fast:
+    enabled: false
+    trigger_r: 0.25
+    lock_r: 0.02
+  trail_fast:
+    enabled: true
+    start_r: 0.45
+    atr_mult: 0.35
+  emergency_exit:
+    enabled: true
+    adverse_tick_move_atr: 0.25
+    spread_spike_mult: 2.0
+intelligence:
+  memory_veto_win_rate: 25
+  memory_veto_min_trades: 40
+  memory_veto_cell_win_rate: 35
+  memory_veto_cell_min_trades: 20
+evaluation:
+  symbol_blocklist:
+  - USOILm
+  - UK100m
+  - US30m
+  - US500m
+  - FR40m
+  - USDJPYm
+  setup_blocklist:
+  - trend_continuation
+  min_policy_score: 42
+  skip_below_score: 30
+execution:
+  live_trading_enabled: true
+  mt5_trading_enabled: true
+  max_lot: 0.03
+strategy_arena:
+  enabled: false
+research:
+  min_trades_for_research: 10
+  replay_bars: 300
+  replay_step: 12
+  auto_deploy: false
+signals:
+  # Tier-1 fix 2026-07-20: align profile 100 with the global verifier flow.
+  gold_never_rejectable: false
+  min_confidence: 48
+  min_risk_reward: 1.15
+  symbol_rules:
+    XAUUSDm:
+      allowed_setups:
+      - pullback
+      - trend_continuation
+      preferred_setups:
+      - pullback
+      preferred_sessions:
+      - london_open
+      - overlap_london_ny
+      - london_mid
+      - new_york
+      - tokyo
+      - rollover
+      strict_sessions: true
+    EURUSDm:
+      allowed_setups:
+      - pullback
+      preferred_setups:
+      - pullback
+      preferred_sessions:
+      - london_open
+      - overlap_london_ny
+      - new_york
+      - london_mid
+      - rollover
+      strict_sessions: true
+    USDCHFm:
+      allowed_setups:
+      - pullback
+      preferred_setups:
+      - pullback
+      preferred_sessions:
+      - london_open
+      - london_mid
+      - overlap_london_ny
+      - new_york
+      - rollover
+      strict_sessions: true
+    GBPUSDm:
+      allowed_setups:
+      - pullback
+      preferred_setups:
+      - pullback
+      preferred_sessions:
+      - london_open
+      - overlap_london_ny
+      - new_york
+      - london_mid
+      - rollover
+      strict_sessions: true
+    USDJPYm:
+      allowed_setups: *id001
+      preferred_setups: *id001
+      preferred_sessions: *id006
+      strict_sessions: true
+    AUDUSDm:
+      allowed_setups:
+      - pullback
+      preferred_setups:
+      - pullback
+      preferred_sessions:
+      - tokyo
+      - london_open
+      - overlap_london_ny
+      - new_york
+      - rollover
+      strict_sessions: true
+    USOILm:
+      allowed_setups: *id002
+      preferred_setups: *id002
+      preferred_sessions: *id004
+      strict_sessions: true
+    US30m:
+      allowed_setups: *id003
+      preferred_setups: *id003
+      preferred_sessions: *id005
+      strict_sessions: true
+  regime_overrides:
+    compression:
+      skip: false
+      bias_aligned: true
+      min_risk_reward: 0.8
+    ranging:
+      skip: false
+      bias_aligned: true
+      min_risk_reward: 0.8
+    transitional:
+      skip: false
+      bias_aligned: true
+      min_risk_reward: 1.0
+    strong_trend:
+      bias_aligned: true
+      min_risk_reward: 1.0
+    weak_trend:
+      bias_aligned: true
+      min_risk_reward: 1.0
+    expansion:
+      bias_aligned: true
+      min_risk_reward: 1.0
+  lot_scaling:
+    enabled: true
+    confidence_ref: 60
+policy_optimizer:
+  enabled: true
+  mode: auto
+  min_trades_suggest: 3
+  min_trades_soft: 5
+  min_trades_auto: 10
+  suspect_exit_lookback: 50

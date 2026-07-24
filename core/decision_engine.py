@@ -55,89 +55,118 @@ class DecisionEngine:
         arena_min_conf = int(arena_cfg.get("min_confidence", 0)) if arena_on else 0
 
         for symbol, feat in features_data.get("symbols", {}).items():
-            ctx = context_data.get("symbols", {}).get(symbol, {})
-            ev = evidence_data.get("symbols", {}).get(symbol, {})
-            if arena_on and arena_cfg.get("emit_all_setups"):
-                setups = self.setup_classifier.classify_all(feat, ctx, ev)
-            else:
-                single = self.setup_classifier.classify(feat, ctx, ev)
-                setups = [single] if single else []
-
-            for setup in setups:
-                if not setup:
-                    continue
-
-                only_setup = self.config.get("replay", {}).get("only_setup_type")
-                if only_setup and setup["setup_type"] != only_setup:
-                    continue
-
-                if arena_on:
-                    rank_info = {
-                        "allowed": True,
-                        "reason": "arena_all_setups",
-                        "rankings": self.ranker.rank_for_symbol(symbol, ctx, feat)[:5],
-                    }
+            try:
+                ctx = context_data.get("symbols", {}).get(symbol, {})
+                ev = evidence_data.get("symbols", {}).get(symbol, {})
+                if arena_on and arena_cfg.get("emit_all_setups"):
+                    setups = self.setup_classifier.classify_all(feat, ctx, ev)
                 else:
-                    allowed, rank_info = self.ranker.allow_setup(
-                        setup["setup_type"], symbol, ctx, feat,
-                    )
-                    if not allowed:
-                        self.logger.info(
-                            "Strategy ranker blocked %s %s — %s (top: %s)",
-                            symbol,
-                            setup["setup_type"],
-                            rank_info.get("reason"),
-                            rank_info.get("top_setup"),
-                        )
+                    single = self.setup_classifier.classify(feat, ctx, ev)
+                    setups = [single] if single else []
+
+                for setup in setups:
+                    if not setup:
                         continue
 
-                votes = self._confidence_tree(feat, ctx, ev, setup)
-                final_confidence = self._combine_votes(votes, setup, symbol, edge_scores)
-                floor = max(min_confidence, arena_min_conf) if arena_on else min_confidence
-                if final_confidence < floor:
-                    continue
+                    only_setup = self.config.get("replay", {}).get("only_setup_type")
+                    if only_setup and setup["setup_type"] != only_setup:
+                        continue
 
-                signal = self._build_signal(symbol, feat, setup, votes, final_confidence, ctx, ev)
-                regime = ctx.get("market_regime", {})
-                passed, vetoes = self.consensus.evaluate(signal, votes, edge_scores, regime)
-                signal["consensus_vetoes"] = vetoes
-                signal["consensus_passed"] = passed
-                if not passed:
-                    self.logger.info(
-                        "Consensus blocked %s %s %s — %s",
-                        symbol,
-                        signal["side"],
-                        setup["setup_type"],
-                        vetoes,
-                    )
-                    continue
+                    if arena_on:
+                        rank_info = {
+                            "allowed": True,
+                            "reason": "arena_all_setups",
+                            "rankings": self.ranker.rank_for_symbol(symbol, ctx, feat)[:5],
+                        }
+                    else:
+                        allowed, rank_info = self.ranker.allow_setup(
+                            setup["setup_type"], symbol, ctx, feat,
+                        )
+                        if not allowed:
+                            self.logger.info(
+                                "Strategy ranker blocked %s %s — %s (top: %s)",
+                                symbol,
+                                setup["setup_type"],
+                                rank_info.get("reason"),
+                                rank_info.get("top_setup"),
+                            )
+                            continue
 
-                trade_score = compute_trade_score(symbol, feat, ctx, rank_info, self.config)
-                signal["trade_score"] = trade_score
-                if trade_score.get("enabled") and not trade_score.get("passed"):
-                    self.logger.info(
-                        "Trade score blocked %s %s — %.1f < %.1f (session=%s)",
-                        symbol,
-                        setup["setup_type"],
-                        trade_score.get("total", 0),
-                        trade_score.get("threshold", 80),
-                        trade_score.get("session_detail", {}).get("session"),
-                    )
-                    continue
+                    votes = self._confidence_tree(feat, ctx, ev, setup)
+                    final_confidence = self._combine_votes(votes, setup, symbol, edge_scores)
+                    floor = max(min_confidence, arena_min_conf) if arena_on else min_confidence
+                    try:
+                        from core.gold_policy import gold_force_pass
+                        gold_ok = gold_force_pass(symbol, self.config)
+                    except Exception:
+                        gold_ok = False
+                    if final_confidence < floor and not gold_ok:
+                        continue
+                    if gold_ok and final_confidence < floor:
+                        final_confidence = int(floor)  # stamp at floor so downstream doesn't re-filter
 
-                signal["strategy_rank"] = rank_info
-                if arena_on:
-                    signal["arena_mode"] = True
-                if trade_score.get("enabled"):
-                    sess = trade_score.get("session_detail", {})
-                    signal["reasons"].append(
-                        f"Trade score {trade_score['total']:.0f}/100 — "
-                        f"{sess.get('session', 'unknown').replace('_', ' ')} session ({sess.get('quality', 'n/a')})"
-                    )
-                signal["explain"] = build_explain_report(signal, edge_scores)
-                candidates.append(signal)
+                    signal = self._build_signal(symbol, feat, setup, votes, final_confidence, ctx, ev)
+                    regime = ctx.get("market_regime", {})
+                    passed, vetoes = self.consensus.evaluate(signal, votes, edge_scores, regime)
+                    signal["consensus_vetoes"] = vetoes
+                    signal["consensus_passed"] = passed
+                    if not passed and not gold_ok:
+                        self.logger.info(
+                            "Consensus blocked %s %s %s — %s",
+                            symbol,
+                            signal["side"],
+                            setup["setup_type"],
+                            vetoes,
+                        )
+                        continue
+                    if not passed and gold_ok:
+                        signal["consensus_passed"] = True
+                        signal["consensus_bypassed"] = "gold_never_rejectable"
+                        self.logger.info(
+                            "Consensus BYPASS gold %s %s %s — %s",
+                            symbol,
+                            signal["side"],
+                            setup["setup_type"],
+                            vetoes,
+                        )
 
-        candidates.sort(key=lambda s: s["confidence"], reverse=True)
+                    trade_score = compute_trade_score(symbol, feat, ctx, rank_info, self.config)
+                    signal["trade_score"] = trade_score
+                    if trade_score.get("enabled") and not trade_score.get("passed") and not gold_ok:
+                        self.logger.info(
+                            "Trade score blocked %s %s — %.1f < %.1f (session=%s)",
+                            symbol,
+                            setup["setup_type"],
+                            trade_score.get("total", 0),
+                            trade_score.get("threshold", 80),
+                            trade_score.get("session_detail", {}).get("session"),
+                        )
+                        continue
+                    if gold_ok and trade_score.get("enabled") and not trade_score.get("passed"):
+                        trade_score = dict(trade_score)
+                        trade_score["passed"] = True
+                        trade_score["gold_bypassed"] = True
+                        signal["trade_score"] = trade_score
+
+                    signal["strategy_rank"] = rank_info
+                    if arena_on:
+                        signal["arena_mode"] = True
+                    if trade_score.get("enabled"):
+                        sess = trade_score.get("session_detail", {})
+                        signal["reasons"].append(
+                            f"Trade score {trade_score['total']:.0f}/100 — "
+                            f"{sess.get('session', 'unknown').replace('_', ' ')} session ({sess.get('quality', 'n/a')})"
+                        )
+                    signal["explain"] = build_explain_report(signal, edge_scores)
+                    candidates.append(signal)
+
+
+            except Exception as exc:
+                self.logger.warning("Signal generation failed for %s: %s", symbol, exc)
+                continue
+
+        # Rank by confidence after all symbols — was unreachable under `continue` (review bug).
+        candidates.sort(key=lambda s: s.get("confidence", 0), reverse=True)
         trimmed = candidates if max_candidates is None else candidates[:max_candidates]
         self.logger.info(
             "Decision engine: %d candidates (%d returned)",

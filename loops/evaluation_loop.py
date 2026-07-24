@@ -83,16 +83,19 @@ def run() -> dict | None:
     trades = read_json_state("paper_trades.json", default={"trades": []})
     spread_data: dict[str, float] = {}
     for sym, feat in (features.get("symbols") or {}).items():
-        sp = feat.get("spread_points", feat.get("spread"))
-        if sp is not None:
-            spread_data[sym] = float(sp)
+        try:
+            sp = feat.get("spread_points", feat.get("spread"))
+            if sp is not None:
+                spread_data[sym] = float(sp)
+        except Exception as exc:
+            logger.warning("spread read failed for %s: %s", sym, exc)
 
     evaluated, skipped = evaluate_batch(
         candidates,
         features,
         config,
         spread_data=spread_data,
-        recent_trades=list(trades.get("trades") or []),
+        recent_trades=list(trades if isinstance(trades, list) else (trades or {}).get("trades") or []),
         logger=logger,
     )
 

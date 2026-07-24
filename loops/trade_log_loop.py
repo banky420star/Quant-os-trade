@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,26 +53,41 @@ def run() -> dict:
     logger = setup_logger("trade_log_loop", "trade_log_loop.log")
 
     trades_m, orders_m = _source_mtime()
-    prev = read_json_state("trade_log.json", default={}) or {}
-    last_trades_m = float(prev.get("_paper_trades_mtime", 0.0) or 0.0)
-    last_orders_m = float(prev.get("_paper_orders_mtime", 0.0) or 0.0)
+    # Mtimes live in a separate state/trade_log_meta.json (always DICT).
+    # trade_log.json itself is now a root-level LIST written by build_log,
+    # so we cannot rely on prev's _paper_*_mtime keys (they're absent).
+    prev_meta = read_json_state("trade_log_meta.json", default={}) or {}
+    last_trades_m = float(prev_meta.get("paper_trades_mtime", 0.0) or 0.0)
+    last_orders_m = float(prev_meta.get("paper_orders_mtime", 0.0) or 0.0)
 
     # Rebuild when a trade closed OR a new order filled (richer signal_meta).
-    if prev and trades_m <= last_trades_m and orders_m <= last_orders_m:
-        return prev
+    if trades_m <= last_trades_m and orders_m <= last_orders_m:
+        # Source files unchanged since the last rebuild — return cached.
+        cached = read_json_state("trade_log.json", default=[]) or []
+        return cached
 
     try:
         payload = build_log(config, days=30, log=logger)
-        payload["_paper_trades_mtime"] = trades_m
-        payload["_paper_orders_mtime"] = orders_m
         write_json_state("trade_log.json", payload)
+        # Side-car: mtimes persisted in a separate DICT file so the LIST
+        # shape of trade_log.json doesn't collapse the rebuild-skip check.
+        write_json_state("trade_log_meta.json", {
+            "paper_trades_mtime": trades_m,
+            "paper_orders_mtime": orders_m,
+            # datetime.now(timezone.utc) is the modern replacement for the
+            # deprecated utcnow(). The trailing .replace("+00:00", "Z")
+            # normalises to the same "Z"-suffixed UTC string the rest of
+            # the bot emits.
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        })
+        n = len(payload) if isinstance(payload, list) else payload.get("total", 0)
         logger.info(
             "Trade log rebuilt: %d trades (paper_trades mtime %.0f, orders mtime %.0f).",
-            payload.get("total", 0),
+            n,
             trades_m,
             orders_m,
         )
         return payload
     except Exception as exc:  # noqa: BLE001 -- fault-isolated from the pipeline
         logger.error("Trade log rebuild failed: %s", exc)
-        return prev or {}
+        return read_json_state("trade_log.json", default=[]) or []

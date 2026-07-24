@@ -10,6 +10,16 @@ from core.mt5_terminal_manager import MT5TerminalManager
 
 PIPELINE_LOOPS: list[tuple[str, Any]] = []
 
+# Cycle counter — analytical loops run every N cycles to keep the pipeline fast
+# while still collecting policy/optimizer/adaptation data at a useful cadence.
+_cycle_counter: int = 0
+ANALYTICS_EVERY_N: int = 5
+ANALYTICAL_LOOPS: set[str] = {
+    "policy_detection_loop",
+    "policy_optimizer_loop",
+    "adaptation_loop",
+}
+
 
 def _init_loops() -> list[tuple[str, Any]]:
     from loops import (
@@ -29,6 +39,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         signal_loop,
         verifier_loop,
         trade_log_loop,
+        babysit_loop,
     )
     return [
         ("data_loop", data_loop.run),
@@ -50,17 +61,34 @@ def _init_loops() -> list[tuple[str, Any]]:
         # Throttled -- rebuilds state/trade_log.json only when paper_trades.json
         # changed (a trade closed). Reuses the in-process MT5 connection.
         ("trade_log_loop", trade_log_loop.run),
+        # Observe profitability regressions every cycle (no fabricated equity).
+        ("babysit_loop", babysit_loop.run),
         ("policy_optimizer_loop", policy_optimizer_loop.run),
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
 
 
 def run_pipeline(config: dict[str, Any], logger: logging.Logger) -> dict[str, Any]:
-    """Run all trading loops; failures in one loop do not stop the rest."""
+    """Run all trading loops; failures in one loop do not stop the rest.
+
+    Analytical loops (policy_detection, policy_optimizer, adaptation) are
+    skipped on most cycles and only run every ANALYTICS_EVERY_N (5) cycles,
+    keeping the fast pipeline loops responsive.
+    """
+    global _cycle_counter
+    _cycle_counter += 1
+    run_analytics = (_cycle_counter % ANALYTICS_EVERY_N == 0)
     loops = PIPELINE_LOOPS or _init_loops()
     results: dict[str, str] = {}
 
     for name, fn in loops:
+        if name in ANALYTICAL_LOOPS and not run_analytics:
+            logger.info(
+                "--- %s --- SKIPPED (cycle %d, every %d)",
+                name, _cycle_counter, ANALYTICS_EVERY_N,
+            )
+            results[name] = "SKIPPED"
+            continue
         try:
             logger.info("--- %s ---", name)
             if name == "data_loop":

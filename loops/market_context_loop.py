@@ -37,21 +37,24 @@ def _update_regime_history(features: dict, regimes: dict, logger) -> None:
     feats = features.get("symbols", {}) or {}
     regs = regimes.get("symbols", {}) or {}
     for sym, feat in feats.items():
-        m15 = feat.get("m15_trend")
-        bias = (regs.get(sym) or {}).get("bias")
-        cur[sym] = {"bias": bias, "m15_trend": m15}
-        p = prior.get(sym, {}) or {}
-        pb, pm = p.get("bias"), p.get("m15_trend")
-        if (
-            pb in bull_bear and bias in bull_bear and pb != bias
-            and pm in bull_bear and m15 in bull_bear and pm != m15
-        ):
-            flips[sym] = {
-                "bias_from": pb, "bias_to": bias,
-                "m15_from": pm, "m15_to": m15, "at": now,
-            }
-            logger.info("REGIME FLIP %s: bias %s->%s m15_trend %s->%s",
-                        sym, pb, bias, pm, m15)
+        try:
+            m15 = feat.get("m15_trend")
+            bias = (regs.get(sym) or {}).get("bias")
+            cur[sym] = {"bias": bias, "m15_trend": m15}
+            p = prior.get(sym, {}) or {}
+            pb, pm = p.get("bias"), p.get("m15_trend")
+            if (
+                pb in bull_bear and bias in bull_bear and pb != bias
+                and pm in bull_bear and m15 in bull_bear and pm != m15
+            ):
+                flips[sym] = {
+                    "bias_from": pb, "bias_to": bias,
+                    "m15_from": pm, "m15_to": m15, "at": now,
+                }
+                logger.info("REGIME FLIP %s: bias %s->%s m15_trend %s->%s",
+                            sym, pb, bias, pm, m15)
+        except Exception as exc:
+            logger.warning("regime history failed for %s: %s", sym, exc)
     write_json_state("regime_history.json",
                      {"updated_at": now, "prior": cur, "flips": flips})
 
@@ -73,7 +76,10 @@ def run() -> dict | None:
     regime_engine = MarketRegimeEngine(logger)
     regimes = regime_engine.classify_all(features, context)
     for symbol, ctx in context.get("symbols", {}).items():
-        ctx["market_regime"] = regimes.get("symbols", {}).get(symbol, {})
+        try:
+            ctx["market_regime"] = regimes.get("symbols", {}).get(symbol, {})
+        except Exception as exc:
+            logger.warning("regime attach failed for %s: %s", symbol, exc)
 
     evidence_engine = EvidenceEngine(config, logger)
     evidence = evidence_engine.compute_all(features, context)

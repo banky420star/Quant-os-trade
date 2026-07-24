@@ -10,6 +10,8 @@ from core.exposure import calc_risk_based_size, cap_size_to_exposure_limits
 from core.kelly_sizing import resolve_risk_percent
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
 from core.entry_narrative import build_exit_narrative
+from core.learning_logger import log_decision
+from core.learning_schema import build_decision_event, config_snapshot_hash
 from core.trade_limits import is_duplicate_position, session_trade_capacity_available
 from core.utils import utc_now_iso
 
@@ -22,6 +24,31 @@ class PaperBroker:
         self.logger = logger or logging.getLogger("paper_broker")
         if config["execution"].get("mode") == "mt5":
             raise RuntimeError("PaperBroker cannot run when execution.mode is mt5 — use MT5Broker")
+
+    def _log_decision(self, signal: dict[str, Any], decision: str, reason: str,
+                        features_at_entry: dict[str, Any] | None = None) -> None:
+        """Log one decision event to logs/decisions.jsonl."""
+        try:
+            feat = features_at_entry or {}
+            log_decision(build_decision_event(
+                symbol=signal.get("symbol"),
+                side=signal.get("side"),
+                timeframe="M5",
+                mode=self.config.get("execution", {}).get("mode", "paper"),
+                price=signal.get("entry"),
+                spread_points=feat.get("spread_points") if isinstance(feat, dict) else None,
+                atr=feat.get("atr") if isinstance(feat, dict) else None,
+                volatility_regime=feat.get("volatility_regime") if isinstance(feat, dict) else None,
+                confidence=signal.get("confidence"),
+                decision=decision,
+                entry_type=signal.get("entry_mode", "market"),
+                guards={},
+                reason=reason,
+                config_hash=config_snapshot_hash(self.config),
+                profile=self.config.get("active_profile"),
+            ))
+        except Exception:
+            self.logger.debug("Decision log skipped for %s: %s", signal.get("signal_id"), decision)
 
     def process_approved_signals(
         self,
@@ -56,9 +83,11 @@ class PaperBroker:
             signal = record.get("signal", record)
             if not symbol_capacity_available(self.config, signal["symbol"], positions):
                 self.logger.info("Paper skip %s — max open per symbol", signal["symbol"])
+                self._log_decision(signal, "skip", "symbol_capacity_exceeded")
                 continue
             if not session_trade_capacity_available(self.config, signal["symbol"], trades):
                 self.logger.info("Paper skip %s — max session trades per symbol", signal["symbol"])
+                self._log_decision(signal, "skip", "session_trade_capacity_exceeded")
                 continue
             if is_duplicate_position(
                 self.config,
@@ -66,6 +95,7 @@ class PaperBroker:
                 positions,
                 executed_signal_ids=executed_signal_ids,
             ):
+                self._log_decision(signal, "skip", "duplicate_position")
                 continue
 
             symbol = signal["symbol"]
@@ -73,12 +103,14 @@ class PaperBroker:
             dyn_ok, signal, dyn_reason = evaluate_dynamic_entry(self.config, signal, positions, feat)
             if not dyn_ok:
                 self.logger.info("Paper skip %s — %s", symbol, dyn_reason)
+                self._log_decision(signal, "skip", f"dynamic_entry: {dyn_reason}")
                 orders.append(self._create_rejected_order(signal, feat["price"], dyn_reason or "dynamic_entry"))
                 continue
 
             price = prices.get(symbol, signal.get("entry"))
             if not price:
                 self.logger.warning("No price for %s — skipping", symbol)
+                self._log_decision(signal, "skip", "no_price_data")
                 continue
 
             equity = float(balance.get("equity", balance.get("cash", starting_cash)))
@@ -103,6 +135,7 @@ class PaperBroker:
                     symbol,
                     signal["side"],
                 )
+                self._log_decision(signal, "skip", "exposure_limit_exceeded")
                 orders.append(self._create_rejected_order(signal, price, "exposure_limit_exceeded"))
                 continue
 
@@ -121,6 +154,7 @@ class PaperBroker:
                 order["status"] = "filled"
                 order["filled_at"] = utc_now_iso()
                 order["size"] = capped_size
+                self._log_decision(signal, "execute", "filled", features_at_entry=sym_features)
                 self.logger.info(
                     "Paper fill: %s %s @ %s size=%.4f (equity=%.2f)",
                     symbol,

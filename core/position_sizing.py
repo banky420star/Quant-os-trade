@@ -118,6 +118,33 @@ def calc_executable_volume(
     if ideal < vmin:
         ideal = min(max(default_lot, vmin), max_lot)
 
+    # Scalable lot sizing: scale the ideal lot by signal confidence and current
+    # drawdown. High confidence + low drawdown -> larger lot (up to max_lot);
+    # low confidence or deep drawdown -> de-risk toward min lot. Bounded by
+    # max_lot, exposure caps, and the per-trade USD risk cap below.
+    scaling = (config.get("signals") or {}).get("lot_scaling") or {}
+    if scaling.get("enabled", False):
+        try:
+            from core.utils import read_json_state as _rjs
+            _rs = _rjs("risk_state.json", default={}) or {}
+            _dd = float(_rs.get("drawdown") or 0.0)
+        except Exception:
+            _dd = 0.0
+        _conf = float(signal.get("confidence") or 0)
+        _conf_ref = float(scaling.get("confidence_ref", 60))
+        _conf_factor = max(0.5, min(2.5, _conf / _conf_ref)) if _conf_ref > 0 else 1.0
+        _max_dd = float((config.get("risk") or {}).get("max_drawdown_pct", 15) or 15)
+        _dd_factor = max(0.3, min(1.0, 1 - _dd / _max_dd)) if _max_dd > 0 else 1.0
+        ideal = ideal * _conf_factor * _dd_factor
+        ideal = max(vmin, min(ideal, max_lot))
+        _ls_info = {
+            "confidence": _conf, "confidence_factor": round(_conf_factor, 3),
+            "drawdown_pct": round(_dd, 2), "drawdown_factor": round(_dd_factor, 3),
+            "scaled_ideal": round(ideal, 4),
+        }
+    else:
+        _ls_info = None
+
     capped, allowed = cap_size_to_exposure_limits(
         ideal,
         entry,
@@ -136,6 +163,8 @@ def calc_executable_volume(
         "kelly": kelly,
         "risk_percent": risk_pct,
     }
+    if _ls_info:
+        details["lot_scaling"] = _ls_info
 
     if not allowed or capped <= 0:
         details["reject_reason"] = "exposure_cap_below_min_lot"

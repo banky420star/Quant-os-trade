@@ -9,8 +9,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.mt5_client import MT5Client, format_mt5_connection_error, log_session_alignment
+from core.learning_logger import log_decision
+from core.learning_schema import build_decision_event, config_snapshot_hash
 from core.market_hours import clear_backoff, in_backoff, is_market_closed_error, record_market_closed
+from core.mt5_client import MT5Client, format_mt5_connection_error, log_session_alignment
 from core.mt5_connection_manager import MT5ConnectionManager
 from core.mt5_broker import MT5Broker
 from core.paper_broker import PaperBroker
@@ -130,6 +132,15 @@ def run() -> dict | None:
 
     if not approved:
         logger.info("No approved signals to execute")
+        try:
+            log_decision(build_decision_event(
+                decision="idle",
+                mode=mode,
+                reason="no_approved_signals",
+                config_hash=config_snapshot_hash(config),
+            ))
+        except Exception:
+            pass
         return {"timestamp": None, "mode": mode, "placed": 0}
 
     orders_state = read_json_state("paper_orders.json", default={"orders": []})

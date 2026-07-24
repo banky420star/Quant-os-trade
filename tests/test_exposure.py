@@ -310,11 +310,12 @@ def test_dynamic_entry_requires_positive_stack(config):
 
 
 def test_break_even_moves_sl_on_buy(config):
+    # XAU wide BE: trigger_points 5000 × 0.01 = $50 price move
     pos = {"symbol": "XAUUSDm", "side": "BUY", "entry": 100.0, "sl": 95.0}
     new_sl, row, actions = compute_managed_sl(
         config,
         pos,
-        current_price=103.0,  # +3.0 > trigger_points 280 × 0.01
+        current_price=151.0,  # +51.0 > trigger_points 5000 × 0.01
         atr=2.0,
         mgmt_row={},
         point=0.01,
@@ -325,11 +326,19 @@ def test_break_even_moves_sl_on_buy(config):
 
 
 def test_break_even_triggers_at_five_dollars_profit(config):
+    config.setdefault("trade_manager", {})["distance_first_triggers"] = False
     config["trading"]["break_even"]["trigger_profit_usd"] = 5
     config["trading"]["break_even"]["lock_profit_usd"] = 0
     config["trading"]["trailing"]["activation_profit_usd"] = 5
     config["trading"]["exits"]["defer_trail_until"]["require_partial_or_rr"] = False
-    config["trading"]["break_even"]["per_symbol"]["US500m"].pop("lock_profit_usd", None)
+    config["trading"]["break_even"]["per_symbol"]["US500m"] = {
+        "trigger_profit_usd": 5,
+        "lock_profit_usd": 0,
+    }
+    config["trading"]["trailing"]["per_symbol"]["US500m"] = {
+        "activation_profit_usd": 5,
+        "trail_points_atr_mult": 0.35,
+    }
     pos = {"symbol": "US500m", "side": "BUY", "entry": 7500.0, "sl": 7480.0, "profit": 5.2, "size": 0.05}
     new_sl, row, actions = compute_managed_sl(
         config,
@@ -344,9 +353,17 @@ def test_break_even_triggers_at_five_dollars_profit(config):
 
 
 def test_per_symbol_fx_trail_needs_three_dollars(config):
+    config.setdefault("trade_manager", {})["distance_first_triggers"] = False
     config["trading"]["exits"]["defer_trail_until"]["require_partial_or_rr"] = False
-    config["trading"]["break_even"]["per_symbol"]["EURUSDm"]["trigger_profit_usd"] = 3
-    config["trading"]["trailing"]["per_symbol"]["EURUSDm"]["activation_profit_usd"] = 3
+    config["trading"]["break_even"]["per_symbol"]["EURUSDm"] = {
+        "trigger_profit_usd": 3,
+        "trigger_points": 20,
+    }
+    config["trading"]["trailing"]["per_symbol"]["EURUSDm"] = {
+        "activation_profit_usd": 3,
+        "activation_points": 27,
+        "trail_points": 200,
+    }
     # +2 pips (20 broker pts) — below 27-pt activation; USD $2.50 also below $3.
     pos = {"symbol": "EURUSDm", "side": "BUY", "entry": 1.08000, "sl": 1.07800, "profit": 2.5, "size": 0.1}
     _sl, _row, actions_low = compute_managed_sl(config, pos, 1.08020, 0.001, {}, point=1e-5)
@@ -360,16 +377,24 @@ def test_per_symbol_fx_trail_needs_three_dollars(config):
 def test_trail_distance_uses_broker_points_not_atr_mult(config):
     trail_cfg = config["trading"]["trailing"]
     trail_sym = trail_cfg["per_symbol"]["US500m"]
+    mult = float(trail_sym.get("trail_points_atr_mult") or 0.55)
     dist = _trail_distance_price(trail_sym, trail_cfg, atr=16.0, point=0.1)
-    # US500m: round(16/0.1 × 0.35) broker pts × 0.1
-    assert dist == pytest.approx(5.6)
+    # US500m: round(16/0.1 × mult) broker pts × 0.1
+    expected = max(1, int(round((16.0 / 0.1) * mult))) * 0.1
+    assert dist == pytest.approx(expected)
     fx_sym = trail_cfg["per_symbol"]["EURUSDm"]
     fx_dist = _trail_distance_price(fx_sym, trail_cfg, atr=0.0005, point=1e-5)
-    assert fx_dist == pytest.approx(0.002)
+    assert fx_dist == pytest.approx(float(fx_sym.get("trail_points") or 350) * 1e-5)
 
 
 def test_trail_activates_on_points_when_usd_profit_low(config):
     """MT5 profit USD can lag price — points activation must still arm trail."""
+    config["trading"]["exits"]["defer_trail_until"]["require_partial_or_rr"] = False
+    config["trading"]["trailing"]["per_symbol"]["EURUSDm"] = {
+        "activation_profit_usd": 15,
+        "activation_points": 100,
+        "trail_points": 200,
+    }
     pos = {
         "symbol": "EURUSDm",
         "side": "BUY",
@@ -378,7 +403,7 @@ def test_trail_activates_on_points_when_usd_profit_low(config):
         "profit": 1.5,
         "size": 0.1,
     }
-    # +20 pips favourable but only $1.50 floating profit (< $3 USD gate)
+    # +20 pips = 200 broker pts ≥ 100 activation; USD still low
     new_sl, row, actions = compute_managed_sl(
         config, pos, current_price=1.0820, atr=0.001, mgmt_row={}, point=1e-5,
     )
@@ -389,6 +414,11 @@ def test_trail_activates_on_points_when_usd_profit_low(config):
 
 def test_trail_stays_armed_after_profit_pullback(config):
     """Once trailing is latched, keep ratcheting peak/SL even if USD profit dips."""
+    config["trading"]["exits"]["defer_trail_until"]["require_partial_or_rr"] = False
+    config["trading"]["trailing"]["per_symbol"]["US500m"] = {
+        "activation_points": 50,
+        "trail_points_atr_mult": 0.35,
+    }
     pos = {
         "symbol": "US500m",
         "side": "BUY",
@@ -402,26 +432,36 @@ def test_trail_stays_armed_after_profit_pullback(config):
     )
     assert "trail" in actions
     assert row["peak_price"] == 7530.0
+    # trail dist = round(10/0.1 × 0.35) * 0.1 = 3.5 → SL = 7530 - 3.5
     assert new_sl == pytest.approx(7526.5)
 
 
 def test_xau_trail_points_atr_mult_uses_broker_points(config):
     trail_cfg = config["trading"]["trailing"]
     trail_sym = trail_cfg["per_symbol"]["XAUUSDm"]
-    # ATR=3.50, point=0.01 -> 350 broker pts × 1.0 mult = 350 pts = $3.50
+    mult = float(trail_sym.get("trail_points_atr_mult") or 0.9)
+    # ATR=3.50, point=0.01 -> round(350 × mult) pts × 0.01
     dist = _trail_distance_price(trail_sym, trail_cfg, atr=3.5, point=0.01)
-    assert dist == pytest.approx(3.5)
+    expected = max(1, int(round((3.5 / 0.01) * mult))) * 0.01
+    assert dist == pytest.approx(expected)
 
 
 def test_btc_trail_atr_mult(config):
     trail_cfg = config["trading"]["trailing"]
     trail_sym = trail_cfg["per_symbol"]["BTCUSDm"]
+    mult = float(trail_sym.get("trail_points_atr_mult") or 0.6)
     dist = _trail_distance_price(trail_sym, trail_cfg, atr=150.0, point=0.01)
-    # 150/0.01 * 0.45 = 6750 × 0.01 = 67.5
-    assert dist == pytest.approx(67.5)
+    expected = max(1, int(round((150.0 / 0.01) * mult))) * 0.01
+    assert dist == pytest.approx(expected)
 
 
 def test_trail_sl_ratcheted_from_peak(config):
+    config["trading"]["exits"]["defer_trail_until"]["require_partial_or_rr"] = False
+    config["trading"]["exits"]["runner"]["trail_tighten_mult"] = 0.6
+    config["trading"]["trailing"]["per_symbol"]["US500m"] = {
+        "activation_points": 50,
+        "trail_points_atr_mult": 0.35,
+    }
     pos = {
         "symbol": "US500m",
         "side": "BUY",
@@ -434,19 +474,27 @@ def test_trail_sl_ratcheted_from_peak(config):
         config, pos, current_price=7502.0, atr=10.0, mgmt_row=row, point=0.1,
     )
     assert "trail" in actions
-    assert new_sl == pytest.approx(7527.9)  # peak 7530 - tightened ATR trail (×0.6)
+    # base trail = round(10/0.1×0.35)*0.1 = 3.5; × tighten 0.6 = 2.1 → 7530-2.1
+    assert new_sl == pytest.approx(7527.9)
 
 
 def test_nas100_trail_uses_atr_broker_points(config):
-    """NAS100: trail = round(ATR/point × 0.45) × point, not a fixed 3250 pts."""
+    """NAS100: trail = round(ATR/point × mult) × point, not a fixed point count."""
     trail_cfg = config["trading"]["trailing"]
     trail_sym = trail_cfg["per_symbol"]["NAS100m"]
+    mult = float(trail_sym.get("trail_points_atr_mult") or 0.55)
     dist = _trail_distance_price(trail_sym, trail_cfg, atr=60.0, point=0.01)
-    # 60/0.01 * 0.45 = 2700 broker pts × 0.01 = 27.0 index pts
-    assert dist == pytest.approx(27.0)
+    expected = max(1, int(round((60.0 / 0.01) * mult))) * 0.01
+    assert dist == pytest.approx(expected)
 
 
 def test_nas100_trail_sl_behind_peak_sell(config):
+    config["trading"]["exits"]["defer_trail_until"]["require_partial_or_rr"] = False
+    config["trading"]["exits"]["runner"]["trail_tighten_mult"] = 0.6
+    config["trading"]["trailing"]["per_symbol"]["NAS100m"] = {
+        "activation_atr_mult": 0.5,
+        "trail_points_atr_mult": 0.45,
+    }
     pos = {
         "symbol": "NAS100m",
         "side": "SELL",
@@ -459,7 +507,8 @@ def test_nas100_trail_sl_behind_peak_sell(config):
         config, pos, current_price=29210.0, atr=60.0, mgmt_row=row, point=0.01,
     )
     assert "trail" in actions
-    assert new_sl == pytest.approx(29216.2)  # peak 29200 + tightened 27×0.6 ATR trail
+    # base 27 × tighten 0.6 = 16.2 → peak 29200 + 16.2
+    assert new_sl == pytest.approx(29216.2)
 
 
 def test_clamp_sl_respects_mt5_stops_level():
