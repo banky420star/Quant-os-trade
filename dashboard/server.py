@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import gzip
 import json
 import math
 import os
@@ -628,6 +629,11 @@ LITE_SKIP_STATE = frozenset({
     "replay_results.json",
     "latest_candles.json",
     "trade_log.json",
+    "paper_trades.json",
+    "policy_scores.json",
+    "position_management.json",
+    "trade_manager.json",
+    "blue_guardian_actions.json",
 })
 
 
@@ -3048,6 +3054,26 @@ def _build_trading_status(
     }
 
 
+# --- Summary cache with gzip (3s TTL) ---
+_summary_lock = threading.Lock()
+_summary_cache: dict[str, tuple[float, dict]] = {"lite": (0.0, {}), "full": (0.0, {})}
+_SUMMARY_TTL = 5.0
+
+
+def _cached_summary(*, lite: bool = False) -> dict:
+    """Return cached aggregate_state, recomputing at most once per TTL."""
+    key = "lite" if lite else "full"
+    now = time.monotonic()
+    with _summary_lock:
+        cached = _summary_cache.get(key)
+        if cached and (now - cached[0]) < _SUMMARY_TTL:
+            return cached[1]
+    data = aggregate_state(lite=lite)
+    with _summary_lock:
+        _summary_cache[key] = (time.monotonic(), data)
+    return data
+
+
 def aggregate_state(*, lite: bool = False) -> dict:
     config = load_config()
     runtime_mode = dict(runtime_mode_summary(config))
@@ -3785,9 +3811,18 @@ def _handle_sse_equity_curve(handler, range_key: str):
 
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data: dict, status: int = 200) -> None:
-        body = json.dumps(_sanitize_json(data), default=str).encode("utf-8")
+        raw = json.dumps(_sanitize_json(data), default=str).encode("utf-8")
+        accept = self.headers.get("Accept-Encoding", "")
+        if "gzip" in accept and len(raw) > 4096:
+            body = gzip.compress(raw, compresslevel=6)
+            use_gzip = True
+        else:
+            body = raw
+            use_gzip = False
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -3828,7 +3863,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path in ("/api/state", "/api/summary"):
             query = parse_qs(urlparse(self.path).query)
             lite = path == "/api/summary" or query.get("lite", ["0"])[0] in ("1", "true", "yes")
-            self._send_json(aggregate_state(lite=lite))
+            self._send_json(_cached_summary(lite=lite))
         elif path.startswith("/api/state/"):
             filename = path.split("/api/state/", 1)[-1]
             if not filename.endswith(".json"):
