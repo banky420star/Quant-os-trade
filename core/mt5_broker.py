@@ -496,6 +496,31 @@ class MT5Broker:
                 "type_filling": filling,
             }
 
+        # --- Margin pre-check (avoid MT5 retcode=10019 "No money") ----------------
+        # order_calc_margin needs the final order type/price/symbol/volume.
+        margin = mt5.order_calc_margin(request["type"], symbol, volume, request["price"])
+        free_margin = float(getattr(account, "margin_free", 0) or 0)
+        self.logger.info("Margin check %s vol=%s: required=%.2f free=%.2f", symbol, volume, margin or 0, free_margin)
+        if margin is None:
+            return {"success": False, "error": f"margin_calc_failed: {mt5.last_error()}"}
+        if margin <= 0 or free_margin <= 0:
+            return {"success": False, "error": "insufficient_margin: no free margin"}
+        # Keep a 5% buffer for spread widening/slippage between check and fill.
+        # 50% was far too conservative on small accounts and rejected min-lot trades.
+        if margin > free_margin * 0.95:
+            vmin = float(info.volume_min or 0.01)
+            if volume > vmin:
+                margin_min = mt5.order_calc_margin(request["type"], symbol, vmin, request["price"])
+                if margin_min is not None and margin_min <= free_margin * 0.95:
+                    volume = vmin
+                    request["volume"] = volume
+                    margin = margin_min
+            if margin > free_margin * 0.95:
+                return {
+                    "success": False,
+                    "error": f"insufficient_margin: {symbol} needs ~{margin:.2f}, free {free_margin:.2f}",
+                }
+
         self.logger.info("Sending order: %s", {k: v for k, v in request.items() if k != "comment"})
         result = mt5.order_send(request)
 
@@ -696,13 +721,13 @@ class MT5Broker:
         status = "pending" if result.get("success") and is_pending else ("filled" if result.get("success") else "failed")
         return {
             "order_id": str(uuid.uuid4()),
-            "signal_id": signal["signal_id"],
-            "symbol": signal["symbol"],
-            "side": signal["side"],
+            "signal_id": signal.get("signal_id", signal.get("id", "unknown")),
+            "symbol": signal.get("symbol", "unknown"),
+            "side": signal.get("side", "unknown"),
             "type": order_type,
-            "entry": signal["entry"],
-            "sl": signal["sl"],
-            "tp1": signal["tp1"],
+            "entry": signal.get("entry", 0),
+            "sl": signal.get("sl", 0),
+            "tp1": signal.get("tp1", 0),
             "tp2": signal.get("tp2"),
             "setup_type": signal.get("setup_type"),
             "reason": signal.get("reason"),

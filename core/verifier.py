@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -148,15 +150,19 @@ class Verifier:
             self._regime_evolution = load_regime_evolution()
 
         for signal in candidates:
-            feat = features.get(signal["symbol"], {})
-            spread_pts = spread_data.get(signal["symbol"], 0.0)
-            result = self._verify_one(
-                signal, feat, active_signals, kill_switch, spread_pts, equity, closed_trades,
-            )
-            if result["approved"]:
-                approved.append(result)
-            else:
-                rejected.append(result)
+            sym = signal.get("symbol", "unknown")
+            try:
+                feat = features.get(sym, {})
+                spread_pts = spread_data.get(sym, 0.0)
+                result = self._verify_one(
+                    signal, feat, active_signals, kill_switch, spread_pts, equity, closed_trades,
+                )
+                if result["approved"]:
+                    approved.append(result)
+                else:
+                    rejected.append(result)
+            except Exception as exc:
+                self.logger.warning("Skipping malformed signal %s (keys=%s): %s", sym, list(signal.keys()), exc, exc_info=True)
 
         self.logger.info("Verified %d signals: %d approved, %d rejected", len(candidates), len(approved), len(rejected))
         return approved, rejected
@@ -545,9 +551,13 @@ class Verifier:
         except Exception:
             pass
 
+        _sid = signal.get("signal_id") or signal.get("id")
+        if not _sid:
+            _raw = f"{signal.get('symbol', '?')}:{signal.get('side', '?')}:{signal.get('entry', 0)}:{time.time_ns()}"
+            _sid = hashlib.md5(_raw.encode()).hexdigest()[:12]
         record = {
-            "signal_id": signal["signal_id"],
-            "symbol": signal["symbol"],
+            "signal_id": _sid,
+            "symbol": signal.get("symbol", "unknown"),
             "side": signal.get("side"),
             "setup_type": signal.get("setup_type"),
             "approved": approved,

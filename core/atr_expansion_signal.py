@@ -16,9 +16,9 @@ from core.utils import read_json_state, utc_now_iso
 
 
 def atr_expansion_enabled(config: dict[str, Any]) -> bool:
-    return bool((config.get("strategies") or {}).get("diversification") or {}).get(
+    return bool(((config.get("strategies") or {}).get("diversification") or {}).get(
         "atr_expansion_enabled", False
-    )
+    ))
 
 
 def atr_expansion_config(config: dict[str, Any]) -> AtrExpansionParams:

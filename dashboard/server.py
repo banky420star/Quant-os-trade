@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import json
 import math
+import os
 import queue
+import shutil
 import socket
 import sys
 import threading
@@ -32,6 +34,518 @@ from core.utils import (
 
 import logging
 _LOG = logging.getLogger("dashboard.pq")
+
+# Thread-safe cache for the persisted equity curve file.
+_equity_curve_lock = threading.RLock()
+
+
+def _persist_equity_curve(curve: dict) -> None:
+    """Persist the full equity curve to state/equity_curve.json so the
+    dashboard can render it instantly on first load even when the bot is not
+    actively writing state. Writes are best-effort, throttled, and never block
+    the caller."""
+    with _equity_curve_lock:
+        try:
+            write_json_state("equity_curve.json", curve)
+        except Exception:
+            # Persistence is a convenience, not a correctness requirement.
+            pass
+
+
+def _load_persisted_equity_curve() -> dict | None:
+    """Load the most recently persisted equity curve, if any."""
+    with _equity_curve_lock:
+        try:
+            curve = read_json_state("equity_curve.json", default=None)
+            if curve and isinstance(curve, dict) and curve.get("ranges"):
+                return curve
+        except Exception:
+            pass
+    return None
+
+
+# Coarse throttle so we don't rewrite the (potentially large) curve file on
+# every /api/state poll. A 30-second cap is plenty for a first-load cache.
+_EQUITY_CURVE_PERSIST_INTERVAL = 30.0
+_LAST_EQUITY_CURVE_PERSIST = 0.0
+
+
+def _persist_equity_curve_throttled(curve: dict) -> None:
+    global _LAST_EQUITY_CURVE_PERSIST
+    now = time.time()
+    with _equity_curve_lock:
+        if now - _LAST_EQUITY_CURVE_PERSIST < _EQUITY_CURVE_PERSIST_INTERVAL:
+            return
+        _LAST_EQUITY_CURVE_PERSIST = now
+    _persist_equity_curve(curve)
+
+
+# Startup state sync: copy the freshest state files from the bot's active
+# state directory (mt5_quant_agent/state/) to the dashboard's STATE_DIR
+# (project-root state/). This fixes the dual-state-directory mismatch that
+# occurs on the claude branch where the bot writes to one location and the
+# dashboard reads from another. Runs once at module load time.
+_BOT_STATE_DIR = ROOT / "mt5_quant_agent" / "state"
+_DASH_STATE_DIR = ROOT / "state"
+if _BOT_STATE_DIR.exists() and _BOT_STATE_DIR != _DASH_STATE_DIR:
+    for _f in ("paper_orders.json", "paper_positions.json", "paper_trades.json", "account.json"):
+        _src = _BOT_STATE_DIR / _f
+        _dst = _DASH_STATE_DIR / _f
+        if _src.exists():
+            try:
+                # Only copy if source is newer (avoids unnecessary I/O on restarts)
+                if not _dst.exists() or _src.stat().st_mtime > _dst.stat().st_mtime:
+                    shutil.copyfile(str(_src), str(_dst))
+                    _LOG.debug("Synced %s -> %s", _src, _dst)
+            except Exception as _sync_err:
+                _LOG.warning("State sync failed for %s: %s", _f, _sync_err)
+
+# Live MT5 balance/equity snapshot — preferred over the file mirror when the
+# bot's data_loop has stopped writing account.json. MetaTrader5's Python API
+# permits one connection per process; the dashboard server opens its own
+# handle on startup and caches the result for 5 s to avoid hammering the
+# terminal. Cache is bypassed if init failed (returns None and falls back
+# to account.json). Guarded by a lock so concurrent SSE + JSON fetches don't
+# race the same mt5.account_info() call.
+_MT5_TTL_SECONDS = 5.0
+_mt5_cache: dict = {"ts": 0.0, "data": None, "login": None}
+_mt5_cache_lock = threading.Lock()
+_mt5_init_ok = False
+
+
+def _ensure_mt5_init() -> bool:
+    """Initialize the MetaTrader5 Python wrapper, or use an existing connection.
+
+    The bot's data_loop / fast_tick_loop initialize MT5 with a specific
+    terminal path early in startup. When the dashboard thread later calls
+    ``mt5.initialize()`` without arguments, it can fail with
+    "already initialized" on some platforms. The previous
+    ``_mt5_init_attempted`` flag was a permanent failure-trap — once the
+    first init failed, every subsequent call returned False without
+    retrying. The fix is to check ``terminal_info()`` first (which works
+    across threads in the same process without requiring a fresh init),
+    and let every call retry ``initialize()`` if needed.
+    """
+    global _mt5_init_ok
+    if _mt5_init_ok:
+        return True
+    with _mt5_cache_lock:
+        if _mt5_init_ok:
+            return True
+        try:
+            import MetaTrader5 as _mt5_mod  # type: ignore
+            if _mt5_mod.terminal_info() is not None:
+                _mt5_init_ok = True
+                _LOG.info("MT5 already initialized in this process (terminal_info OK)")
+                return True
+            if _mt5_mod.initialize():
+                _mt5_init_ok = True
+                _LOG.info("MT5 init OK for live balance query")
+                return True
+            _LOG.warning(
+                "MT5 init failed for live balance query (last_error=%s) — "
+                "falling back to account.json",
+                _mt5_mod.last_error(),
+            )
+            return False
+        except Exception as _mt5_err:
+            _LOG.warning("MT5 import/init failed: %s — falling back to account.json", _mt5_err)
+            return False
+
+
+def _live_mt5_balance() -> dict | None:
+    """Live MT5 account snapshot, 5 s TTL cache.
+
+    Returns None if MT5 init failed or account_info() returned None. When
+    the cache returns a snapshot it includes balance, equity, profit, margin,
+    free_margin, login, server, name, leverage, currency, ts (ms epoch).
+    """
+    if not _ensure_mt5_init():
+        return None
+    now = time.time()
+    with _mt5_cache_lock:
+        if _mt5_cache.get("ts") and (now - float(_mt5_cache["ts"])) < _MT5_TTL_SECONDS:
+            return _mt5_cache.get("data")
+    try:
+        import MetaTrader5 as _mt5_mod  # type: ignore
+        info = _mt5_mod.account_info()
+        snapshot = None
+        if info is not None:
+            snapshot = {
+                "balance": float(info.balance),
+                "equity": float(info.equity),
+                "profit": float(info.profit),
+                "margin": float(info.margin),
+                "free_margin": float(info.margin_free),
+                "login": int(info.login),
+                "server": info.server,
+                "name": info.name,
+                "leverage": int(info.leverage),
+                "currency": info.currency,
+                "ts": int(time.time() * 1000),
+            }
+        with _mt5_cache_lock:
+            _mt5_cache["ts"] = now
+            _mt5_cache["data"] = snapshot
+        return snapshot
+    except Exception as _mt5_err:
+        _LOG.warning("MT5 account_info() failed: %s", _mt5_err)
+        return None
+
+
+def _file_meta(path: Path) -> dict:
+    """mtime/iso/size/freshness for one state file. Pure stdlib, never raises."""
+    if not path.exists():
+        return {
+            "exists": False,
+            "last_write_at_unix": None,
+            "last_write_at_iso": None,
+            "last_write_at_inner": None,
+            "value_source": None,
+            "is_fresh": False,
+            "size": 0,
+        }
+    try:
+        st = path.stat()
+        iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(st.st_mtime)) + "+00:00"
+        return {
+            "exists": True,
+            "last_write_at_unix": st.st_mtime,
+            "last_write_at_iso": iso,
+            "last_write_at_inner": None,
+            "value_source": "mtime",
+            "is_fresh": (time.time() - st.st_mtime) < 30.0,
+            "size": st.st_size,
+        }
+    except OSError as _os_err:
+        return {
+            "exists": True,
+            "last_write_at_unix": None,
+            "last_write_at_iso": None,
+            "last_write_at_inner": None,
+            "value_source": None,
+            "is_fresh": False,
+            "size": 0,
+            "error": str(_os_err),
+        }
+
+
+def _read_account_dict(path: Path) -> tuple[dict | None, str | None, dict]:
+    """Read `<path>.<account>`-shaped JSON; return (payload, rejected_reason, file_meta).
+    A doc whose top-level is itself an account dict (no `account` wrapper) is
+    also accepted so older /api/state/account.json writes still qualify.
+    """
+    meta = _file_meta(path)
+    if not meta["exists"]:
+        return None, "missing", meta
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8", errors="replace") or "{}")
+    except (OSError, json.JSONDecodeError) as _parse_err:
+        return None, f"malformed_json:{_parse_err}", meta
+    if not isinstance(doc, dict):
+        return None, "not_dict", meta
+    # Prefer nested `account` block, fall back to top-level.
+    inner = doc.get("account")
+    if isinstance(inner, dict):
+        candidate = inner
+        inner_key = "account"
+    else:
+        candidate = doc
+        inner_key = "top_level"
+    # Prefer the JSON's own timestamp field for precision; fall back to mtime.
+    inner_ts = (
+        inner.get("timestamp") if isinstance(inner, dict)
+        else doc.get("timestamp")
+    )
+    if isinstance(inner_ts, str):
+        meta["last_write_at_inner"] = inner_ts
+        meta["value_source"] = "inner_timestamp"
+    if not isinstance(candidate, dict) or candidate.get("balance") is None:
+        return None, "no_balance_field", meta
+    return candidate, None, {**meta, "inner_key": inner_key}
+
+
+# ----- Active-source resolver (2026-07-27) ----------------------------------
+# Single source-of-truth for which of paper_orders / health / mt5_live /
+# account.json is currently driving `payload["account"]` in the dashboard.
+# Used by both aggregate_state()'s overlay block AND /api/health/live_source
+# so the two cannot drift apart. Priority order MUST match the overlay block
+# in aggregate_state().
+_ACTIVE_SOURCE_PRIORITY = ("mt5_live", "health", "account_json", "paper_orders")
+_ACTIVE_SOURCE_FRESH_SECONDS = 30.0
+# When paper_orders is stale (>30s) but account.json is fresh (<30s),
+# prefer account.json over stale paper_orders to show live equity.
+
+# ----- Stale-account alert state (2026-07-27) --------------------------------
+# Fires a single-shot WARNING log + desktop notification when
+# `_resolve_active_account_source()` reports active_source ==
+# "account_json" (stale file-mirror fallback) or "none" (everything dead)
+# for more than _STALE_ALERT_THRESHOLD_SECONDS. Re-arms after
+# _STALE_ALERT_REARM_SECONDS so a quiet period doesn't keep the alert armed
+# (alerts re-fire if staleness re-occurs 10 min after the previous one).
+# Tuning of these constants is intentionally hard-coded; expose in
+# config.yaml `dashboard.alerts.stale_account.*` if a deployment needs to
+# override either threshold.
+_stale_account_since_unix: float | None = None
+_stale_account_alerted_at_unix: float | None = None
+_stale_account_lock = threading.Lock()
+_STALE_ALERT_THRESHOLD_SECONDS = 60.0
+_STALE_ALERT_REARM_SECONDS = 600.0
+
+
+def _fire_desktop_notification(title: str, body: str) -> None:
+    """Cross-platform best-effort desktop notification.
+
+    Windows: prefers BurntToast if the PowerShell module is loaded
+    (PowerShell 5.1 ships WinRT toast by default). Falls back to msg.exe
+    on domain machines, then to Add-Type WinRT ToastNotificationManager.
+    macOS: osascript display notification.
+    Linux: notify-send.
+    Never raises; failures land in the bot log at debug level.
+    """
+    import platform
+    import subprocess
+
+    def _worker() -> None:
+        try:
+            sysname = platform.system()
+            if sysname == "Windows":
+                # Try BurntToast first (richest output). Fall back to the
+                # WInRT toast path which PowerShell exposes natively.
+                def _xml_escape(s: str) -> str:
+                    return (
+                        s.replace("&", "&amp;")
+                         .replace("<", "&lt;")
+                         .replace(">", "&gt;")
+                         .replace('"', "&quot;")
+                    )
+                _t_esc = _xml_escape(title).replace("'", "''")
+                _b_esc = _xml_escape(body).replace("'", "''")
+                ps_bt = (
+                    "if (Get-Module -ListAvailable -Name BurntToast) {"
+                    f"  New-BurntToastNotification -Text '{_t_esc}', '{_b_esc}'"
+                    "} else {"
+                    "[Windows.UI.Notifications.ToastNotificationManager,"
+                    "Windows.UI.Notifications,ContentType=WindowsRuntime] > $null;"
+                    f"$xml = '<toast><visual><binding template=\"ToastGeneric\">"
+                    f"<text>{_t_esc}</text><text>{_b_esc}</text>"
+                    f"</binding></visual></toast>';"
+                    "$t = [Windows.UI.Notifications.ToastNotification]::new($xml);"
+                    "[Windows.UI.Notifications.ToastNotificationManager]"
+                    "::CreateToastNotifier('MT5 Quant OS').Show($t)"
+                    "}"
+                )
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_bt],
+                    timeout=10, capture_output=True,
+                )
+            elif sysname == "Darwin":
+                script = (
+                    f'display notification "{body}" with title "{title}"'
+                )
+                subprocess.run(
+                    ["osascript", "-e", script],
+                    timeout=10, capture_output=True,
+                )
+            else:
+                subprocess.run(
+                    ["notify-send", title, body],
+                    timeout=10, capture_output=True,
+                )
+        except Exception as _dn_err:
+            _LOG.debug("desktop notification dispatch failed: %s", _dn_err)
+
+    try:
+        threading.Thread(target=_worker, daemon=True).start()
+    except Exception as _t_err:
+        _LOG.debug("desktop notification thread spawn failed: %s", _t_err)
+
+
+def _check_account_stale_alert(active_source: str) -> dict:
+    """One-shot stale-account alert with cooldown re-arm.
+
+    Returns a small dict to embed in /api/health/live_source so operators
+    can see the alert state without scraping logs. Fires a WARNING + desktop
+    notification when staleness first crosses the 60 s threshold and
+    re-arms after 10 min (600 s) so a sustained outage doesn't spam alerts.
+    Health restored ⇒ reset both timestamps.
+    """
+    global _stale_account_since_unix, _stale_account_alerted_at_unix
+    with _stale_account_lock:
+        now = time.time()
+        is_stale = active_source in ("account_json", "none")
+        if not is_stale:
+            _stale_account_since_unix = None
+            _stale_account_alerted_at_unix = None
+            return {
+                "is_stale": False,
+                "stale_for_seconds": 0,
+                "alerted_now": False,
+                "alert_cooldown_remaining_seconds": 0,
+                "active_source_during_stale": None,
+            }
+        if _stale_account_since_unix is None:
+            _stale_account_since_unix = now
+        stale_for = now - _stale_account_since_unix
+        if _stale_account_alerted_at_unix is None:
+            cooldown_remaining = 0
+        else:
+            cooldown_remaining = max(
+                0, int(_STALE_ALERT_REARM_SECONDS - (now - _stale_account_alerted_at_unix))
+            )
+        armed = cooldown_remaining == 0
+        alerted = False
+        if armed and stale_for >= _STALE_ALERT_THRESHOLD_SECONDS:
+            msg = (
+                f"Dashboard account tile is stale for {int(stale_for)}s; "
+                f"active_source='{active_source}'. All live sources "
+                f"(paper_orders/health/mt5_live) failed. Investigate bot "
+                f"write loop or restart."
+            )
+            _LOG.warning(msg)
+            _stale_account_alerted_at_unix = now
+            alerted = True
+            cooldown_remaining = int(_STALE_ALERT_REARM_SECONDS)
+            _fire_desktop_notification(
+                "MT5 Quant OS — stale dashboard account", msg,
+            )
+        return {
+            "is_stale": True,
+            "stale_for_seconds": int(stale_for),
+            "alerted_now": alerted,
+            "alert_cooldown_remaining_seconds": cooldown_remaining,
+            "active_source_during_stale": active_source,
+        }
+
+
+def _resolve_active_account_source() -> dict:
+    """Return the structured active-source + per-source metadata response.
+
+    Schema::
+
+        {
+          "active_source": "paper_orders"|"health"|"mt5_live"|"account_json"|"none",
+          "active_source_file": "<absolute path or None>",
+          "active_source_mtime_unix": float|None,
+          "active_source_mtime_iso": str|None,
+          "active_source_payload": {..account-equivalent dict..} | None,
+          "sources": {
+            "paper_orders": { exists, last_write_at_unix, last_write_at_iso,
+                              last_write_at_inner, value_source, is_active,
+                              rejected_reason, size, is_fresh, ... },
+            "health":       { ... },
+            "mt5_live":     { ... },
+            "account_json": { ... },
+          },
+          "account_file_meta": {
+            "state/account.json": { ...mtime... },
+            "mt5_quant_agent/state/account.json": { ...mtime... },
+          },
+          "checked_at": "<iso>",
+        }
+    """
+    sources_meta: dict[str, dict] = {}
+
+    def _fill_source(label: str, exists: bool, payload: dict | None,
+                     rejected_reason: str | None, file_meta: dict) -> None:
+        sources_meta[label] = {
+            **file_meta,
+            "is_active": payload is not None,
+            "rejected_reason": rejected_reason,
+            "last_write_at_unix": (
+                file_meta.get("last_write_at_unix")
+                if payload is not None else file_meta.get("last_write_at_unix")
+            ),
+            "last_write_at_iso": (
+                file_meta.get("last_write_at_iso")
+                if payload is not None else file_meta.get("last_write_at_iso")
+            ),
+        }
+
+    # 1. paper_orders.json (DASH state dir; bot writes both, sync copies here).
+    _po_path = _DASH_STATE_DIR / "paper_orders.json"
+    _po_payload, _po_reject, _po_meta = _read_account_dict(_po_path)
+    _fill_source("paper_orders", True, _po_payload, _po_reject, _po_meta)
+
+    # 2. health.json.
+    _h_path = _DASH_STATE_DIR / "health.json"
+    _h_payload, _h_reject, _h_meta = _read_account_dict(_h_path)
+    _fill_source("health", True, _h_payload, _h_reject, _h_meta)
+
+    # 3. mt5_live (in-process, no file mtime — derive from ttl ts when present).
+    _mt5 = _live_mt5_balance()
+    _mt5_meta: dict = {"exists": _mt5 is not None}
+    if isinstance(_mt5, dict):
+        _mt5_ts = _mt5.get("ts")
+        if isinstance(_mt5_ts, (int, float)):
+            _ts_s = float(_mt5_ts) / 1000.0 if _mt5_ts > 1e12 else float(_mt5_ts)
+            _mt5_meta.update({
+                "last_write_at_unix": _ts_s,
+                "last_write_at_iso": (
+                    time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(_ts_s)) + "+00:00"
+                ),
+                "last_write_at_inner": None,
+                "value_source": "mt5_ttl",
+                "is_fresh": (time.time() - _ts_s) < _ACTIVE_SOURCE_FRESH_SECONDS,
+            })
+    if not _mt5_meta.get("last_write_at_unix"):
+        _mt5_meta.setdefault("last_write_at_unix", None)
+        _mt5_meta.setdefault("last_write_at_iso", None)
+        _mt5_meta.setdefault("last_write_at_inner", None)
+        _mt5_meta.setdefault("value_source", None)
+        _mt5_meta.setdefault("is_fresh", False)
+    _fill_source("mt5_live", True, _mt5, None if _mt5 else "in_process_thread_isolation", _mt5_meta)
+
+    # 4. account.json (file-mirror fallback).
+    _a_path = _DASH_STATE_DIR / "account.json"
+    _a_payload, _a_reject, _a_meta = _read_account_dict(_a_path)
+    _fill_source("account_json", True, _a_payload, _a_reject, _a_meta)
+
+    # Walk priority, return first hit.
+    active_source = "none"
+    active_file: Path | None = None
+    active_mtime_unix: float | None = None
+    active_mtime_iso: str | None = None
+    active_payload: dict | None = None
+    for _label in _ACTIVE_SOURCE_PRIORITY:
+        meta = sources_meta[_label]
+        if meta.get("is_active"):
+            active_source = _label
+            active_mtime_unix = meta.get("last_write_at_unix")
+            active_mtime_iso = meta.get("last_write_at_iso")
+            active_payload = (
+                _po_payload if _label == "paper_orders"
+                else _h_payload if _label == "health"
+                else _mt5 if _label == "mt5_live"
+                else _a_payload
+            )
+            active_file = (
+                _po_path if _label == "paper_orders"
+                else _h_path if _label == "health"
+                else _a_path if _label == "account_json"
+                else None
+            )
+            break
+
+    account_file_meta = {
+        str(_DASH_STATE_DIR / "account.json"): _file_meta(_DASH_STATE_DIR / "account.json"),
+        str(_BOT_STATE_DIR / "account.json"): _file_meta(_BOT_STATE_DIR / "account.json"),
+    }
+
+    stale_alert = _check_account_stale_alert(active_source)
+
+    return {
+        "active_source": active_source,
+        "active_source_file": str(active_file) if active_file else None,
+        "active_source_mtime_unix": active_mtime_unix,
+        "active_source_mtime_iso": active_mtime_iso,
+        "active_source_payload": active_payload,
+        "sources": sources_meta,
+        "account_file_meta": account_file_meta,
+        "stale_alert": stale_alert,
+        "checked_at": utc_now_iso(),
+    }
+
 
 # Module-level import of the Payoff Paradox Meter (2026-07-20). Hoisted so
 # SSE ticks don't re-parse the import; the inner try/except below still
@@ -246,28 +760,68 @@ def _build_live_portfolio(
     paper_trades: dict,
     features: dict,
 ) -> dict:
-    """Live balance, equity, and open-trade PnL — prefer account.json over stale orders."""
+    """Live balance, equity, and open-trade PnL.
+
+    Source priority (highest first):
+      1. **MT5 live** (`_live_mt5_balance()`) — queries MetaTrader5.account_info()
+         with a 5 s TTL cache. Bypasses the stale account.json mirror when
+         the bot's data_loop has stopped writing.
+      2. account.json (real MT5-attached snapshot from data_loop, when fresh).
+      3. paper_orders.account (parallel ledger, diverges when bot paper-trades
+         while MT5 sits untouched).
+      4. paper_positions.balance (last-resort fallback).
+    """
     order_acct = (paper_orders or {}).get("account", {})
     balance = (paper_orders or {}).get("balance", {})
     baseline = read_json_state("mt5_baseline.json", default={})
 
-    cash = float(
-        account.get("balance")
-        or order_acct.get("balance")
-        or balance.get("cash")
+    # --- LIVE MT5 (preferred) ---
+    mt5_live = _live_mt5_balance()
+    source = "none"
+    starting = float(
+        account.get("starting_balance")
+        or baseline.get("starting_cash")
+        or balance.get("starting_cash")
         or 0
     )
-    equity = float(
-        account.get("equity")
-        or order_acct.get("equity")
-        or balance.get("equity")
-        or cash
-    )
-    starting = float(
-        balance.get("starting_cash")
-        or baseline.get("starting_cash")
-        or cash
-    )
+    login = None
+    server = None
+    updated_at = None
+    if mt5_live:
+        cash = float(mt5_live["balance"])
+        equity = float(mt5_live["equity"])
+        source = "mt5_live"
+        login = mt5_live.get("login")
+        server = mt5_live.get("server")
+        updated_at = mt5_live.get("ts")
+        # If the snapshot doesn't include a starting baseline, derive one
+        # from prior closing session: starting = cash - realized_pnl_proxy.
+        # Skipped here — the dashboard's per-day PnL uses the bot's
+        # mt5_baseline.json when present.
+    else:
+        # --- FILE-MIRROR FALLBACK ---
+        cash = float(
+            account.get("balance")
+            or order_acct.get("balance")
+            or balance.get("cash")
+            or 0
+        )
+        equity = float(
+            account.get("equity")
+            or order_acct.get("equity")
+            or balance.get("equity")
+            or cash
+        )
+        if not starting:
+            starting = cash
+        login = account.get("login") or order_acct.get("login")
+        server = account.get("server") or order_acct.get("server")
+        updated_at = account.get("timestamp") or paper_orders.get("timestamp")
+        source = (
+            "account.json" if account.get("balance") is not None
+            else "paper_orders" if order_acct.get("balance") is not None
+            else "none"
+        )
 
     positions = (paper_positions or {}).get("positions", [])
     unrealized_pnl = round(sum(float(p.get("profit", 0)) for p in positions), 2)
@@ -293,10 +847,12 @@ def _build_live_portfolio(
             "ticket": pos.get("ticket") or pos.get("position_id"),
         })
 
-    session_pnl = round(equity - starting, 2)
+    session_pnl = round(equity - starting, 2) if starting else 0.0
     session_pnl_pct = round((session_pnl / starting * 100) if starting else 0, 2)
 
-    return {
+    # Add MT5-live-only fields when present (used by the dashboard hero tile
+    # to show the actual broker margin / free-margin if the operator wants).
+    out = {
         "cash": round(cash, 2),
         "equity": round(equity, 2),
         "starting_equity": round(starting, 2),
@@ -307,11 +863,24 @@ def _build_live_portfolio(
         "open_positions": open_positions,
         "position_count": len(positions),
         "trade_count": len(trades),
-        "account_login": account.get("login"),
-        "account_server": account.get("server"),
-        "source": "account.json" if account.get("equity") else "paper_orders",
-        "updated_at": account.get("timestamp") or paper_orders.get("timestamp"),
+        "account_login": login,
+        "account_server": server,
+        "source": source,
+        "updated_at": updated_at,
     }
+    if mt5_live:
+        out["mt5_live"] = {
+            "balance": mt5_live["balance"],
+            "equity": mt5_live["equity"],
+            "profit": mt5_live["profit"],
+            "margin": mt5_live["margin"],
+            "free_margin": mt5_live["free_margin"],
+            "leverage": mt5_live["leverage"],
+            "currency": mt5_live["currency"],
+            "name": mt5_live["name"],
+            "ts": mt5_live["ts"],
+        }
+    return out
 
 
 def _build_watchlist(candidates: list, features: dict, market_ctx: dict) -> list[dict]:
@@ -2509,6 +3078,8 @@ def aggregate_state(*, lite: bool = False) -> dict:
         raw = read_json_state(name, default={})
         payload[name.replace(".json", "")] = _slim_state_file(name, raw) if lite else raw
 
+
+
     candidates = payload.get("candidate_signals", {}).get("candidates", [])
     top_signal = candidates[0] if candidates else None
     top_explain = (
@@ -2570,13 +3141,21 @@ def aggregate_state(*, lite: bool = False) -> dict:
         payload.get("strategy_rankings", {}),
     )
     payload["ai_decision"] = _build_ai_decision(top_signal, top_explain, payload["edge_insights"])
-    payload["equity_curve"] = build_equity_curve(
+    # Build the equity curve, falling back to the persisted curve when the
+    # current state files are empty (e.g. bot not running). Persist any fresh
+    # result so the next dashboard load is instant.
+    _equity_curve = build_equity_curve(
         payload.get("paper_orders", {}) if lite else payload.get("paper_orders"),
         payload.get("paper_trades"),
         payload.get("account"),
         payload.get("risk_state"),
         lite=lite,
     )
+    if not _equity_curve or not _equity_curve.get("ranges"):
+        _equity_curve = _load_persisted_equity_curve() or _equity_curve or {}
+    if _equity_curve and _equity_curve.get("ranges"):
+        _persist_equity_curve_throttled(_equity_curve)
+    payload["equity_curve"] = _equity_curve
     payload["trading_status"] = _build_trading_status(
         payload.get("kill_switch", {}),
         payload.get("risk_state", {}),
@@ -2637,6 +3216,86 @@ def aggregate_state(*, lite: bool = False) -> dict:
         "replay_default_bars": int(config.get("replay", {}).get("max_bars", 800)),
         "lite": lite,
     }
+    # ----- Live account overlay (2026-07-26) -----
+    # The dashboard's top-level account tile reads payload["account.equity"]
+    # directly; state/account.json can be hours/days stale when the bot's
+    # data_loop stalls. Three live sources are tried in priority order:
+    #   1. state/paper_orders.json (bot's data_loop writes this every cycle)
+    #   2. state/health.json       (also written by data_loop)
+    #   3. _live_mt5_balance()     (only works when dashboard runs standalone;
+    #                               MetaTrader5 Python wrapper is thread-isolated
+    #                               so the dashboard thread can't see the bot's
+    #                               data_loop connection)
+    # Overlay whichever source returns fresh data onto payload["account"] at
+    # the absolute last line of aggregate_state() so no downstream builder
+    # can overwrite the account keys after this runs.
+    try:
+        _live_acct: dict = {}
+        _live_source: str | None = None
+        _live_ts = None
+
+        # PRIMARY: state/paper_orders.json (bot's data_loop writes this every cycle)
+        try:
+            _po = read_json_state("paper_orders.json", default={})
+            if isinstance(_po, dict):
+                _po_acct = _po.get("account") or {}
+                if isinstance(_po_acct, dict) and (
+                    _po_acct.get("balance") is not None
+                    or _po_acct.get("equity") is not None
+                ):
+                    _live_acct = dict(_po_acct)
+                    _live_source = "paper_orders.json"
+                    _live_ts = _po.get("timestamp") or _po.get("updated_at")
+        except Exception:
+            pass
+
+        # SECONDARY: state/health.json (also written by data_loop)
+        if not _live_acct:
+            try:
+                _h = read_json_state("health.json", default={})
+                if isinstance(_h, dict):
+                    _h_acct = _h.get("account") or {}
+                    if isinstance(_h_acct, dict) and (
+                        _h_acct.get("balance") is not None
+                        or _h_acct.get("equity") is not None
+                    ):
+                        _live_acct = dict(_h_acct)
+                        _live_source = "health.json"
+                        _live_ts = _h.get("timestamp") or _h.get("updated_at")
+            except Exception:
+                pass
+
+        # TERTIARY: MT5 live (works when dashboard runs standalone, fails in bot process)
+        if not _live_acct:
+            _mt5_live = _live_mt5_balance()
+            if _mt5_live:
+                _live_acct = _mt5_live
+                _live_source = "mt5_live"
+                _live_ts = _mt5_live.get("ts")
+
+        if _live_acct:
+            _acct = payload.get("account")
+            if not isinstance(_acct, dict):
+                _acct = {}
+                payload["account"] = _acct
+            for _k, _v in _live_acct.items():
+                if _v is not None:
+                    _acct[_k] = _v
+            _acct["source"] = _live_source
+            _acct["live_source"] = _live_source
+            if _live_ts is not None:
+                _acct["live_timestamp"] = _live_ts
+            _acct["timestamp"] = utc_now_iso()
+            _LOG.info(
+                "aggregate_state: live account overlay applied (source=%s balance=%.2f equity=%.2f)",
+                _live_source,
+                float(_live_acct.get("balance") or 0),
+                float(_live_acct.get("equity") or 0),
+            )
+        else:
+            _LOG.warning("aggregate_state: live account overlay skipped - no live source available")
+    except Exception as _overlay_err:
+        _LOG.warning("aggregate_state: live account overlay failed: %s", _overlay_err)
     return payload
 
 
@@ -2970,6 +3629,160 @@ def _handle_sse_profit_quality(handler):
         _ProfitQualityBroadcaster.unsubscribe(q)
 
 
+# ---- /api/equity_curve stream ----------------------------------------------
+# Per-timeframe live tick: 1m/15m → 2s, 1h/4h → 5s, 1d/7d/30d/all → 30s.
+# Reads account.json (MT5-attached balance) + paper_positions.json (live
+# unrealized PnL) directly — no aggregator_state round-trip, so a single
+# tick costs ~1 small JSON read. ThreadingDashboardServer gives each client
+# its own thread so a slow consumer cannot starve others.
+def _EVAL_INTERVAL_FOR_RANGE(range_key: str) -> float:
+    """Timeframe → tick cadence. Short windows tick faster so the operator
+    SEES the curve move; long windows are paged at 30s so the user gets a
+    pulse without paying for 28 unnecessary JSON writes / minute."""
+    return {
+        "1m": 2.0,
+        "15m": 2.0,
+        "1h": 5.0,
+        "4h": 5.0,
+        "1d": 30.0,
+        "7d": 30.0,
+        "30d": 30.0,
+        "all": 30.0,
+    }.get((range_key or "1d").lower(), 5.0)
+
+
+def _build_equity_tick_payload(range_key: str) -> dict:
+    """One equity snapshot the SPA appends to its in-memory curve. Reads
+    directly from state/account.json and state/paper_positions.json (rather
+    than rerunning aggregate_state) so a tick costs ~1 small JSON read.
+    Tolerates missing/empty files because both endpoints are best-effort —
+    a tick with stale data still keeps the SSE connection warm."""
+    pay_states = (
+        read_json_state("paper_positions.json", default={"positions": []}),
+        read_json_state("account.json", default={}),
+    )
+    pay, acct = pay_states
+    positions = (pay or {}).get("positions", []) if isinstance(pay, dict) else []
+    try:
+        unrealized = round(
+            sum(float((p or {}).get("profit", 0) or 0) for p in positions), 2
+        )
+    except (TypeError, ValueError):
+        unrealized = 0.0
+    try:
+        cash = float((acct or {}).get("balance", 0) or 0)
+    except (TypeError, ValueError):
+        cash = 0.0
+    eq_field = (acct or {}).get("equity")
+    if eq_field is None:
+        equity = cash + unrealized
+    else:
+        try:
+            equity = float(eq_field)
+        except (TypeError, ValueError):
+            equity = cash + unrealized
+    try:
+        starting = float((acct or {}).get("starting_balance", cash) or 0)
+    except (TypeError, ValueError):
+        starting = cash
+    return _sanitize_json({
+        "ts": utc_now_iso(),
+        "equity": round(equity, 2),
+        "cash": round(cash, 2),
+        "balance": round(cash, 2),
+        "unrealized_pnl": unrealized,
+        "starting_equity": round(starting, 2),
+        "session_pnl": round(equity - starting, 2),
+        "range": (range_key or "1d").lower(),
+        "source": "account.json",
+        "open_positions": len(positions),
+    })
+
+
+def _handle_sse_equity_curve(handler, range_key: str):
+    """Long-lived SSE handler for /api/equity_curve/stream. One thread per
+    client (ThreadingDashboardServer); each thread ticks at the interval
+    dictated by the requested range. Heartbeat is interleaved so a 30s
+    cadence client still gets a :keepalive every ~25s to defeat proxy
+    idle-conn timeouts (nginx default 60s).
+
+    Receives the handler instance; uses handler.wfile / handler.send_*
+    the same way as _handle_sse_profit_quality so the lifecycle (send 200,
+    send headers, write chunked frames, catch BrokenPipe on disconnect) is
+    identical."""
+    interval = _EVAL_INTERVAL_FOR_RANGE(range_key)
+
+    try:
+        handler.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except (AttributeError, OSError):
+        pass
+
+    handler.send_response(200)
+    for name, value in (
+        ("Content-Type", "text/event-stream"),
+        ("Cache-Control", "no-cache, no-store, must-revalidate"),
+        ("Connection", "keep-alive"),
+        ("X-Accel-Buffering", "no"),
+        ("Retry-After", "5"),
+    ):
+        handler.send_header(name, value)
+    handler.end_headers()
+
+    try:
+        handler.wfile.write(f": initializing range={range_key} interval={interval}s\n\n".encode("utf-8"))
+        handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        return
+
+    next_tick_at = time.time()          # immediate tick so the SPA has data
+    next_heartbeat_at = time.time() + 25.0
+    last_sent_payload: dict | None = None
+
+    while True:
+        now = time.time()
+        try:
+            # ---- Tick ------------------------------------------------------
+            if now >= next_tick_at:
+                payload = _build_equity_tick_payload(range_key)
+                # Push ONLY when the data fingerprint flips (avoids spam on
+                # a quiet session — equity / cash / unrealized unchanged).
+                fp = (payload.get("equity"), payload.get("cash"),
+                      payload.get("unrealized_pnl"), payload.get("open_positions"))
+                if fp != last_sent_payload:
+                    last_sent_payload = fp
+                    envelope = {
+                        "equity_tick": payload,
+                        "range": payload.get("range"),
+                    }
+                    data = json.dumps(envelope, default=_json_default_safe)
+                    chunk = f"event: equity_tick\ndata: {data}\n\n"
+                    handler.wfile.write(chunk.encode("utf-8"))
+                    handler.wfile.flush()
+                next_tick_at = now + interval
+
+            # ---- Heartbeat (defeats proxy idle-timeouts) --------------------
+            if now >= next_heartbeat_at:
+                handler.wfile.write(b": keepalive\n\n")
+                handler.wfile.flush()
+                next_heartbeat_at = now + 25.0
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            break
+        except Exception as exc:  # noqa: BLE001
+            try:
+                handler.wfile.write(f": error {type(exc).__name__}: {str(exc)[:120]}\n\n".encode("utf-8"))
+                handler.wfile.flush()
+                next_heartbeat_at = now + 25.0
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                break
+
+        sleep_for = min(
+            max(next_tick_at - now, 0.05),
+            max(next_heartbeat_at - now, 0.05),
+            0.5,
+        )
+        time.sleep(sleep_for)
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data: dict, status: int = 200) -> None:
         body = json.dumps(_sanitize_json(data), default=str).encode("utf-8")
@@ -3071,6 +3884,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(data)
         elif path.startswith("/api/profit_quality/stream"):
             return _handle_sse_profit_quality(self)
+        elif path.startswith("/api/equity_curve/stream"):
+            # Range query param controls tick cadence (1m/15m → 2s,
+            # 1h/4h → 5s, 1d/7d/30d/all → 30s). Falls through to the default
+            # 1d cadence when missing or unrecognized so the SPA always
+            # connects cleanly.
+            _eq_qs = parse_qs(urlparse(self.path).query or "")
+            _eq_range = (_eq_qs.get("range", ["1d"])[0] or "1d").lower()
+            return _handle_sse_equity_curve(self, _eq_range)
+        elif path == "/api/equity_curve":
+            # JSON fallback for non-streaming consumers (curl, mobile
+            # notifications, health-check). Returns the same shape as one
+            # equity_tick event so the SPA's feed handler doesn't have to
+            # branch on sync vs event source, plus the persisted full curve
+            # when available so first loads never start blank.
+            _eq_qs = parse_qs(urlparse(self.path).query or "")
+            _eq_range = (_eq_qs.get("range", ["1d"])[0] or "1d").lower()
+            _persisted = _load_persisted_equity_curve() or {}
+            self._send_json({
+                "equity_tick": _build_equity_tick_payload(_eq_range),
+                "equity_curve": _persisted,
+                "range": _eq_range,
+                "interval_seconds": _EVAL_INTERVAL_FOR_RANGE(_eq_range),
+                "stream_url": f"/api/equity_curve/stream?range={_eq_range}",
+            })
         elif path == "/api/profit_quality":
             # Dedicated endpoint so the panel can poll on-demand without
             # dragging the full /api/state payload (which already includes the
@@ -3086,6 +3923,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "profit_quality": _pq,
                 "meter": _pq.get("meter", {}),
             })
+        elif path == "/api/health":
+            self._send_json({
+                "status": "ok",
+                "pid": os.getpid(),
+                "timestamp": utc_now_iso(),
+            })
+        elif path == "/api/health/live_source":
+            # Spot staleness without opening the dashboard UI. Returns which
+            # of paper_orders / health / mt5_live / account.json is currently
+            # driving `payload["account"]` (priority matches aggregate_state()
+            # overlay block) plus per-source mtime + freshness. Mirrors
+            # _resolve_active_account_source() so the two cannot drift.
+            self._send_json(_resolve_active_account_source())
         elif path == "/api/learning/timeline":
             self._send_json(_build_learning_timeline())
         elif path == "/api/cli_overrides":
@@ -3351,6 +4201,20 @@ def run(host: str | None = None, port: int | None = None) -> None:
     # instead and hung on the loading screen. Override via DASH_HOST/DASH_PORT
     # env or --host/--port CLI.
     import os as _os
+
+    # Windows console detachment guard (2026-07-27):
+    # `start /B` and some bash-on-Windows shells keep the parent waiting
+    # because the dashboard server inherits the console's stdin.  Close/reopen
+    # stdin to nul so backgrounding returns immediately, while leaving stdout/
+    # stderr alone (the launcher is expected to redirect those).  This is a
+    # no-op on non-Windows platforms and when stdin is already a pipe/file.
+    if sys.platform == "win32":
+        try:
+            if sys.stdin is None or sys.stdin.isatty():
+                sys.stdin.close()
+                sys.stdin = open(os.devnull, "r", encoding="utf-8")
+        except Exception:
+            pass
 
     if host is None:
         host = _os.environ.get("DASH_HOST", "0.0.0.0")

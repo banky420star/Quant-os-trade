@@ -1,0 +1,44 @@
+# Full 14-symbol growth campaign (demo)
+label: "Full Growth"
+description: "All 14 symbols, full-Kelly growth campaign, pyramiding on"
+mode: growth
+practice:
+  micro:
+    enabled: false
+  growth:
+    enabled: true
+    daily_target_pct: 20
+    max_daily_loss_pct: 10
+    min_confidence: 30
+    min_risk_reward: 0.7
+    min_trade_score: 12
+    aggressive_mode: true
+    relax_consensus: true
+    risk_veto_threshold: 4
+    loop_interval_seconds: 15
+    max_symbol_exposure_fraction: 2.0
+    max_total_exposure_fraction: 4.0
+trading:
+  allow_pyramiding: true
+  max_open_per_symbol: 3
+  max_total_open_positions: 10
+  max_session_trades_per_symbol: 48
+  signal_reversal_early_close:
+    enabled: true
+    check_trend: both
+strategy_arena:
+  max_open_per_symbol: 10
+  emit_all_setups: true
+evaluation:
+  min_policy_score: 8
+  skip_below_score: 4
+  symbol_blocklist: []
+  setup_blocklist: []
+  recent_cold_skip_win_rate: 10
+  recent_cold_skip_min_n: 12
+signals:
+  min_confidence: 30
+  min_risk_reward: 0.7
+filters:
+  spread_mult: 5.0
+  min_volume_ratio: 0.08

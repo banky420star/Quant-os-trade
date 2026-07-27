@@ -1,0 +1,11 @@
+# Conservative live / larger account
+label: "Live Conservative"
+description: "Performance plan gates, no micro overlay, conservative risk"
+mode: live
+practice:
+  micro:
+    enabled: false
+  growth:
+    enabled: false
+mt5:
+  account_mode: real

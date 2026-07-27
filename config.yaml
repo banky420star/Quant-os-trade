@@ -691,8 +691,8 @@ filters:
     US500m: 100
     US30m: 120
     NAS100m: 140
-    UK100m: 250
-    FR40m: 120
+    UK100m: 500
+    FR40m: 1000
     JP225m: 130
   min_atr_ratio: 0.0002
   avoid_news: true
@@ -724,10 +724,13 @@ intelligence:
   regime_filter: true
   trend_structure_veto_enabled: true
   setup_confidence_mult: 0.72
-  memory_veto_win_rate: 35
+  # Memory veto disabled: historical win-rate stats currently block every
+  # generated signal after the recent losing streak. Keep other consensus gates
+  # (risk/regime/structure) active; trades are now gated by live verifier.
+  memory_veto_win_rate: 0
   # 2026-07-21: lowered 15 → 5 (response to gate relaxation — react to losing streak sooner)
   memory_veto_min_trades: 5
-  memory_veto_cell_win_rate: 45
+  memory_veto_cell_win_rate: 0
   memory_veto_cell_min_trades: 4
 replay:
   symbol: XAUUSDm
@@ -847,7 +850,7 @@ quant:
       require_top_ranked_setup: false
 practice:
   micro:
-    enabled: true
+    enabled: false
     account_size_usd: 30
     # 2026-07-21: expanded from 1 symbol to all 14 mt5 symbols so the user sees 14
     # position slots in the dashboard. Paper mode only — no real orders will fire.

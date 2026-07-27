@@ -6,3 +6,6 @@ numpy>=1.24
 pandas>=2.0
 pyarrow>=14.0
 psutil>=5.9
+# Optional — needed by tests/test_dashboard_views.py (per-tab canvas audit).
+# One-time browser install:  playwright install chromium
+playwright>=1.40

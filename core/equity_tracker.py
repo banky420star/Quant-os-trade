@@ -157,10 +157,44 @@ def build_equity_curve(
             pnl = float(trade.get("pnl", 0))
             equity += pnl
             ts = trade.get("closed_at") or utc_now_iso()
+            # ---- BE / Partial / Stale classification (chart marker styles) -
+            # Trade dict (paper_trades.json) carries canonical exit signals
+            # via exit_reason + position_mgmt archive + be_triggered flags.
+            # We surface THREE boolean attributes on the marker so the
+            # client-side draw loop can render distinct visual cues WITHOUT
+            # the operator opening the Profit Quality panel:
+            #   be_hit     = exit_reason == break_even_stop OR (be_triggered
+            #                AND pnl so small the trade died at BE)
+            #   partial_tp = partial_take_profit exit_reason OR mgmt-archive
+            #                partial_tp_done flag
+            #   stale      = time_stop exit_reason OR mgmt-archive
+            #                stale_closed flag
+            # Trade closure may carry multiple flags (BE was set BEFORE the
+            # trailing_stop fired AFTER partial-TP); so the client renders
+            # via priority BE > Partial > Stale > Normal win/loss.
+            pm = trade.get("position_mgmt") or {}
+            er = str(trade.get("exit_reason") or "")
+            be_hit = (
+                er == "break_even_stop"
+                or (bool(trade.get("be_triggered")) and abs(round(pnl, 2)) <= 0.05)
+            )
+            partial_tp = (
+                er == "partial_take_profit"
+                or bool(pm.get("partial_tp_done"))
+            )
+            stale = (
+                er == "time_stop"
+                or bool(pm.get("stale_closed"))
+            )
             markers.append({
                 "ts": ts, "equity": round(equity, 2), "event": "trade_close",
                 "pnl": round(pnl, 2), "symbol": trade.get("symbol"),
                 "side": trade.get("side"), "result": trade.get("result"),
+                "exit_reason": er,
+                "be_hit": bool(be_hit),
+                "partial_tp": bool(partial_tp),
+                "stale": bool(stale),
+                "r_multiple": trade.get("r_multiple"),
             })
 
     snapshot_points = [

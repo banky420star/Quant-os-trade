@@ -18,9 +18,9 @@ from core.utils import read_json_state, utc_now_iso
 
 
 def donchian_enabled(config: dict[str, Any]) -> bool:
-    return bool((config.get("strategies") or {}).get("diversification") or {}).get(
+    return bool(((config.get("strategies") or {}).get("diversification") or {}).get(
         "donchian_enabled", False
-    )
+    ))
 
 
 def donchian_config(config: dict[str, Any]) -> DonchianParams:
@@ -138,78 +138,51 @@ def generate_donchian_signals(
                 from strategies.donchian_breakout import atr_series
                 atr = float(atr_series(df, params.atr_len).iloc[-1])
             except Exception:
-                atr = max(price * 0.001, 1e-5)
-
-        all_bars = list(long_bars) + list(short_bars)
-        if not all_bars:
+                atr = price * 0.001
+        if price <= 0 or atr <= 0:
             continue
-        last_bar = max(int(x) for x in all_bars)
-        is_long = last_bar in [int(x) for x in long_bars]
-        is_short = last_bar in [int(x) for x in short_bars]
-        if not (is_long or is_short):
-            continue
-        side = "BUY" if is_long else "SELL"
 
-        # Determine band_label: the simulator places long/short bars in a
-        # single array indexed by `bands`. We calibrated `bands[i]==1 -> fast`
-        # (10-bar quick breakout). Find which band the last bar belonged to.
-        band_label = "main"
-        if len(long_bars) + len(short_bars) == len(bands) and len(bands) > 0:
-            # Reconstruct side-sorted index: long bars come first then short.
-            long_count = len(long_bars)
-            if is_long:
-                # The last long bar IS long_bars[-1]; find its position in concat.
-                band_label = "fast" if bool(bands[long_count - 1]) else "main"
+        # Check cooldown
+        prev = _cooldown_state.get(symbol) if _cooldown_state else None
+        now_iso = utc_now_iso()
+
+        for side, bars_list in [("BUY", long_bars), ("SELL", short_bars)]:
+            if len(bars_list) == 0:
+                continue
+            if _cooldown_hit(symbol, side, prev, cooldown_seconds):
+                log.debug("Donchian cooldown active %s %s", symbol, side)
+                continue
+
+            last_bar_idx = bars_list[-1]
+            sl_dist = params.sl_atr * atr
+            if side == "BUY":
+                entry = float(df.iloc[last_bar_idx]["close"])
+                sl = entry - sl_dist
+                tp = entry + params.rr * sl_dist
             else:
-                band_label = "fast" if bool(bands[len(long_bars) + len(short_bars) - 1]) else "main"
-        confidence = 78 if band_label == "main" else 65
+                entry = float(df.iloc[last_bar_idx]["close"])
+                sl = entry + sl_dist
+                tp = entry - params.rr * sl_dist
 
-        prev = (_cooldown_state or {}).get(symbol)
-        if _cooldown_hit(symbol, side, prev, cooldown_seconds):
-            continue
+            _stamp_cooldown(_cooldown_state, symbol, side, now_iso)
 
-        sl_dist = params.sl_atr * atr
-        reward_dist = sl_dist * params.rr
-        if side == "BUY":
-            sl = round(price - sl_dist, 5)
-            tp1 = round(price + reward_dist, 5)
-            tp2 = round(price + reward_dist * 1.6, 5)
-        else:
-            sl = round(price + sl_dist, 5)
-            tp1 = round(price - reward_dist, 5)
-            tp2 = round(price - reward_dist * 1.6, 5)
+            out.append({
+                "symbol": symbol,
+                "side": side,
+                "confidence": 75,
+                "score": 0.0,
+                "source": "donchian_breakout",
+                "setup_type": "donchian_breakout",
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+                "risk_parity_share": div.get("risk_shares", {}).get("donchian_breakout", 0.25),
+                "timestamp": now_iso,
+                "id": str(uuid.uuid4())[:8],
+            })
+            log.info(
+                "Donchian %s %s entry=%.5f sl=%.5f tp=%.5f",
+                symbol, side, entry, sl, tp,
+            )
 
-        candidate = {
-            "signal_id": str(uuid.uuid4()),
-            "symbol": symbol,
-            "side": side,
-            "setup_type": "donchian_breakout",
-            "entry": round(price, 5),
-            "sl": sl,
-            "tp1": tp1,
-            "tp2": tp2,
-            "entry_mode": "market",
-            "order_type": "market",
-            "within_reach": True,
-            "confidence": confidence,
-            "risk_parity_stream": "donchian_breakout",
-            "market_context": {
-                "regime": feat.get("volatility_regime", "unknown"),
-                "m5_trend": feat.get("m5_trend", "neutral"),
-                "session": "unknown",
-                "market_regime": {"primary": "trending"},
-            },
-            "reason": f"Donchian {band_label}-band breakout ({params.entry_len if band_label == 'main' else params.exit_len}-bar)",
-            "reasons": [f"Donchian {band_label}-band breakout",
-                        f"SL {params.sl_atr}×ATR, TP {params.rr}R"],
-            "source": "donchian_breakout",
-            "donchian_params": params.as_dict(),
-            "created_at": utc_now_iso(),
-        }
-        _stamp_cooldown(_cooldown_state, symbol, side, utc_now_iso())
-        out.append(candidate)
-        log.info(
-            "Donchian %s %s %s band=%s conf=%d",
-            symbol, side, "donchian_breakout", band_label, confidence,
-        )
     return out

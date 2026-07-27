@@ -1,0 +1,90 @@
+# $30 micro account — candidate 2: Adaptive Weight Evolution
+label: "$30 Micro C2"
+description: "3 symbols, replay-validated per-symbol weight evolution (positive expectancy only)"
+practice:
+  micro:
+    enabled: true
+    account_size_usd: 30
+    symbols: [XAUUSDm, USOILm, UK100m]
+    max_open_per_symbol: 1
+    max_open_per_setup: 1
+    allow_pyramiding: false
+    default_lot: 0.01
+    max_lot: 0.01
+    risk_percent_per_trade: 1.0
+    daily_target_pct: 20
+    max_daily_loss_pct: 10
+    max_drawdown_pct: 20
+    max_symbol_exposure_fraction: 0.40
+    max_total_exposure_fraction: 0.60
+    max_session_trades_per_symbol: 6
+    max_loss_per_trade_usd: 10
+    cap_loss_to_balance: true
+    reentry_cooldown_seconds: 30
+    entry_confirm_seconds: 30
+    regime_flip_replace_enabled: true
+    regime_flip_min_confidence: 65
+    regime_flip_window_sec: 90
+    break_even:
+      trigger_profit_usd: 2
+      lock_profit_usd: 1
+      per_symbol:
+        XAUUSDm:
+          trigger_profit_usd: 2
+          lock_profit_usd: 1
+        USOILm:
+          trigger_profit_usd: 1.5
+          lock_profit_usd: 0.75
+        UK100m:
+          trigger_profit_usd: 2
+          lock_profit_usd: 1
+    trailing:
+      activation_profit_usd: 2
+      activation_atr_mult: 0.35
+      per_symbol:
+        XAUUSDm:
+          activation_profit_usd: 2
+          activation_atr_mult: 0.35
+          trail_points_atr_mult: 0.28
+        USOILm:
+          activation_profit_usd: 1.5
+          activation_points: 8
+          trail_points: 10
+        UK100m:
+          activation_profit_usd: 2
+          activation_atr_mult: 0.3
+          trail_points_atr_mult: 0.2
+    exits:
+      runner:
+        trail_tighten_mult: 0.35
+      defer_trail_until:
+        require_partial_or_rr: true
+        min_rr: 0.5
+    symbol_rules:
+      XAUUSDm:
+        preferred_setups: [pullback, trend_continuation]
+        preferred_sessions: [rollover, tokyo, london_open, overlap_london_ny]
+      USOILm:
+        preferred_setups: [pullback]
+        preferred_sessions: [tokyo, rollover, new_york]
+      UK100m:
+        preferred_setups: [pullback, trend_continuation]
+        preferred_sessions: [london_open, overlap_london_ny]
+quant:
+  use_adaptive_weights: true
+  micro_evolution:
+    enabled: true
+    symbols: [XAUUSDm, USOILm, UK100m]
+    min_trades_per_symbol: 8
+    improvement_threshold_pct: 3.0
+    replay_bars: 300
+    replay_step: 15
+    require_positive_expectancy: true
+research:
+  min_trades_for_research: 12
+  replay_bars: 300
+  replay_step: 15
+  improvement_threshold_pct: 3
+  auto_deploy: false
+execution:
+  starting_cash: 30

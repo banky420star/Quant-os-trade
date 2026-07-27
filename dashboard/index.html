@@ -31,7 +31,7 @@
       --radius: 14px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; overflow: hidden; }
+    html, body { height: 100vh; overflow: hidden; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
       background: var(--bg);
@@ -160,8 +160,25 @@
     @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes status-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(.85); } }
 
+    /* ---- Equity pulse overlay (SSE-driven) ---------------------------
+       A separate canvas stacked absolutely on top of the chart that draws
+       a glowing radial dot at the latest equity tick. Lifetime is 800ms
+       (fade-out via JS RAF) so the operator SEES the curve update without
+       the next drawChart() (which clears the chart canvas underneath)
+       wiping the glow. Pointer-events:none so it never blocks hover.
+       ------------------------------------------------------------------ */
+    .equity-pulse-canvas {
+      position: absolute;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 3;
+      mix-blend-mode: screen;
+    }
+
     .app-root {
       position: relative; z-index: 1; height: 100%;
+      overflow: hidden;
       opacity: 0; visibility: hidden; pointer-events: none;
     }
     .app-root.ready {
@@ -226,6 +243,54 @@
     .nav-item.active { background: var(--surface3); color: var(--text); }
     .nav-item .sym-price { margin-left: auto; font-size: 11px; color: var(--muted2); font-weight: 600; }
     .nav-item.signal .sym-price { color: var(--blue); }
+  /* Per-tab "last render ms" chip — appended at boot by the inline tracker
+     near </body>; updated via navigator.sendBeacon → /api/render_metrics.
+     Colour thresholds: live ≤24ms, warn 25..200, bad >200. */
+  .last-render-chip {
+    margin-left: auto;
+    font-size: 9.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted2);
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(255,255,255,.04);
+    letter-spacing: 0.02em;
+    min-width: 36px;
+    text-align: right;
+    transition: color .15s ease, background .15s ease, transform .15s ease;
+  }
+  .last-render-chip.warn { color: var(--orange); background: rgba(255,159,10,.10); }
+  .last-render-chip.bad  { color: var(--red);    background: rgba(255,69,58,.12); }
+  .last-render-chip.live { animation: renderchip-pulse 1.6s ease; }
+  @keyframes renderchip-pulse {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.15); }
+    100% { transform: scale(1); }
+  }
+  @media (max-width: 700px) { .last-render-chip { display: none; } }
+  /* Per-tab last render ms chip — populated by dashboard/render-tracker.js
+     via navigator.sendBeacon → /api/render_metrics. Background-driven so
+     click latency is unaffected. */
+  .last-render-chip {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    color: var(--muted2);
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+    min-width: 38px;
+    text-align: right;
+    transition: color .15s ease, background .15s ease;
+  }
+  .last-render-chip.warn { color: var(--orange); background: rgba(255,159,10,.10); border-color: rgba(255,159,10,.35); }
+  .last-render-chip.bad  { color: var(--red);    background: rgba(255,69,58,.10);  border-color: rgba(255,69,58,.35); }
+  .last-render-chip.live { color: var(--green);  background: rgba(50,215,75,.10);  border-color: rgba(50,215,75,.35); }
+  @media (max-width: 700px) { .last-render-chip { display: none; } }
 
     /* Main */
     .main { flex: 1; display: flex; overflow: hidden; }
@@ -298,7 +363,7 @@
     .hero-action.buy { color: var(--green); }
     .hero-action.sell { color: var(--red); }
     .hero-action.wait { color: var(--muted); font-size: 36px; }
-    .hero-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 24px; }
+    .hero-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 24px; }
     .hero-meta-item .lbl { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
     .hero-meta-item .val { font-size: 16px; font-weight: 600; }
 
@@ -363,9 +428,153 @@
     }
     .chart-range-btn:hover { color: var(--text); border-color: rgba(10,132,255,.35); }
     .chart-range-btn.active { background: rgba(10,132,255,.18); color: #7ac0ff; border-color: rgba(10,132,255,.45); }
+    /* Smooth/Raw curve toggle */
+    .curve-toggle {
+      border: 1px solid var(--border); background: var(--surface3); color: var(--muted2);
+      font-size: 10px; font-weight: 700; padding: 5px 10px; border-radius: 8px;
+      cursor: pointer; font-family: inherit; letter-spacing: .04em; text-transform: uppercase;
+      transition: all .15s; white-space: nowrap; user-select: none;
+    }
+    .curve-toggle:hover { color: var(--text); border-color: rgba(191,90,242,.35); }
+    .curve-toggle.on { background: rgba(191,90,242,.18); color: #d8a0ff; border-color: rgba(191,90,242,.45); }
+    .curve-toggle.off { background: rgba(255,255,255,.04); color: var(--muted); border-color: var(--border); }
+    /* Smooth/Raw toggle */
+    .curve-toggle {
+      border: 1px solid var(--border); background: var(--surface3); color: var(--muted2);
+      font-size: 10px; font-weight: 700; padding: 5px 10px; border-radius: 8px;
+      cursor: pointer; font-family: inherit; letter-spacing: .04em; text-transform: uppercase;
+      transition: all .15s; white-space: nowrap; user-select: none;
+    }
+    .curve-toggle:hover { color: var(--text); border-color: rgba(191,90,242,.35); }
+    .curve-toggle.on { background: rgba(191,90,242,.18); color: #d8a0ff; border-color: rgba(191,90,242,.45); }
+    .curve-toggle.off { background: rgba(255,255,255,.04); color: var(--muted); border-color: var(--border); }
     .chart-wrap { position: relative; }
-    .chart-canvas { width: 100%; display: block; cursor: crosshair; }
-    #equityChart { height: 460px; }
+    .chart-canvas { width: 100%; display: block; cursor: crosshair; height: auto; }
+    #equityChart, #equityChartFull { width: 100%; height: 100% !important; aspect-ratio: auto !important; max-height: none; min-height: 420px; display: block; }
+    /* Ensure the dashboard chart container always has a definite height so the canvas never collapses to 0x0 */
+    #view-dashboard .equity-hero .chart-wrap { min-height: 420px; height: 420px; }
+
+/* Snap-to-top pinned chart bar — docks below the global card chrome when the user scrolls past the hero */
+.equity-hero.equity-pinned {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 50;
+  background: rgba(7,7,10,0.96);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.1));
+  padding: 8px 16px !important;
+  height: 80px;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55);
+  animation: equityPinDrop 0.18s ease-out;
+}
+@keyframes equityPinDrop {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+.equity-hero.equity-pinned .equity-hero-head {
+  flex: 0 0 auto;
+  margin: 0 !important;
+}
+.equity-hero.equity-pinned .equity-hero-head > div:first-child,
+.equity-hero.equity-pinned .chart-live-badge,
+.equity-hero.equity-pinned .chart-stats-grid,
+.equity-hero.equity-pinned .chart-tooltip {
+  display: none !important;
+}
+.equity-hero.equity-pinned .chart-wrap {
+  flex: 1 1 auto;
+  height: 64px;
+  min-height: 0;
+  min-width: 0;
+}
+.equity-hero.equity-pinned .chart-wrap .chart-canvas {
+  width: 100% !important;
+  height: 64px !important;
+  aspect-ratio: auto !important;
+}
+.equity-hero.equity-pinned .chart-range-bar {
+  flex: 0 0 auto;
+  margin: 0 !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+@media (prefers-reduced-motion: reduce) {
+  .equity-hero.equity-pinned { animation: none; }
+}
+
+/* ---- Compare two ranges ---- */
+.compare-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+.compare-toggle {
+  border: 1px solid var(--border);
+  background: var(--surface3);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.compare-toggle:hover { color: var(--text); border-color: rgba(255,159,10,.35); }
+.compare-toggle.active {
+  background: rgba(255,159,10,.18);
+  color: #ffce8a;
+  border-color: rgba(255,159,10,.45);
+}
+.compare-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  z-index: 20;
+  display: none;
+}
+.compare-popover.open { display: block; }
+.compare-option {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background .12s, color .12s;
+}
+.compare-option:hover { background: var(--surface3); color: var(--text); }
+.compare-option.active { background: rgba(255,159,10,.18); color: #ffce8a; }
+.compare-option.disabled { opacity: 0.35; cursor: not-allowed; }
+.compare-option.none-option { border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0; margin-bottom: 2px; padding-bottom: 8px; }
+.axis-percent-note {
+  font-size: 10px; color: #ffce8a; font-weight: 600;
+  letter-spacing: .04em; padding-left: 4px;
+}
+
     #equityChartFull { height: calc(100vh - 220px); min-height: 520px; }
     .chart-overlay {
       position: absolute; left: 0; top: 0; width: 100%; height: 100%;
@@ -376,6 +585,19 @@
       color: var(--muted); background: rgba(28,28,31,.85); border: 1px solid var(--border);
       border-radius: 6px; padding: 4px 8px; pointer-events: none;
     }
+    .chart-pnl-badge {
+      position: absolute; top: 0; left: 0;
+      padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700;
+      background: rgba(28,28,31,.92); border: 1px solid var(--border);
+      color: var(--text); box-shadow: 0 4px 12px rgba(0,0,0,.35);
+      pointer-events: none; z-index: 4; white-space: nowrap;
+      transform: translate(-50%, -120%);
+      transition: top 0.15s ease, left 0.15s ease, opacity 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+      opacity: 0;
+    }
+    .chart-pnl-badge.pos { color: var(--green); border-color: rgba(50,215,75,.35); }
+    .chart-pnl-badge.neg { color: var(--red); border-color: rgba(255,69,58,.35); }
+    .chart-pnl-badge.zero { color: var(--muted); border-color: var(--border); }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 11px; color: var(--muted); }
     .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
     .chart-legend i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
@@ -389,7 +611,14 @@
       border-radius: 8px; padding: 10px 12px; font-size: 11px; color: var(--text);
       box-shadow: 0 8px 24px rgba(0,0,0,.35); z-index: 5; min-width: 168px; line-height: 1.45;
     }
-    .equity-view-wrap { padding: 4px 0; }
+    .equity-view-wrap { padding: 4px 0; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 460px; gap: 14px; }
+    /* Universal sizing for ALL #equityChart / #equityChartFull containers — they live inside .card.equity-hero in BOTH view-dashboard and view-equity. The previous equity-view-wrap-only selector missed equityChart (which is in view-dashboard). */
+    .view.active .equity-hero,
+    .view.active .card.equity-hero { display: flex; flex-direction: column; }
+    .view.active .equity-hero .chart-wrap,
+    .view.active .card.equity-hero .chart-wrap { flex: 1 1 auto; min-height: 380px; min-width: 0; }
+    .view.active .equity-hero .chart-stats-grid,
+    .view.active .card.equity-hero .chart-stats-grid { flex: 0 0 auto; }
     .trade-alert {
       display: none; padding: 12px 16px; border-radius: 10px; margin-bottom: 4px;
       font-size: 12px; line-height: 1.5; border: 1px solid var(--border);
@@ -519,8 +748,9 @@
     /* Self-learning panel */
     .self-learn-card { padding: 18px 20px; }
     .sl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+    @media (max-width: 1100px) { .sl-grid { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 820px) { .sl-grid { grid-template-columns: 1fr; } }
-    .sl-tile { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; min-width: 0; }
+    .sl-tile { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; min-width: 0; overflow: hidden; }
     .sl-tile .sl-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .sl-tile .sl-h .sl-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sl-badge { flex: none; }
@@ -533,16 +763,22 @@
     .sl-tile .sl-v { font-size: 20px; font-weight: 700; margin-top: 8px; font-variant-numeric: tabular-nums; }
     .sl-tile .sl-v.pos { color: var(--green); } .sl-tile .sl-v.neg { color: var(--red); }
     .sl-tile .sl-d { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.35; }
-    .sl-weights { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-    .sl-wrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; }
-    .sl-wrow .nm { width: 66px; color: var(--muted); flex: none; }
-    .sl-wrow .track { flex: 1; height: 5px; background: var(--surface3); border-radius: 99px; overflow: hidden; }
+    .sl-weights { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; min-width: 0; }
+    .sl-wrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; min-width: 0; }
+    .sl-wrow .nm { width: 66px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); flex: none; }
+    .sl-wrow .track { flex: 1; min-width: 0; height: 5px; background: var(--surface3); border-radius: 99px; overflow: hidden; }
     .sl-wrow .track > i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--blue), var(--purple)); }
-    .sl-wrow .pc { width: 40px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
-    .sl-exp { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
-    .sl-exp .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
-    .sl-exp .row .hp { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sl-foot { font-size: 10.5px; color: var(--muted2); margin-top: 12px; line-height: 1.4; }
+    .sl-wrow .pc { width: 40px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+    .sl-exp { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; min-width: 0; }
+    .sl-exp .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; flex-wrap: wrap; row-gap: 4px; }
+    .sl-exp .row .hp { min-width: 0; flex: 1 1 auto; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sl-foot { font-size: 10.5px; color: var(--muted2); margin-top: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+    @media (max-width: 820px) {
+      .sl-tile { padding: 11px 12px; border-radius: 10px; }
+      .sl-tile .sl-v { font-size: 18px; }
+      .sl-wrow .nm { width: 56px; }
+      .sl-wrow .pc { width: 36px; }
+    }
 
     /* Symbol cards */
     .sym-card {
@@ -948,7 +1184,7 @@
         --mobile-tabs-h: calc(56px + env(safe-area-inset-bottom, 0px));
       }
       html, body {
-        height: 100%;
+        height: 100vh;
         height: 100dvh;
         overflow: hidden;
       }
@@ -1073,32 +1309,50 @@
         display: block;
         margin-top: 4px;
       }
+      /* ---- Mobile-optimized bottom nav (iPhone / Tailscale) ---- */
       .mobile-tab-bar {
         display: flex;
         position: fixed;
         left: 0; right: 0; bottom: 0;
         height: var(--mobile-tabs-h);
         padding-bottom: env(safe-area-inset-bottom, 0px);
-        background: rgba(17,17,20,.96);
+        background: rgba(10,10,14,.97);
         border-top: 1px solid var(--border);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
         z-index: 100;
         overflow-x: auto; white-space: nowrap;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
+        justify-content: space-around;
+        gap: 0;
       }
       .mobile-tab-bar::-webkit-scrollbar { display: none; }
       .mobile-tab {
-        flex: 0 0 auto;
-        min-width: 58px;
+        flex: 1 1 auto;
+        min-width: 0;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 3px; border: none; background: none; color: var(--muted2);
-        font-size: 10px; font-weight: 600; font-family: inherit;
-        padding: 6px 8px; cursor: pointer;
+        gap: 2px; border: none; background: none; color: var(--muted2);
+        font-size: 9px; font-weight: 600; font-family: inherit;
+        padding: 8px 2px 6px; cursor: pointer;
+        position: relative;
+        min-height: 48px;
+        -webkit-tap-highlight-color: transparent;
+        transition: color .15s ease;
       }
-      .mobile-tab .ico { font-size: 18px; line-height: 1; }
+      .mobile-tab:active { transform: scale(0.92); transition: transform .08s ease; will-change: transform; }
+      .mobile-tab .ico { font-size: 22px; line-height: 1; transition: transform .15s ease; }
       .mobile-tab.active { color: var(--blue); }
+      .mobile-tab.active .ico { transform: scale(1.12); }
+      .mobile-tab.active::after {
+        content: '';
+        position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+        width: 24px; height: 2px; border-radius: 0 0 2px 2px;
+        background: var(--blue);
+        box-shadow: 0 0 8px var(--glow-blue);
+      }
+      /* Hide labels on very small screens to fit more tabs */
+      @media (max-width: 375px) { .mobile-tab { font-size: 0; gap: 0; padding: 10px 0 8px; } .mobile-tab .ico { font-size: 24px; } }
       .sym-card { padding: 14px; }
       table { font-size: 11px; }
       th, td { padding: 8px 6px; }
@@ -1349,7 +1603,7 @@
           <div class="mobile-summary" id="mobileSummary"></div>
           <div class="mobile-symbols" id="mobileSymbols"></div>
           <div class="trade-alert" id="tradeAlert"></div>
-          <div class="card equity-hero mobile-hide" id="equityHeroCard">
+          <div class="card equity-hero" id="equityHeroCard">
             <div class="equity-hero-head">
               <div>
                 <div class="card-title">Equity Curve</div>
@@ -1365,11 +1619,30 @@
                 <button type="button" class="chart-range-btn" data-range="7d">7d</button>
                 <button type="button" class="chart-range-btn" data-range="30d">30d</button>
                 <button type="button" class="chart-range-btn" data-range="all">All</button>
+                <button type="button" class="curve-toggle on" id="curveToggleDash" title="Toggle smooth spline vs raw lineTo">Smooth</button>
               </div>
+
+              <div class="compare-control">
+                <button type="button" class="compare-toggle" id="compareToggleEquity">Compare<span class="compare-toggle-suffix"> &#x25be;</span></button>
+                <div class="compare-popover" id="comparePopoverEquity">
+                  <button type="button" class="compare-option none-option" data-range="">None</button>
+                  <button type="button" class="compare-option" data-range="1m">vs 1m</button>
+                  <button type="button" class="compare-option" data-range="15m">vs 15m</button>
+                  <button type="button" class="compare-option" data-range="1h">vs 1h</button>
+                  <button type="button" class="compare-option" data-range="4h">vs 4h</button>
+                  <button type="button" class="compare-option" data-range="1d">vs 1d</button>
+                  <button type="button" class="compare-option" data-range="7d">vs 7d</button>
+                  <button type="button" class="compare-option" data-range="30d">vs 30d</button>
+                  <button type="button" class="compare-option" data-range="all">vs All</button>
+                </div>
+              </div>
+
             </div>
             <div class="chart-wrap">
               <canvas id="equityChart" class="chart-canvas"></canvas>
+              <canvas id="equityPulse" class="equity-pulse-canvas" aria-hidden="true"></canvas>
               <canvas id="equityChartOverlay" class="chart-overlay chart-canvas"></canvas>
+              <div class="chart-pnl-badge" id="chartPnlBadge"></div>
               <div class="chart-live-badge" id="chartLiveBadge"></div>
               <div class="chart-tooltip" id="chartTooltip"></div>
             </div>
@@ -1519,12 +1792,30 @@
                   <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
                   <button type="button" class="chart-range-btn" data-range="7d">7d</button>
                   <button type="button" class="chart-range-btn" data-range="30d">30d</button>
-                  <button type="button" class="chart-range-btn" data-range="all">All</button>
+                <button type="button" class="chart-range-btn" data-range="all">All</button>
+                <button type="button" class="curve-toggle on" id="curveToggleFull" title="Toggle smooth spline vs raw lineTo">Smooth</button>
+              </div>
+
+                <div class="compare-control">
+                  <button type="button" class="compare-toggle" id="compareToggleFull">Compare<span class="compare-toggle-suffix"> &#x25be;</span></button>
+                  <div class="compare-popover" id="comparePopoverFull">
+                    <button type="button" class="compare-option none-option" data-range="">None</button>
+                    <button type="button" class="compare-option" data-range="1m">vs 1m</button>
+                    <button type="button" class="compare-option" data-range="15m">vs 15m</button>
+                    <button type="button" class="compare-option" data-range="1h">vs 1h</button>
+                    <button type="button" class="compare-option" data-range="4h">vs 4h</button>
+                    <button type="button" class="compare-option" data-range="1d">vs 1d</button>
+                    <button type="button" class="compare-option" data-range="7d">vs 7d</button>
+                    <button type="button" class="compare-option" data-range="30d">vs 30d</button>
+                    <button type="button" class="compare-option" data-range="all">vs All</button>
+                  </div>
                 </div>
               </div>
               <div class="chart-wrap">
                 <canvas id="equityChartFull" class="chart-canvas"></canvas>
+                <canvas id="equityPulseFull" class="equity-pulse-canvas" aria-hidden="true"></canvas>
                 <canvas id="equityChartOverlayFull" class="chart-overlay chart-canvas"></canvas>
+                <div class="chart-pnl-badge" id="chartPnlBadgeFull"></div>
                 <div class="chart-live-badge" id="chartLiveBadgeFull"></div>
                 <div class="chart-tooltip" id="chartTooltipFull"></div>
               </div>
@@ -1534,6 +1825,9 @@
                 <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized gap</span>
                 <span><i style="background:#30d158;height:8px;width:8px;border-radius:50%"></i> Win</span>
                 <span><i style="background:#ff453a;height:8px;width:8px;border-radius:50%"></i> Loss</span>
+                <span class="marker-sw" data-kind="be"><svg viewBox="0 0 14 14" width="14" height="14" aria-label="BE-hit"><circle cx="7" cy="7" r="5" fill="#30d158"/><circle cx="7" cy="7" r="2.4" fill="#07070a"/><circle cx="7" cy="7" r="5" fill="none" stroke="#30d158" stroke-width="1"/></svg> BE-hit</span>
+                <span class="marker-sw" data-kind="partial"><svg viewBox="0 0 14 14" width="14" height="14" aria-label="Partial-TP"><defs><clipPath id="legHalf"><rect x="0" y="0" width="14" height="7"/></clipPath></defs><g clip-path="url(#legHalf)"><circle cx="7" cy="7" r="5" fill="#30d158"/></g><circle cx="7" cy="7" r="5" fill="none" stroke="#30d158" stroke-width="1"/></svg> Partial-TP</span>
+                <span class="marker-sw" data-kind="stale"><svg viewBox="0 0 14 14" width="14" height="14" aria-label="Stale close"><defs><pattern id="legStaleHatch" width="3" height="3" patternUnits="userSpaceOnUse"><path d="M-1,1 l2,-2 M0,3 l3,-3 M2,5 l3,-3" stroke="#ff453a" stroke-width="1.4"/></pattern></defs><circle cx="7" cy="7" r="5" fill="url(#legStaleHatch)"/><circle cx="7" cy="7" r="5" fill="none" stroke="#ff453a" stroke-width="1"/></svg> Stale</span>
                 <span><i style="background:rgba(255,69,58,.22);height:12px"></i> Drawdown fill</span>
               </div>
               <div class="chart-stats-grid" id="chartStatsFull"></div>
@@ -1605,7 +1899,7 @@
             <div class="card-title">Trade Log — every closed trade (open/close, win/loss, setup, drawdown, R)</div>
             <div id="tradeLogSummary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)"></div>
             <div id="tradeLogOrganized" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
-            <pre id="tradeLogDetail" style="display:none;font-size:10px;max-height:220px;overflow:auto;background:rgba(0,0,0,.25);padding:8px;border-radius:6px;margin-bottom:8px"></pre>
+            <pre id="tradeLogDetail" style="display:none;font-size:11px;max-height:260px;overflow:auto;overflow-wrap:anywhere;word-break:break-all;white-space:pre-wrap;background:rgba(0,0,0,.25);padding:10px;border-radius:6px;margin-bottom:8px"></pre>
             <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <button class="nav-item" id="tlPrev" onclick="tlPage(-1)">◀ Prev</button>
               <span id="tlPageInfo" style="font-size:12px;color:var(--muted)"></span>
@@ -1684,14 +1978,14 @@
   </div>
 
   <nav class="mobile-tab-bar" id="mobileTabBar" aria-label="Main navigation">
-    <button type="button" class="mobile-tab active" data-view="dashboard"><span class="ico">⌂</span>Home</button>
-    <button type="button" class="mobile-tab" data-view="equity"><span class="ico">📈</span>Chart</button>
-    <button type="button" class="mobile-tab" data-view="trades"><span class="ico">🗒</span>Trades</button>
-    <button type="button" class="mobile-tab" data-view="research"><span class="ico">⚗</span>Research</button>
-    <button type="button" class="mobile-tab" data-view="replay"><span class="ico">▶</span>Replay</button>
-    <button type="button" class="mobile-tab" data-view="memory"><span class="ico">🧠</span>Memory</button>
-    <button type="button" class="mobile-tab" data-view="logs"><span class="ico">≡</span>Logs</button>
-    <button type="button" class="mobile-tab" data-view="settings"><span class="ico">⚙</span>System</button>
+    <button type="button" class="mobile-tab active" data-view="dashboard" aria-label="Home"><span class="ico">⌂</span>Home</button>
+    <button type="button" class="mobile-tab" data-view="equity" aria-label="Chart"><span class="ico">📈</span>Chart</button>
+    <button type="button" class="mobile-tab" data-view="trades" aria-label="Trades"><span class="ico">🗒</span>Trades</button>
+    <button type="button" class="mobile-tab" data-view="research" aria-label="Research"><span class="ico">⚗</span>Research</button>
+    <button type="button" class="mobile-tab" data-view="replay" aria-label="Replay"><span class="ico">▶</span>Replay</button>
+    <button type="button" class="mobile-tab" data-view="memory" aria-label="Memory"><span class="ico">🧠</span>Memory</button>
+    <button type="button" class="mobile-tab" data-view="logs" aria-label="Logs"><span class="ico">≡</span>Logs</button>
+    <button type="button" class="mobile-tab" data-view="settings" aria-label="System"><span class="ico">⚙</span>System</button>
   </nav>
 
   <footer class="bottombar" id="bottomBar">
@@ -1814,11 +2108,48 @@
       });
     }
 
+    /* ---- Mobile swipe gestures (horizontal) ---- */
+    const VIEW_ORDER = ["dashboard","equity","trades","research","replay","memory","logs","settings"];
+    let _swipeStartX = 0, _swipeStartY = 0, _swipeActive = false;
+    function setupMobileSwipe() {
+      if (!window.matchMedia("(pointer:coarse)").matches) return;
+      const shell = document.querySelector(".shell");
+      if (!shell) return;
+      shell.addEventListener("touchstart", (e) => {
+        // Skip swipe if touch starts inside a scrollable area (trade log, table, etc.)
+        if (e.target.closest('.center, .right-panel, table, [style*="overflow"]')) { _swipeActive = false; return; }
+        const t = e.touches[0];
+        _swipeStartX = t.clientX; _swipeStartY = t.clientY; _swipeActive = true;
+      }, { passive: true });
+      shell.addEventListener("touchend", (e) => {
+        if (!_swipeActive) return;
+        _swipeActive = false;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - _swipeStartX;
+        const dy = t.clientY - _swipeStartY;
+        if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.75) return;
+        const current = document.querySelector(".mobile-tab.active");
+        if (!current) return;
+        const idx = VIEW_ORDER.indexOf(current.dataset.view);
+        if (idx < 0) return;
+        const next = dx < 0 ? VIEW_ORDER[Math.min(idx + 1, VIEW_ORDER.length - 1)] : VIEW_ORDER[Math.max(idx - 1, 0)];
+        if (next !== current.dataset.view) activateView(next);
+      }, { passive: true });
+    }
+    setupMobileSwipe();
+
     let chartMeta = null;
     let chartMetaFull = null;
     let equityCurveRaw = null;
     let chartRange = "1d";
+    // Compare overlay: when set, drawChartOnCanvas overlays a SECOND
+    // rebase-equity line in translucent amber on the same axes using
+    // "fraction of period" on X and "% change" on Y so today's 1d
+    // curve can be visually compared to the recent 7d baseline at a
+    // glance. null = single-range mode (existing behaviour restored).
+    let compareRange = null;
     let liveEquityBuffer = []; // client-side real-time equity samples for short ranges
+    let _chartAnim = null;     // active equity-curve tween animation frame
 
     const RANGE_LABELS = { "1m": "Last 1 minute", "15m": "Last 15 minutes", "1h": "Last 1 hour", "4h": "Last 4 hours", "1d": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "all": "Full history" };
 
@@ -1858,16 +2189,75 @@
       return peaks;
     }
 
-    function strokeSeries(ctx, times, values, xAt, yAt, color, width, glow) {
+    /* ---- Smooth curve toggle (global flag) ---- */
+    window.__smoothCurve = true;
+    function setupCurveToggles() {
+      document.querySelectorAll('.curve-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+          window.__smoothCurve = !window.__smoothCurve;
+          document.querySelectorAll('.curve-toggle').forEach(b => {
+            b.classList.toggle('on', window.__smoothCurve);
+            b.classList.toggle('off', !window.__smoothCurve);
+            b.textContent = window.__smoothCurve ? 'Smooth' : 'Raw';
+          });
+          if (typeof equityCurveRaw !== 'undefined' && equityCurveRaw) drawChart(equityCurveRaw, lastData?.live_portfolio);
+        });
+      });
+    }
+    /* setupCurveToggles() called from initChartInteractions() */
+
+    /* ---- Cardinal spline helper (Catmull-Rom → cubic Bézier) ----------
+       Draws a smooth curve through all points in ctx using bezierCurveTo.
+       tension 0 = straight lines, 0.5 = standard Catmull-Rom, 1 = very smooth.
+       For <4 points falls back to straight lineTo.
+       When window.__smoothCurve is false, falls back to lineTo directly.
+       ------------------------------------------------------------------ */
+    /* Range-dependent tension: short timeframes get lower tension to reduce
+       noise wiggles; long ranges get higher tension for extra-smooth curves. */
+    const _SPLINE_TENSION = { "1m": 0.3, "15m": 0.45, "1h": 0.45, "4h": 0.5, "1d": 0.55, "7d": 0.55, "30d": 0.55, "all": 0.55 };
+    function splineTension(rangeKey) { return _SPLINE_TENSION[rangeKey] ?? 0.45; }
+
+    function cardinalSpline(ctx, pts, tension) {
+      tension = tension == null ? 0.45 : tension;
+      if (pts.length < 2) return;
+      if (pts.length < 4) {
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        return;
+      }
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(i - 1, 0)];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[Math.min(i + 2, pts.length - 1)];
+        const cp1x = p1[0] + (p2[0] - p0[0]) * tension / 3;
+        const cp1y = p1[1] + (p2[1] - p0[1]) * tension / 3;
+        const cp2x = p2[0] - (p3[0] - p1[0]) * tension / 3;
+        const cp2y = p2[1] - (p3[1] - p1[1]) * tension / 3;
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2[0], p2[1]);
+      }
+    }
+
+    function strokeSeries(ctx, times, values, xAt, yAt, color, width, glow, tension) {
       if (!values.length) return;
+      const smooth = window.__smoothCurve !== false;
+      function tracePath() {
+        ctx.moveTo(xAt(times[0]), yAt(values[0]));
+        if (smooth) {
+          const pts = times.map((t, i) => [xAt(t), yAt(values[i])]);
+          cardinalSpline(ctx, pts, tension);
+        } else {
+          for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
+        }
+      }
       ctx.save();
       if (glow) {
         ctx.strokeStyle = glow;
         ctx.lineWidth = width + 4;
         ctx.globalAlpha = 0.25;
         ctx.beginPath();
-        ctx.moveTo(xAt(times[0]), yAt(values[0]));
-        for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
+        tracePath();
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
@@ -1876,20 +2266,27 @@
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(values[0]));
-      for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
+      tracePath();
       ctx.stroke();
       ctx.restore();
     }
 
-    function fillBetween(ctx, times, topVals, botVals, xAt, yAt, fillStyle) {
+    function fillBetween(ctx, times, topVals, botVals, xAt, yAt, fillStyle, tension) {
       if (!times.length) return;
+      const smooth = window.__smoothCurve !== false;
       ctx.save();
       ctx.fillStyle = fillStyle;
       ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(topVals[0]));
-      for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(topVals[i]));
-      for (let i = times.length - 1; i >= 0; i--) ctx.lineTo(xAt(times[i]), yAt(botVals[i]));
+      if (smooth) {
+        const topPts = times.map((t, i) => [xAt(t), yAt(topVals[i])]);
+        cardinalSpline(ctx, topPts, tension);
+        const botPts = times.map((t, i) => [xAt(t), yAt(botVals[i])]).reverse();
+        cardinalSpline(ctx, botPts, tension);
+      } else {
+        ctx.moveTo(xAt(times[0]), yAt(topVals[0]));
+        for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(topVals[i]));
+        for (let i = times.length - 1; i >= 0; i--) ctx.lineTo(xAt(times[i]), yAt(botVals[i]));
+      }
       ctx.closePath();
       ctx.fill();
       ctx.restore();
@@ -1916,6 +2313,112 @@
       ctx.clearRect(0, 0, rect.width, rect.height);
     }
 
+    // ---- _drawCompareOverlay --------------------------------------
+    // Renders a SECOND translucent rebased line for the compare range.
+    //   X axis: tn = (t - t0_compare) / (t1_compare - t0_compare)  [0..1]
+    //   Y axis: yn = (equity - eq0_compare) / eq0_compare * 100   [% change]
+    // The series is drawn AFTER the primary so it stacks on top.
+    // Markers for compare range render at 40% alpha so primary stays
+    // readable but trade closes are still visible.
+    function _drawCompareOverlay(ctx, canvas, curve, compareKey, pad, W, H) {
+      const slice = sliceCurveClient(curve, compareKey);
+      if (!slice || !slice.points || slice.points.length < 2) return;
+      let pts = slice.points.slice();
+      // Bound the canvas load: max 1000 segments on the compare line.
+      if (pts.length > 1000) {
+        const stride = Math.ceil(pts.length / 1000);
+        const out = [];
+        for (let i = 0; i < pts.length; i++) if (i % stride === 0) out.push(pts[i]);
+        if (out[out.length - 1] !== pts[pts.length - 1]) out.push(pts[pts.length - 1]);
+        pts = out;
+      }
+      const t0 = new Date(pts[0].ts).getTime();
+      const t1 = new Date(pts[pts.length - 1].ts).getTime() || t0 + 1;
+      const eq0 = Number(pts[0].equity);
+      // Bail early on bad/missing starting equity: the legacy `|| 1` fallback
+      // inflated %change math when first-snapshot equity was actually 0.
+      // Without this guard the secondary axis could diverge by orders of
+      // magnitude versus the primary baseline.
+      if (!Number.isFinite(eq0) || eq0 <= 0) return;
+      const times = pts.map(p => new Date(p.ts).getTime());
+      const equities = pts.map(p => p.equity);
+      const yNorm = equities.map(e => ((e || eq0) - eq0) / (eq0 || 1) * 100);
+      // Y axis autoscaled negative/positive [-maxAbs, +maxAbs].
+      const maxAbs = Math.max(0.001, ...yNorm.map(v => Math.abs(v))) * 1.15;
+      const pW = W - pad.left - pad.right;
+      const pH = H - pad.top - pad.bottom;
+      const xAt = tn => pad.left + tn * pW;
+      const yAt = v => pad.top + pH * 0.5 - (v / maxAbs) * (pH * 0.45);
+      ctx.save();
+      // Zero line at period start (visible cue that the line is rebased).
+      ctx.strokeStyle = "rgba(255,159,10,.25)";
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, yAt(0));
+      ctx.lineTo(W - pad.right, yAt(0));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Glow underlay for legibility on dark curve.
+      ctx.strokeStyle = "rgba(255,159,10,.25)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      for (let i = 0; i < times.length; i++) {
+        const tn = (times[i] - t0) / (t1 - t0);
+        const px = xAt(Math.max(0, Math.min(1, tn)));
+        const py = yAt(yNorm[i]);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      // Solid translucent line.
+      ctx.strokeStyle = "rgba(255,159,10,.85)";
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      for (let i = 0; i < times.length; i++) {
+        const tn = (times[i] - t0) / (t1 - t0);
+        const px = xAt(Math.max(0, Math.min(1, tn)));
+        const py = yAt(yNorm[i]);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      // Compare markers at 40% alpha (so primary trades stay dominant).
+      const markers = slice.markers || [];
+      if (markers.length) {
+        ctx.globalAlpha = 0.4;
+        markers.forEach(m => {
+          const mt = new Date(m.ts).getTime();
+          const tn = (mt - t0) / (t1 - t0);
+          if (!Number.isFinite(tn)) return;
+          const tnclamp = Math.max(0, Math.min(1, tn));
+          const win = m.result === "win" || (m.pnl || 0) >= 0;
+          const color = win ? "rgba(48,209,88,.85)" : "rgba(255,69,58,.85)";
+          const yNormM = ((Number(m.equity) || eq0) - eq0) / (eq0 || 1) * 100;
+          const x = xAt(tnclamp);
+          const y = yAt(yNormM);
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+      }
+      // Compact %axis ticks so the operator notices rebasing.
+      ctx.fillStyle = "rgba(255,159,10,.85)";
+      ctx.font = "10px -apple-system,sans-serif";
+      ctx.textAlign = "right";
+      [3, 1.5, 0, -1.5, -3].forEach(pct => {
+        if (Math.abs(pct) <= maxAbs) {
+          const y = yAt(pct);
+          if (y < pad.top - 6 || y > H - pad.bottom + 6) return;
+          ctx.fillText((pct >= 0 ? "+" : "") + pct.toFixed(1) + "%",
+            W - pad.right + 4, y + 3);
+        }
+      });
+      ctx.restore();
+    }
+
     function sliceCurveClient(curve, rangeKey) {
       if (!curve) return { points: [], markers: [], range_stats: {} };
       if (curve.ranges && curve.ranges[rangeKey]) {
@@ -1927,14 +2430,14 @@
       if (seconds == null) return { points, markers: curve.markers || [], range_stats: {} };
       const cutoff = Date.now() - seconds * 1000;
       let sliced = points.filter(p => new Date(p.ts).getTime() >= cutoff);
-      if (liveEquityBuffer.length && seconds <= 3600) {
+      if (liveEquityBuffer.length) {
         const lp = liveEquityBuffer.filter(p => new Date(p.ts).getTime() >= cutoff);
         if (lp.length) sliced = sliced.concat(lp).sort((a,b) => new Date(a.ts) - new Date(b.ts));
       }
       return { points: sliced.length ? sliced : [points[points.length - 1]], markers: (curve.markers || []).filter(m => new Date(m.ts).getTime() >= cutoff), range_stats: {} };
     }
 
-    function drawChartOnCanvas(canvas, overlayId, statsEl, curve, rangeKey, metaRef) {
+    function drawChartOnCanvas(canvas, overlayId, statsEl, curve, rangeKey, metaRef, compareRangeKey = null) {
       if (!canvas) return null;
       const ctx = canvas.getContext("2d");
       const dpr = devicePixelRatio || 1;
@@ -2023,7 +2526,8 @@
         ctx.fillText(lbl, Math.max(pad.left, Math.min(x - 28, W - pad.right - 50)), H - 14);
       }
 
-      fillBetween(ctx, times, peaks, equities, xAt, yAt, "rgba(255,69,58,.14)");
+      const _t = splineTension(rangeKey);
+      fillBetween(ctx, times, peaks, equities, xAt, yAt, "rgba(255,69,58,.14)", _t);
 
       ctx.setLineDash([5, 5]);
       ctx.strokeStyle = "rgba(255,159,10,.45)";
@@ -2033,24 +2537,31 @@
 
       const topLine = equities.map((eq, i) => Math.max(eq, balances[i]));
       const botLine = equities.map((eq, i) => Math.min(eq, balances[i]));
-      fillBetween(ctx, times, topLine, botLine, xAt, yAt, "rgba(48,209,88,.12)");
+      fillBetween(ctx, times, topLine, botLine, xAt, yAt, "rgba(48,209,88,.12)", _t);
 
+      const _gp = Math.max(0, Math.min(1, typeof _eqGlowPulse !== 'undefined' ? _eqGlowPulse : 0));
       const eqGrad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
-      eqGrad.addColorStop(0, "rgba(10,132,255,.35)");
-      eqGrad.addColorStop(1, "rgba(10,132,255,0)");
+      eqGrad.addColorStop(0, `rgba(10,132,255,${0.35 + _gp * 0.30})`);
+      eqGrad.addColorStop(0.4, `rgba(48,209,88,${_gp * 0.18})`);
+      eqGrad.addColorStop(1, `rgba(10,132,255,${_gp * 0.08})`);
       ctx.save();
       ctx.fillStyle = eqGrad;
       ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
-      for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
+      if (window.__smoothCurve !== false) {
+        const eqPts = times.map((t, i) => [xAt(t), yAt(equities[i])]);
+        cardinalSpline(ctx, eqPts, _t);
+      } else {
+        ctx.moveTo(xAt(times[0]), yAt(equities[0]));
+        for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
+      }
       ctx.lineTo(xAt(times[times.length - 1]), H - pad.bottom);
       ctx.lineTo(xAt(times[0]), H - pad.bottom);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
 
-      strokeSeries(ctx, times, balances, xAt, yAt, "rgba(152,152,157,.75)", 1.5, null);
-      strokeSeries(ctx, times, equities, xAt, yAt, "#0a84ff", 3, "rgba(10,132,255,.5)");
+      strokeSeries(ctx, times, balances, xAt, yAt, "rgba(152,152,157,.75)", 1.5, null, _t);
+      strokeSeries(ctx, times, equities, xAt, yAt, "#5ac8fa", 4, "rgba(10,132,255,.55)", _t);
 
       const lastX = xAt(times[times.length - 1]), lastY = yAt(equities[equities.length - 1]);
       ctx.fillStyle = "rgba(10,132,255,.2)";
@@ -2059,20 +2570,118 @@
       ctx.beginPath(); ctx.arc(lastX, lastY, 5, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
 
+          // Cached hatch-pattern factory: builds a 6x6 offscreen canvas with
+    // diagonal stripes and caches it on window.__markerHatch[color].
+    // Without this, drawing 200 stale markers per refreshChart() call
+    // would reallocate a fresh canvas pattern on each one.
+    (function setupMarkerHatchCache(){
+      if (typeof window === "undefined") return;
+      window.__markerHatch = window.__markerHatch || {};
+      window.__buildHatch = function(color) {
+        try {
+          if (!window.__markerHatch[color]) {
+            const c = document.createElement("canvas");
+            c.width = 6; c.height = 6;
+            const cx = c.getContext("2d");
+            cx.fillStyle = color;
+            cx.fillRect(0, 5, 6, 1.5);
+            cx.fillRect(0, 2, 2, 1.5);
+            cx.fillRect(4, 2, 2, 1.5);
+            window.__markerHatch[color] = cx.createPattern(c, "repeat") || color;
+          }
+        } catch (e) {
+          window.__markerHatch[color] = color;
+        }
+        return window.__markerHatch[color];
+      };
+    })();
+    // Marker glyphs:
+      //   Normal win/loss  - solid filled circle (existing behaviour)
+      //   BE-hit           - hollow ring (outer stroke, transparent centre)
+      //   Partial-TP       - half-fill (top half solid, bottom transparent)
+      //   Stale close      - diagonal striped pattern (cached hatch)
+      // Multiple flags may coexist on one trade (e.g. partial_tp_done was
+      // set before the trailing_stop exit fired). Priority BE > Partial >
+      // Stale > Normal so the most-actionable signal wins visually.
       markers.forEach(m => {
         const mt = new Date(m.ts).getTime();
         const win = m.result === "win" || (m.pnl || 0) >= 0;
         const color = win ? "#30d158" : "#ff453a";
         const x = xAt(mt), y = yAt(m.equity);
+        // Drop shadow disc keeps every glyph readable against the curve.
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#0a0a0c"; ctx.lineWidth = 1.5; ctx.stroke();
+        if (m.be_hit) {
+          // Hollow ring: outer disc, then destination-out punches the
+          // centre transparent so the curve shows through.
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.beginPath(); ctx.arc(x, y, 3.0, 0, Math.PI * 2); ctx.fill();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.stroke();
+        } else if (m.partial_tp) {
+          // Half-fill: clipPath restricts the disc fill to the top half.
+          ctx.save();
+          ctx.beginPath(); ctx.rect(x - 6, y - 6, 12, 6); ctx.clip();
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+          ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.stroke();
+        } else if (m.stale) {
+          // Diagonal hatched pattern via cached createPattern.
+          const pat = (window.__markerHatch && window.__markerHatch[color])
+                      || (window.__buildHatch && window.__buildHatch(color));
+          ctx.fillStyle = pat || color;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.stroke();
+        } else {
+          // Default solid win/loss dot (original behaviour).
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#0a0a0c"; ctx.lineWidth = 1.5; ctx.stroke();
+        }
       });
 
       const meta = { points, markers, pad, W, H, xAt, yAt, minV, maxV, times, rangeKey, rawCount };
       if (metaRef === "main") chartMeta = meta; else chartMetaFull = meta;
+
+      // ---- Floating PnL delta badge on the latest point ----
+      try {
+        const lastPoint = points[points.length - 1];
+        const badgeId = metaRef === "main" ? "chartPnlBadge" : "chartPnlBadgeFull";
+        const badge = document.getElementById(badgeId);
+        if (badge && lastPoint) {
+          const lastX = xAt(new Date(lastPoint.ts).getTime());
+          const lastY = yAt(lastPoint.equity);
+          const prev = points.length > 1 ? points[points.length - 2] : null;
+          const delta = prev ? lastPoint.equity - prev.equity : 0;
+          const cls = delta > 0 ? "pos" : (delta < 0 ? "neg" : "zero");
+          const sign = delta > 0 ? "+" : "";
+          badge.className = `chart-pnl-badge ${cls}`;
+          badge.textContent = `${sign}$${fmt(delta, 2)}`;
+          badge.style.left = `${lastX}px`;
+          badge.style.top = `${lastY}px`;
+          badge.style.opacity = "1";
+        }
+      } catch (_badgeErr) { /* tolerate */ }
+
+      // ---- Compare overlay (second translucent series, same axes) ----
+      // When compareRangeKey is set, draw a SECOND pre-normalised line that
+      // rebases both axes to fraction-of-period (X) and % change (Y) so the
+      // operator can see if today's curve is above / below the recent
+      // baseline at a glance. Without this hook the chart renders only the
+      // primary range and the user's "compare" button click has no effect.
+      if (compareRangeKey && compareRangeKey !== rangeKey) {
+        try {
+          _drawCompareOverlay(ctx, canvas, curve, compareRangeKey, pad, W, H);
+        } catch (_coErr) {
+          if (typeof console !== "undefined") console.warn("[compare-overlay] draw failed", _coErr);
+        }
+      }
 
       const rs = stats.period_change != null ? stats : {};
       const pnl = rs.period_change ?? (curve.pnl_total ?? 0);
@@ -2113,11 +2722,10 @@
       ctx.fillStyle = marker ? ((marker.result === "win" || (marker.pnl || 0) >= 0) ? "#30d158" : "#ff453a") : "#0a84ff";
       ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
-    }
+    }      function updateEquityHeadline(curve, live) {
+        const c = curve || equityCurveRaw || {};
+        const slice = sliceCurveClient(c, chartRange);
 
-    function updateEquityHeadline(curve, live) {
-      const c = curve || equityCurveRaw || {};
-      const slice = sliceCurveClient(c, chartRange);
       const rs = slice.range_stats || {};
       const equity = live?.equity ?? c.current_equity;
       const balance = live?.cash ?? c.current_balance;
@@ -2171,7 +2779,8 @@
         document.getElementById("chartStats"),
         equityCurveRaw,
         chartRange,
-        "main"
+        "main",
+        compareRange
       );
       if (document.getElementById("view-equity")?.classList.contains("active")) {
         drawChartOnCanvas(
@@ -2180,7 +2789,8 @@
           document.getElementById("chartStatsFull"),
           equityCurveRaw,
           chartRange,
-          "full"
+          "full",
+          compareRange
         );
       }
       syncRangeButtons(chartRange);
@@ -2245,11 +2855,54 @@
       canvas.onmouseleave = () => { tip.style.display = "none"; clearChartOverlay(overlayId); };
     }
 
+    function setupEquityPin() {
+      // Snap-to-top pinned chart when the user scrolls past the hero.
+      // Uses a sentinel element so we always know the hero's ORIGINAL
+      // document position (even after it switches to position:fixed).
+      const hero = document.getElementById("equityHeroCard") || document.querySelector(".equity-hero");
+      if (!hero || hero.dataset.pinnedInit === "1") return;
+      hero.dataset.pinnedInit = "1";
+      const sentinel = document.createElement("div");
+      sentinel.style.cssText = "height:0;width:0;pointer-events:none;";
+      hero.parentNode.insertBefore(sentinel, hero);
+      let pinned = false;
+      const io = new IntersectionObserver(([e]) => {
+        const isPast = e.boundingClientRect.bottom < 0;
+        if (isPast !== pinned) {
+          pinned = isPast;
+          hero.classList.toggle("equity-pinned", pinned);
+          // Canvas dimensions just changed — redraw so the chart
+          // repaints at the new slim size; without this the chart
+          // would keep its old bitmap stretched into the new box.
+          if (typeof equityCurveRaw !== "undefined" && equityCurveRaw && typeof drawChart === "function") {
+            requestAnimationFrame(() => {
+              drawChart(equityCurveRaw, lastData && lastData.live_portfolio);
+            });
+          }
+        }
+      }, { threshold: [0] });
+      io.observe(sentinel);
+    }
+
     function setupChartRanges() {
       document.querySelectorAll(".chart-range-btn").forEach(btn => {
         btn.addEventListener("click", () => {
           chartRange = btn.dataset.range || "1d";
           drawChart(equityCurveRaw, lastData?.live_portfolio);
+          // If primary now matches the active compare range, drop the
+          // overlay (cannot overlay identical range on itself).
+          if (compareRange && compareRange === chartRange) {
+            setCompareRange(null);
+          }
+          if (typeof refreshComparePopoverHighlights === "function") {
+            refreshComparePopoverHighlights();
+          }
+          // Range change ⇒ SSE tick cadence must change (1m/15m = 2s,
+          // 1h/4h = 5s, 1d+ = 30s). Drop the existing connection so a
+          // fresh EventSource re-subscribes with the new cadence.
+          if (typeof reconnectEquityCurveStream === "function") {
+            reconnectEquityCurveStream(chartRange);
+          }
         });
       });
     }
@@ -2258,7 +2911,523 @@
       bindChartHover("equityChart", "equityChartOverlay", "chartTooltip", () => chartMeta);
       bindChartHover("equityChartFull", "equityChartOverlayFull", "chartTooltipFull", () => chartMetaFull);
       setupChartRanges();
+      setupCurveToggles();
+      setupEquityPin();
+      setupCompareControls();
+      // SSE: live equity ticks push a fresh data point + pulse glow so the
+      // operator WATCHES the curve update during the session. Subscribes
+      // synchronously so the first tick lands after the initial drawChart.
+      try { connectEquityCurveStream(chartRange || "1d"); } catch (e) { /* tolerate */ }
     }
+
+    // ===== Compare overlay controller =====
+    // State mutator + popover controller used by the Compare dropdown.
+    // When set, drawChartOnCanvas overlays a translucent series rebased
+    // to fraction-of-period (X) and % change (Y) so today's curve is
+    // visually compared against the recent baseline at a glance.
+    function setCompareRange(range) {
+      compareRange = range || null;
+      syncCompareToggles();
+      if (typeof updateAxisPercentNotes === "function") {
+        updateAxisPercentNotes(!!compareRange && compareRange !== chartRange);
+      }
+      drawChart(equityCurveRaw, lastData?.live_portfolio);
+      if (typeof refreshComparePopoverHighlights === "function") {
+        refreshComparePopoverHighlights();
+      }
+    }
+    function syncCompareToggles() {
+      const pairs = [
+        ["compareToggleEquity", "comparePopoverEquity"],
+        ["compareToggleFull", "comparePopoverFull"],
+      ];
+      const has = !!compareRange && compareRange !== chartRange;
+      const lab = has
+        ? "Compare vs " + (RANGE_LABELS[compareRange] || compareRange).replace(/^Last\s+/i, "")
+        : "Compare";
+      for (const [btnId] of pairs) {
+        const btn = document.getElementById(btnId);
+        if (!btn) continue;
+        const span = btn.querySelector(".compare-toggle-suffix");
+        btn.classList.toggle("active", has);
+        btn.innerHTML = "";
+        btn.appendChild(document.createTextNode(lab + " "));
+        btn.appendChild(span);
+        if (!span) {
+          const s = document.createElement("span");
+          s.className = "compare-toggle-suffix";
+          s.textContent = "\u25be";
+          btn.appendChild(s);
+        } else {
+          span.textContent = "\u25be";
+        }
+      }
+    }
+    function updateAxisPercentNotes(active) {
+      const ids = ["equityRangeLabel", "equityRangeLabelFull"];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const note = el.querySelector(".axis-percent-note");
+        if (active && !note) {
+          const n = document.createElement("span");
+          n.className = "axis-percent-note";
+          n.textContent = "% of period";
+          el.appendChild(n);
+        } else if (!active && note) {
+          note.remove();
+        }
+      }
+    }
+    function refreshComparePopoverHighlights() {
+      const popoverIds = [
+        "comparePopoverEquity",
+        "comparePopoverFull",
+      ];
+      for (const id of popoverIds) {
+        const pop = document.getElementById(id);
+        if (!pop) continue;
+        const opts = pop.querySelectorAll(".compare-option");
+        for (const o of opts) {
+          const r = o.getAttribute("data-range") || "";
+          const isActive = !!compareRange && r === compareRange;
+          const isPrimary = r && r === chartRange;
+          o.classList.toggle("active", isActive);
+          o.classList.toggle("disabled", isPrimary);
+          o.disabled = !!isPrimary;
+        }
+      }
+    }
+    function setupCompareControls() {
+      const ctrls = [
+        ["compareToggleEquity", "comparePopoverEquity"],
+        ["compareToggleFull", "comparePopoverFull"],
+      ];
+      for (const [btnId, popId] of ctrls) {
+        const btn = document.getElementById(btnId);
+        const pop = document.getElementById(popId);
+        if (!btn || !pop) continue;
+        btn.addEventListener("click", (ev) => {
+          const others = document.querySelectorAll(".compare-popover.open");
+          for (const p of others) if (p !== pop) p.classList.remove("open");
+          pop.classList.toggle("open");
+          ev.stopPropagation();
+        });
+        const opts = pop.querySelectorAll(".compare-option");
+        for (const o of opts) {
+          o.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            if (o.disabled) return;
+            const r = o.getAttribute("data-range") || "";
+            setCompareRange(r || null);
+            pop.classList.remove("open");
+          });
+        }
+      }
+      // Click anywhere outside closes every popover.
+      document.addEventListener("click", (ev) => {
+        if (!ev.target || !ev.target.closest || !ev.target.closest(".compare-control")) {
+          const open = document.querySelectorAll(".compare-popover.open");
+          for (const p of open) p.classList.remove("open");
+        }
+      });
+      refreshComparePopoverHighlights();
+    }
+
+    // ---- Equity-curve SSE stream + pulse animation --------------------
+    // /api/equity_curve/stream pushes a fresh equity tick at the cadence
+    // expressed by the requested range (2s for 1m/15m, 5s for 1h/4h, 30s
+    // for 1d/7d/30d/all). The SPA appends each tick to the in-memory
+    // curve, repaints, and draws a glowing radial pulse on the latest
+    // point via a separate overlay canvas so drawChart() (which clears
+    // the base canvas) doesn't wipe the glow.
+    //
+    // Public hooks read by debug / tests:
+    //   window.__eqStream     → current EventSource (or null)
+    //   window.__eqStreamErrs → cumulative error count
+    //   window.__eqStreamLastTs → ms timestamp of last accepted tick
+    let _eqPulseAnimFrames = new WeakMap();   // canvas → {rafId, start}
+    // Gradient-fill glow pulse: brightens the area under the curve on each live tick.
+    // 0 = idle, 1 = full brightness. Animated back to 0 via rAF.
+    let _eqGlowPulse = 0;
+    let _eqGlowRaf = null;
+    function _triggerGlowPulse() {
+      _eqGlowPulse = 1;
+      if (_eqGlowRaf) return; // already animating — new tick just resets peak
+      const start = performance.now();
+      const dur = 1200; // ms to fade back to idle
+      let lastRedraw = 0;
+      const tick = (now) => {
+        const elapsed = now - start;
+        _eqGlowPulse = Math.max(0, 1 - elapsed / dur);
+        // Redraw at ~30fps so the gradient actually pulses visually
+        if (_eqGlowPulse > 0 && now - lastRedraw > 33) {
+          lastRedraw = now;
+          if (typeof equityCurveRaw !== 'undefined' && equityCurveRaw && typeof drawChart === 'function') {
+            drawChart(equityCurveRaw, lastData?.live_portfolio);
+          }
+        }
+        if (_eqGlowPulse > 0) {
+          _eqGlowRaf = requestAnimationFrame(tick);
+        } else {
+          _eqGlowPulse = 0;
+          _eqGlowRaf = null;
+          // Final redraw at idle so gradient settles back to normal
+          if (typeof equityCurveRaw !== 'undefined' && equityCurveRaw && typeof drawChart === 'function') {
+            drawChart(equityCurveRaw, lastData?.live_portfolio);
+          }
+        }
+      };
+      _eqGlowRaf = requestAnimationFrame(tick);
+    }
+    function _pulseOnCanvas(canvas, lastX, lastY) {
+      if (!canvas || !Number.isFinite(lastX) || !Number.isFinite(lastY)) return;
+      const dpr = devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Cancel any in-flight pulse on this canvas so the new tick replaces
+      // the old glow instead of stacking on it.
+      const inflight = _eqPulseAnimFrames.get(canvas);
+      if (inflight) cancelAnimationFrame(inflight.rafId);
+
+      const start = performance.now();
+      const dur = 850;     // total fade ms
+      const tick = (now) => {
+        const t = Math.min((now - start) / dur, 1);
+        const r = 6 + t * 22;          // expanding ring
+        const alpha = (1 - t) * 0.85;  // fading alpha
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        // Outer glow
+        const grad = ctx.createRadialGradient(lastX, lastY, 1, lastX, lastY, r);
+        grad.addColorStop(0, `rgba(10,132,255,${alpha})`);
+        grad.addColorStop(0.5, `rgba(48,209,88,${alpha * 0.4})`);
+        grad.addColorStop(1, `rgba(10,132,255,0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(lastX, lastY, r, 0, Math.PI * 2); ctx.fill();
+        // Inner core dot
+        ctx.fillStyle = `rgba(255,255,255,${Math.max(alpha, 0.4)})`;
+        ctx.beginPath(); ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2); ctx.fill();
+        if (t < 1) {
+          const rafId = requestAnimationFrame(tick);
+          _eqPulseAnimFrames.set(canvas, { rafId, start });
+        } else {
+          _eqPulseAnimFrames.delete(canvas);
+          ctx.clearRect(0, 0, rect.width, rect.height);
+        }
+      };
+      const rafId = requestAnimationFrame(tick);
+      _eqPulseAnimFrames.set(canvas, { rafId, start });
+    }
+
+    function _firePulseOnAllCharts() {
+      // The hero (Dash) and main view both run drawChartOnCanvas(... "main")
+      // which writes into the SAME `chartMeta` global (line 2175). The full
+      // screen chart writes into chartMetaFull. We pulse each canvas using
+      // its own meta. Each pulse canvas is sized from its sibling chart's
+      // getBoundingClientRect() so (lastX, lastY) land on the right pixel
+      // regardless of which canvas is the meta source.
+      //
+      // REGRESSION GUARD (2026-07-24): first cut of this function looked
+      // up "chartMetaDash" which is NOT declared anywhere in the file. The
+      // hero pulse silently no-op'd and the user saw the chart redraw
+      // without a glow. Now we explicitly fall back to `chartMeta` for the
+      // hero canvas.
+      const fire = (chart, pulse, meta) => {
+        if (!chart || !pulse || !meta) return;
+        const pts = (meta.points || []);
+        if (!pts.length) return;
+        const lastT = new Date(pts[pts.length - 1].ts).getTime();
+        const lastV = pts[pts.length - 1].equity;
+        try {
+          const x = meta.xAt(lastT);
+          const y = meta.yAt(lastV);
+          _pulseOnCanvas(pulse, x, y);
+        } catch (e) { /* tolerate */ }
+      };
+      const meta = typeof chartMeta !== "undefined" ? chartMeta : null;
+      fire(document.getElementById("equityChart"),
+           document.getElementById("equityPulse"), meta);
+      fire(document.getElementById("equityChartFull"),
+           document.getElementById("equityPulseFull"),
+           typeof chartMetaFull !== "undefined" ? chartMetaFull : null);
+    }
+
+    function _appendEquityTickToCurve(tick, range) {
+      if (!tick || typeof tick.equity !== "number") return false;
+      // REGRESSION GUARD (2026-07-24): the FIRST cut of this function wrote
+      // the tick into `equityCurveRaw.points` only. But sliceCurveClient()
+      // reads `curve.ranges[rangeKey].points` FIRST and only falls back to
+      // the top-level `points` for rangeKeys that the server hasn't
+      // populated. So a tick to .points was INVISIBLE on the chart for any
+      // range the server had computed. Now we write to BOTH the existing
+      // liveEquityBuffer (which sliceCurveClient merges for seconds <= 3600)
+      // AND to `equityCurveRaw.ranges[rangeKey].points` so 4h / 1d / 7d /
+      // 30d / all also see the live tick on the next drawChart() call.
+      const pt = {
+        ts: tick.ts,
+        equity: round2(tick.equity),
+        cash: round2(tick.cash ?? tick.balance ?? tick.equity),
+        balance: round2(tick.balance ?? tick.cash ?? tick.equity),
+        unrealized_pnl: round2(tick.unrealized_pnl ?? 0),
+        source: tick.source || "sse",
+      };
+      // Skip degenerate ticks so a flat session doesn't churn drawChart+.
+      const last = liveEquityBuffer[liveEquityBuffer.length - 1];
+      if (last && last.equity === pt.equity && (last.unrealized_pnl || 0) === pt.unrealized_pnl) {
+        return false;
+      }
+      // ---- liveEquityBuffer (existing pattern — sliceCurveClient merges
+      //      it into slices whose seconds <= 3600, i.e. 1m / 15m / 1h).
+      try {
+        liveEquityBuffer.push({ ts: pt.ts, equity: pt.equity, event: "sse" });
+        // Trim to 6 min window so the buffer can't grow unbounded between
+        // /api/state pollls (matches the existing cutoff in renderExtras).
+        const cutoff = Date.now() - 6 * 60 * 1000;
+        while (liveEquityBuffer.length && new Date(liveEquityBuffer[0].ts).getTime() < cutoff) {
+          liveEquityBuffer.shift();
+        }
+      } catch (e) { /* tolerate */ }
+      // ---- equityCurveRaw.ranges[rangeKey].points (push to active range
+      //      so 4h/1d/7d/30d/all also get the live tick; the server's next
+      //      /api/state fetch will overwrite with the canonical history).
+      try {
+        if (equityCurveRaw && typeof equityCurveRaw === "object" && range) {
+          if (!equityCurveRaw.ranges || typeof equityCurveRaw.ranges !== "object") {
+            equityCurveRaw.ranges = {};
+          }
+          const bucket = equityCurveRaw.ranges[range] || (equityCurveRaw.ranges[range] = { points: [], markers: [], range_stats: {} });
+          if (!Array.isArray(bucket.points)) bucket.points = [];
+          // Drop any stale point with the same ts so dedup doesn't double.
+          bucket.points = bucket.points.filter(p => p && p.ts !== pt.ts);
+          bucket.points.push(pt);
+          // Cap so we don't grow unbounded before the server overwrites.
+          if (bucket.points.length > 200) bucket.points.splice(0, bucket.points.length - 200);
+        }
+      } catch (e) { /* tolerate */ }
+      // ---- mirror into lastData.equity_curve for headline derivatives.
+      try {
+        if (lastData && typeof lastData === "object") {
+          lastData.equity_curve = lastData.equity_curve || {};
+          if (typeof tick.starting_equity === "number") {
+            lastData.equity_curve.starting_equity = tick.starting_equity;
+          }
+          if (typeof tick.equity === "number") {
+            lastData.equity_curve.current_equity = tick.equity;
+          }
+        }
+      } catch (e) { /* mirror is best-effort */ }
+      return true;
+    }
+
+    function round2(v) {
+      return Math.round((Number(v) || 0) * 100) / 100;
+    }
+
+    // Smooth equity-curve tween (2026-07-27): instead of snapping the whole
+    // line to the new live tick instantly, we animate the last segment over
+    // a short duration so the curve visibly glides to the new point.  The
+    // tween interpolates the new point's timestamp/equity from the previous
+    // drawn state to the current one, which also smooths y-axis rescaling.
+    function _tweenCurveForAnimation(curve, rangeKey, prevMeta, progress) {
+      if (!prevMeta || !prevMeta.points || prevMeta.points.length < 1 || !curve) return curve;
+      const prevLast = prevMeta.points[prevMeta.points.length - 1];
+      const prevTs = new Date(prevLast.ts).getTime();
+      const prevEquity = prevLast.equity;
+
+      const slice = sliceCurveClient(curve, rangeKey);
+      let points = (slice.points || []).slice();
+      if (points.length < 2) return curve;
+      const currLast = points[points.length - 1];
+      const currTs = new Date(currLast.ts).getTime();
+      const currEquity = currLast.equity;
+
+      // Ease-out cubic for a natural "arrive and settle" feel.
+      const ease = 1 - Math.pow(1 - Math.min(progress, 1), 3);
+      const ghostTs = prevTs + (currTs - prevTs) * ease;
+      const ghostEquity = prevEquity + (currEquity - prevEquity) * ease;
+
+      // Replace points that came after the previous last point with the ghost.
+      let cutIdx = 0;
+      while (cutIdx < points.length && new Date(points[cutIdx].ts).getTime() <= prevTs) {
+        cutIdx++;
+      }
+      const ghost = { ...currLast, ts: new Date(ghostTs).toISOString(), equity: ghostEquity, source: "tween" };
+      const newPoints = points.slice(0, cutIdx).concat([ghost]);
+
+      // Clone the curve so we don't mutate the canonical one.
+      const newCurve = JSON.parse(JSON.stringify(curve));
+      if (!newCurve.ranges) newCurve.ranges = {};
+      if (!newCurve.ranges[rangeKey]) newCurve.ranges[rangeKey] = { points: [], markers: [], range_stats: {} };
+      newCurve.ranges[rangeKey].points = newPoints;
+      return newCurve;
+    }
+
+    function animateEquityTick(live) {
+      if (!equityCurveRaw) return;
+      // Capture the last drawn state before we start morphing to the new one.
+      const prevMetaMain = chartMeta ? { points: chartMeta.points.slice() } : null;
+      const prevMetaFull = chartMetaFull ? { points: chartMetaFull.points.slice() } : null;
+
+      // No previous frame? Just draw normally (first tick / after range change).
+      if (!prevMetaMain && !prevMetaFull) {
+        drawChart(equityCurveRaw, live);
+        return;
+      }
+
+      if (_chartAnim) {
+        cancelAnimationFrame(_chartAnim.rafId);
+        _chartAnim = null;
+      }
+      const DURATION = 350; // ms, short enough to feel live, long enough to glide
+      const start = performance.now();
+      let lastCurve = equityCurveRaw;
+
+      const step = (now) => {
+        const elapsed = now - start;
+        const t = Math.min(elapsed / DURATION, 1);
+
+        // Build per-chart tweened curves.  Both use the same range and base
+        // curve, so the data is consistent; each chart animates from its own
+        // previous visible points so the main and full-screen views both move
+        // smoothly.
+        let tweenMain = lastCurve;
+        let tweenFull = lastCurve;
+        if (prevMetaMain) {
+          tweenMain = _tweenCurveForAnimation(lastCurve, chartRange, prevMetaMain, t);
+        }
+        if (prevMetaFull) {
+          tweenFull = _tweenCurveForAnimation(lastCurve, chartRange, prevMetaFull, t);
+        }
+
+        // Render each chart with its tweened copy.
+        if (prevMetaMain) {
+          drawChartOnCanvas(
+            document.getElementById("equityChart"),
+            "equityChartOverlay",
+            document.getElementById("chartStats"),
+            tweenMain,
+            chartRange,
+            "main",
+            compareRange
+          );
+          updateEquityHeadline(tweenMain, live);
+        }
+        if (prevMetaFull && document.getElementById("view-equity")?.classList.contains("active")) {
+          drawChartOnCanvas(
+            document.getElementById("equityChartFull"),
+            "equityChartOverlayFull",
+            document.getElementById("chartStatsFull"),
+            tweenFull,
+            chartRange,
+            "full",
+            compareRange
+          );
+        }
+
+        if (t < 1) {
+          _chartAnim = { rafId: requestAnimationFrame(step) };
+        } else {
+          _chartAnim = null;
+          drawChart(lastCurve, live); // final canonical draw to lock exact values
+        }
+      };
+
+      _chartAnim = { rafId: requestAnimationFrame(step) };
+    }
+
+    // Per-range minimum time between live-tick animations.  The server already
+    // emits at 2s/5s/30s cadences, but this guard prevents a slow client from
+    // being drowned if the server ever sends bursts, and lets longer ranges
+    // feel calmer even when the active window covers many hours.
+    const _EQ_STREAM_THROTTLE_MS = {
+      "1m": 2000, "15m": 2000,
+      "1h": 5000, "4h": 5000,
+      "1d": 30000, "7d": 30000, "30d": 30000, "all": 30000,
+    };
+
+    function connectEquityCurveStream(rangeKey) {
+      if (typeof EventSource === "undefined") return;
+      const range = rangeKey || chartRange || "1d";
+      const url = `/api/equity_curve/stream?range=${encodeURIComponent(range)}`;
+      // Disconnect any prior connection so the cadence matches the new range.
+      if (window.__eqStream) {
+        try { window.__eqStream.close(); } catch (e) { /* tolerate */ }
+        window.__eqStream = null;
+      }
+      // First tick fetch in parallel with EventSource — same pattern as
+      // /api/profit_quality so the chart isn't blank during the 2-30s
+      // gap between the SSE "open" event and the first tick.
+      fetch(`/api/equity_curve?range=${encodeURIComponent(range)}`, { headers: { "Accept": "application/json" } })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!data) return;
+          const tick = data.equity_tick || data;
+          if (!tick) return;
+          // Pass `range` so _appendEquityTickToCurve can push the tick into
+          // equityCurveRaw.ranges[range]?.points (without it the chart's
+          // 4h/1d/7d/30d/all view never picks up the live point — see the
+          // regression-guard note at the function definition).
+          if (_appendEquityTickToCurve(tick, range)) {
+            if (typeof animateEquityTick === "function" && equityCurveRaw) {
+              animateEquityTick(lastData?.live_portfolio);
+            }
+            window.__eqStreamLastTs = Date.now();
+          }
+        })
+        .catch(() => { /* SSE will fill it in */ });
+
+      const ev = new EventSource(url);
+      window.__eqStream = ev;
+      window.__eqStreamErrs = window.__eqStreamErrs || 0;
+      ev.addEventListener("open", () => {
+        if (typeof console !== "undefined") console.info(`[eq-stream] connected range=${range}`);
+      });
+      ev.addEventListener("equity_tick", (e) => {
+        try {
+          const envelope = JSON.parse(e.data || "{}");
+          const tick = envelope.equity_tick || envelope;
+          if (!tick || typeof tick.equity !== "number") return;
+          // `range` is captured in the EventSource URL, so SSE ticks can be
+          // tagged with the active range and pushed into both liveEquityBuffer
+          // AND equityCurveRaw.ranges[range].points (see _appendEquityTickToCurve).
+          if (!_appendEquityTickToCurve(tick, range)) return;
+
+          // Throttle redraws per range so 1h/4h/1d/etc. don't feel frantic.
+          // The tick is still appended above so the curve is current; we just
+          // skip the expensive animation if one ran very recently for this range.
+          const now = Date.now();
+          const throttleMs = _EQ_STREAM_THROTTLE_MS[range] || 5000;
+          if (!window.__eqStreamLastTsByRange) window.__eqStreamLastTsByRange = {};
+          const lastTs = window.__eqStreamLastTsByRange[range] || 0;
+          if (now - lastTs < throttleMs) {
+            if (typeof console !== "undefined") console.info(`[eq-stream] throttled tick for ${range}`);
+            return;
+          }
+          window.__eqStreamLastTsByRange[range] = now;
+          window.__eqStreamLastTs = now;
+
+          if (typeof animateEquityTick === "function" && equityCurveRaw) {
+            animateEquityTick(lastData?.live_portfolio);
+            _firePulseOnAllCharts();
+            _triggerGlowPulse();
+          }
+        } catch (err) {
+          if (typeof console !== "undefined") console.warn("[eq-stream] parse failed", err);
+        }
+      });
+      ev.addEventListener("error", () => {
+        window.__eqStreamErrs = (window.__eqStreamErrs || 0) + 1;
+        // EventSource auto-reconnects; do not close.
+      });
+    }
+    // Exposed for setupChartRanges() above so range-button clicks can
+    // hot-swap the cadence from 2s → 5s → 30s without a page reload.
+    window.reconnectEquityCurveStream = connectEquityCurveStream;
 
     function renderTradeAlert(status, verdict) {
       const el = document.getElementById("tradeAlert");
@@ -4487,5 +5656,334 @@
           .catch(() => { /* SSE will fill it in */ });
       })();
     </script>
+
+  <!-- ===== Render-time tracker (background) ===== -->
+  <!-- Captures the per-tab click→rAF-paint cost and beacons it to
+       /api/render_metrics so the dev_proxy can log it without console cost.
+       See scripts/dev_proxy.py for the GET/POST handlers. -->
+  <script>
+  (function () {
+    if (window.__renderTrackerLoaded) return;
+    window.__renderTrackerLoaded = true;
+
+    function makeChip(tab) {
+      var s = document.createElement('span');
+      s.className = 'last-render-chip';
+      s.id = 'last-render-' + tab;
+      s.title = 'last render ms for ' + tab;
+      s.textContent = '\u2014ms';
+      return s;
+    }
+
+    function setupChips() {
+      try {
+        var btns = document.querySelectorAll('.nav-item[data-view], .mobile-tab[data-view]');
+        for (var i = 0; i < btns.length; i++) {
+          var btn = btns[i];
+          var tab = btn.dataset && btn.dataset.view;
+          if (!tab) continue;
+          if (btn.querySelector('.last-render-chip')) continue;
+          btn.appendChild(makeChip(tab));
+        }
+      } catch (_) { /* silently drop — UI chip is best-effort */ }
+    }
+
+    function colorizeChip(chip, ms) {
+      if (!chip) return;
+      chip.classList.remove('warn', 'bad', 'live');
+      if (ms <= 24)      chip.classList.add('live');
+      else if (ms <= 80) chip.classList.add('warn');
+      else               chip.classList.add('bad');
+    }
+
+    function fireBeacon(payload) {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(
+            '/api/render_metrics',
+            new Blob([payload], { type: 'application/json' })
+          );
+          return;
+        }
+      } catch (_) { /* fall through to fetch */ }
+      try {
+        if (window.fetch) {
+          fetch('/api/render_metrics', {
+            method: 'POST',
+            body: payload,
+            keepalive: true,
+            headers: { 'Content-Type': 'application/json' }
+          }).catch(function () {});
+        }
+      } catch (_) { /* silently drop */ }
+    }
+
+    function onTabClick(ev) {
+      var btn = ev.target && ev.target.closest && ev.target.closest('[data-view]');
+      if (!btn) return;
+      var tab = btn.dataset && btn.dataset.view;
+      if (!tab) return;
+      var now = (window.performance && performance.now) ? function () { return performance.now(); }
+                                                            : function () { return Date.now(); };
+      var t0 = now();
+      var finished = false;
+      function finish() {
+        if (finished) return;
+        finished = true;
+        var ms = Math.max(0, Math.round(now() - t0));
+        var ts = Date.now();
+        var payload = JSON.stringify({ tab: tab, last_render_ms: ms, ts: ts });
+        fireBeacon(payload);
+        try {
+          var chips = document.querySelectorAll('.last-render-chip[id="last-render-' + tab + '"]');
+          for (var i = 0; i < chips.length; i++) {
+            chips[i].textContent = ms + 'ms';
+            colorizeChip(chips[i], ms);
+          }
+        } catch (_) { /* silently drop */ }
+        window.__lastRender = { tab: tab, last_render_ms: ms, ts: ts };
+      }
+      if (window.requestAnimationFrame) {
+        requestAnimationFrame(function () { requestAnimationFrame(finish); });
+      } else {
+        setTimeout(finish, 32);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupChips);
+    } else {
+      setupChips();
+    }
+    document.addEventListener('click', onTabClick, true);
+  })();
+  </script>
+
+  <!-- ===== Render-time tracker (background) ===== -->
+  <!-- Adds a "last render ms" chip to each bottom-nav tab and beacons the
+       click→double-rAF-paint cost to /api/render_metrics (handled in
+       scripts/dev_proxy.py). Zero console output; falls back to keepalive
+       fetch when sendBeacon is unavailable. Idempotent on reload. -->
+  <script>
+  (function () {
+    if (window.__renderTrackerLoaded) return;
+    window.__renderTrackerLoaded = true;
+
+    function paintChip(tab) {
+      var s = document.createElement('span');
+      s.className = 'last-render-chip';
+      s.setAttribute('data-render-chip', tab);
+      s.title = 'last render ms for ' + tab;
+      s.textContent = '\u2014ms';
+      return s;
+    }
+
+    function setupChips() {
+      try {
+        var btns = document.querySelectorAll('[data-view]');
+        for (var i = 0; i < btns.length; i++) {
+          var btn = btns[i];
+          var tab = btn.dataset && btn.dataset.view;
+          if (!tab || btn.querySelector('.last-render-chip')) continue;
+          btn.appendChild(paintChip(tab));
+        }
+      } catch (_) { /* silently drop — chip is best-effort */ }
+    }
+
+    function colorize(chip, ms) {
+      if (!chip) return;
+      chip.classList.remove('warn', 'bad', 'live');
+      if (ms > 200)      chip.classList.add('bad');
+      else if (ms > 24)  chip.classList.add('warn');
+      else               chip.classList.add('live');
+    }
+
+    function beacon(payload) {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(
+            '/api/render_metrics',
+            new Blob([payload], { type: 'application/json' })
+          );
+          return;
+        }
+      } catch (_) { /* fall through */ }
+      try {
+        if (window.fetch) {
+          fetch('/api/render_metrics', {
+            method: 'POST',
+            body: payload,
+            keepalive: true,
+            headers: { 'Content-Type': 'application/json' }
+          }).catch(function () {});
+        }
+      } catch (_) { /* silently drop */ }
+    }
+
+    function onTabClick(ev) {
+      // Skip editable fields — extremely rare here but defensive.
+      var t = ev.target;
+      if (t && t.closest && t.closest('input, textarea, select, [contenteditable]')) return;
+      var btn = t && t.closest && t.closest('[data-view]');
+      if (!btn) return;
+      var tab = btn.dataset && btn.dataset.view;
+      if (!tab) return;
+      var nowFn = (window.performance && performance.now)
+        ? function () { return performance.now(); }
+        : function () { return Date.now(); };
+      var t0 = nowFn();
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        var ms = Math.max(0, Math.round(nowFn() - t0));
+        var payload = JSON.stringify({ tab: tab, last_render_ms: ms, ts: Date.now() });
+        beacon(payload);
+        try {
+          var chips = document.querySelectorAll('.last-render-chip[data-render-chip="' + tab + '"]');
+          for (var i = 0; i < chips.length; i++) {
+            chips[i].textContent = ms + 'ms';
+            colorize(chips[i], ms);
+          }
+        } catch (_) { /* silently drop */ }
+        window.__lastRender = { tab: tab, last_render_ms: ms, ts: Date.now() };
+      }
+      // Double rAF — guarantees paint has committed before we measure.
+      if (window.requestAnimationFrame) {
+        requestAnimationFrame(function () { requestAnimationFrame(finish); });
+      } else {
+        setTimeout(finish, 32);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupChips);
+    } else {
+      setupChips();
+    }
+    document.addEventListener('click', onTabClick, true);
+  })();
+
+  /* ---------------------------------------------------------------------
+   *  Live Source Chip (2026-07-26) - self-contained, no dependency on
+   *  any specific render function. Injects CSS into <head>, prepends the
+   *  chip to every `.equity-hero`, and polls /api/state on its own
+   *  setInterval. Survives tab switches and view redraws because the chip
+   *  lives in the equity-hero DOM (which is itself persistent across
+   *  redraws of equityHeadlineKpis innerHTML).
+   *
+   *  Server (`dashboard/server.py :: aggregate_state`) sets
+   *    payload.account.source to one of:
+   *      'paper_orders.json' | 'health.json' | 'mt5_live' | 'account.json' | 'none'
+   *  We strip a trailing '.json' and apply colour coding:
+   *      paper_orders / health            -> green  (live)
+   *      mt5_live                         -> blue
+   *      account_json (account.json)      -> red, pulsing (stale fallback)
+   *      none                             -> red, pulsing (no source)
+   * ------------------------------------------------------------------- */
+  (function setupLiveSourceChip() {
+    if (window.__liveSourceChipReady) return;
+    window.__liveSourceChipReady = true;
+
+    var CSS = [
+      '.live-source-chip-row { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:0 4px 6px 4px; font-size:12px; color:var(--muted); }',
+      '.live-source-chip-row .src-lbl { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted2); font-weight:700; }',
+      '.live-source-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-weight:700; font-size:11px; letter-spacing:.06em; text-transform:uppercase; border:1px solid var(--border); background:var(--surface3); color:var(--text); white-space:nowrap; transition:background-color .15s ease, color .15s ease, border-color .15s ease; }',
+      '.live-source-chip::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 6px currentColor; }',
+      '.live-source-chip.live { color:#0c5; border-color:rgba(0,200,80,.45); background:rgba(0,200,80,.10); }',
+      '.live-source-chip.account_json, .live-source-chip.none { color:#f44; border-color:rgba(255,68,68,.55); background:rgba(255,68,68,.12); animation:live-chip-pulse 1.2s ease-in-out infinite; }',
+      '.live-source-chip.mt5_live { color:var(--blue); border-color:rgba(120,180,255,.45); background:rgba(120,180,255,.10); }',
+      '.live-source-chip.error { color:var(--orange); border-color:rgba(255,159,10,.55); background:rgba(255,159,10,.12); }',
+      '@keyframes live-chip-pulse { 0%,100% { box-shadow:0 0 0 0 rgba(255,68,68,.0); } 50% { box-shadow:0 0 0 4px rgba(255,68,68,.35); } }',
+      '@media (max-width:640px) { .live-source-chip-row { justify-content:flex-start; padding:4px 0 8px 0; } .live-source-chip { font-size:10px; padding:3px 8px; } }',
+    ].join(' ');
+
+    var style = document.createElement('style');
+    style.setAttribute('data-source', 'live-source-chip');
+    style.textContent = CSS;
+    document.head.appendChild(style);
+
+    function ensureChipIn(equityHero) {
+      if (!equityHero || equityHero.querySelector(':scope > .live-source-chip-row')) return;
+      var row = document.createElement('div');
+      row.className = 'live-source-chip-row';
+      row.innerHTML = '<span class="src-lbl">Live source</span>' +
+                      '<span class="live-source-chip live" id="liveSourceChip" data-source="paper_orders" title="Which state file is currently driving the account tile">paper_orders</span>';
+      equityHero.insertBefore(row, equityHero.firstChild);
+    }
+
+    function refreshChipLocations() {
+      var heroes = document.querySelectorAll('.equity-hero');
+      for (var i = 0; i < heroes.length; i++) ensureChipIn(heroes[i]);
+    }
+
+    function normalize(s) {
+      if (!s) return 'none';
+      s = String(s).toLowerCase().replace(/\.json$/i, '');
+      if (s === 'paper_orders') return 'paper_orders';
+      if (s === 'health') return 'health';
+      if (s === 'mt5_live') return 'mt5_live';
+      if (s === 'account_json' || s === 'account') return 'account_json';
+      return 'none';
+    }
+
+    function applyChip(src) {
+      var finalSrc = normalize(src);
+      var label = (finalSrc === 'account_json') ? 'account.json' : finalSrc;
+      var chips = document.querySelectorAll('#liveSourceChip');
+      for (var i = 0; i < chips.length; i++) {
+        var chip = chips[i];
+        chip.className = 'live-source-chip ' + finalSrc;
+        chip.textContent = label;
+        chip.dataset.source = finalSrc;
+        chip.title = (finalSrc === 'account_json' || finalSrc === 'none')
+          ? 'STALE: all live sources are dead - dashboard is using the account.json file mirror. Check bot write loop.'
+          : 'Live source: ' + finalSrc;
+      }
+    }
+
+    function applyChipError() {
+      var chips = document.querySelectorAll('#liveSourceChip');
+      for (var i = 0; i < chips.length; i++) {
+        var chip = chips[i];
+        chip.className = 'live-source-chip error';
+        chip.textContent = 'fetch_err';
+        chip.dataset.source = 'error';
+        chip.title = 'NETWORK ERROR: dashboard lost contact with the API. Check /api/state and dashboard server.';
+      }
+    }
+
+    var lastApplied = null;
+    var inflight = false;
+
+    async function tick() {
+      if (inflight) return;
+      inflight = true;
+      try {
+        var r = await fetch('/api/state?lite=1', { cache: 'no-store', credentials: 'same-origin' });
+        if (!r.ok) { applyChipError(); lastApplied = '__fetch_err__'; return; }
+        var d = await r.json();
+        var src = (d && d.account && d.account.source) ? d.account.source : 'none';
+        var norm = normalize(src);
+        if (norm !== lastApplied) { applyChip(norm); lastApplied = norm; }
+      } catch (e) {
+        applyChipError();
+        lastApplied = '__fetch_err__';
+      } finally {
+        inflight = false;
+      }
+    }
+
+    // MutationObserver re-runs ensureChipIn when .equity-hero ancestors mount/unmount.
+    // :scope inside ensureChipIn keeps the work idempotent.
+    var heroObserver = new MutationObserver(refreshChipLocations);
+    heroObserver.observe(document.body, { childList: true, subtree: true });
+
+    refreshChipLocations();
+    applyChip('paper_orders');
+    setTimeout(tick, 250);
+    setInterval(tick, 2000);
+  })();
+  </script>
 </body>
 </html>

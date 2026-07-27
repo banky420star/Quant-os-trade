@@ -17,7 +17,7 @@ from core.utils import read_json_state, utc_now_iso, write_json_state
 STATE_FILE = "market_closed_backoff.json"
 
 # MT5 retcodes that mean "market is closed / trading disabled right now".
-MARKET_CLOSED_RETCODES = {10018, 10019, 10020, -10019}
+MARKET_CLOSED_RETCODES = {10018, 10020}
 MARKET_CLOSED_TOKENS = ("market closed", "trade disabled", "market is closed", "trading disabled")
 
 

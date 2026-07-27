@@ -209,6 +209,26 @@ def run() -> dict | bool:
 
     try:
         terminal_mgr = MT5TerminalManager(config, logger)
+
+        # Refresh the cached MT5 account snapshot EVERY run so downstream
+        # loops (verifier, exposure, risk) never size positions from a
+        # stale account.json written only at startup. Do this BEFORE any
+        # early return so the file mirror stays in sync.
+        connection = None
+        try:
+            connection = MT5ConnectionManager(config, logger)
+            connection.connect()
+            account = connection.account_snapshot()
+            write_json_state("account.json", {"timestamp": utc_now_iso(), **account})
+        except Exception as exc:
+            logger.warning("account.json refresh failed: %s", exc)
+        finally:
+            if connection is not None:
+                try:
+                    connection.disconnect()
+                except Exception:
+                    pass
+
         # If startup() hasn't been called yet (e.g. legacy supervisor),
         # spin it up here so we never silently miss the event worker.
         started = terminal_mgr.start_event_loop(
@@ -234,6 +254,7 @@ def run() -> dict | bool:
                 getattr(last, "timestamp", None),
             )
             return candle_refresh_now(config=config, logger=logger) or True
+
         return True
     except Exception as exc:
         logger.error("Data Loop run() failed (non-fatal): %s", exc)

@@ -20,9 +20,9 @@ from core.utils import read_json_state, utc_now_iso
 
 
 def bollinger_enabled(config: dict[str, Any]) -> bool:
-    return bool((config.get("strategies") or {}).get("diversification") or {}).get(
+    return bool(((config.get("strategies") or {}).get("diversification") or {}).get(
         "bollinger_enabled", False
-    )
+    ))
 
 
 def bollinger_config(config: dict[str, Any]) -> BollingerParams:

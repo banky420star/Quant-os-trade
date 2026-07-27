@@ -205,18 +205,24 @@ def run() -> dict | None:
     account_data = read_json_state("account.json", default={})
     balance = orders_data.get("balance", {})
     live_mt5 = config.get("execution", {}).get("mode") == "mt5"
+
+    # 2026-07-27: In live MT5 mode the broker keeps paper_orders.json up-to-date
+    # with the actual MT5 account balance/equity after every trade. account.json is
+    # only written on data_loop startup and can become stale when the bot runs for
+    # days. Prefer the live paper_orders balance, fall back to account.json.
     if live_mt5:
-        # Prefer fresh MT5 account.json over stale paper_orders balance on live runs.
         equity = float(
-            account_data.get("equity")
-            or account_data.get("balance")
-            or balance.get("equity")
+            balance.get("equity")
             or balance.get("cash")
+            or account_data.get("equity")
+            or account_data.get("balance")
             or config["execution"].get("starting_cash", 1000)
         )
         acct_balance = float(
-            account_data.get("balance")
-            or balance.get("cash")
+            balance.get("cash")
+            or balance.get("balance")
+            or account_data.get("balance")
+            or account_data.get("equity")
             or equity
         )
     else:
