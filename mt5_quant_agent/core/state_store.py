@@ -15,6 +15,14 @@ from core.utils import STATE_DIR, read_json_state, utc_now_iso
 DEFAULT_DB_PATH = STATE_DIR / "quant_os.db"
 
 
+# Module-level singleton cache for StateStore instances, keyed by db_path.
+# _STORE_INIT_LOCK guards the cache-init double-check so two concurrent first-time
+# callers can't both construct StateStore(db_path). After init, StateStore._lock
+# becomes a process-wide mutex because every call returns the same instance.
+_STORE_CACHE: dict[Path, StateStore] = {}
+_STORE_INIT_LOCK = threading.Lock()
+
+
 def state_store_enabled(config: dict[str, Any]) -> bool:
     return bool((config.get("state_store") or {}).get("enabled"))
 
@@ -36,7 +44,19 @@ def get_state_store(config: dict[str, Any] | None = None) -> StateStore | None:
     db_path = Path(cfg.get("db_path") or DEFAULT_DB_PATH)
     if not db_path.is_absolute():
         db_path = STATE_DIR / db_path
-    return StateStore(db_path)
+    # SINGLETON (USER 2026-07-27 hotfix): every get_state_store() previously returned
+    # a brand-new StateStore with its own per-instance threading.Lock(). Concurrent
+    # loops (verifier/execution/research/data) ended up with separate locks that
+    # ignored each other and slammed SQLite concurrently, producing
+    # "database is locked" errors and stalling verifier_loop on every cycle.
+    # Memoizing the instance per db_path makes self._lock a process-wide mutex.
+    if db_path not in _STORE_CACHE:
+        _STORE_CACHE[db_path] = StateStore(db_path)
+    return _STORE_CACHE[db_path]
+
+
+# Module-level singleton cache for StateStore instances, keyed by db_path.
+_STORE_CACHE: dict[Path, StateStore] = {}
 
 
 class StateStore:
@@ -498,9 +518,12 @@ class StateStore:
         return counts
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
+        # USER 2026-07-27 hotfix: bumped timeout 5.0 -> 30.0 and busy_timeout 5000 -> 30000
+        # so cross-process SQLite file locks (e.g. zombie bot holding quant_os.db-wal)
+        # don't trip the per-process threading.Lock into a busy error.
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 

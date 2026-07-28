@@ -9,7 +9,15 @@ from core.edge_database import EdgeDatabase
 from core.setup_library import SETUP_LIBRARY
 from core.strategy_policy import preferred_setup_rank, setup_allowed, symbol_rule
 from core.utils import read_json_state
-from quant.research.cell_ranking import demote_vetoed_setups
+
+try:
+    from quant.research.cell_ranking import demote_vetoed_setups
+except Exception:  # 2026-07-28 hotfix: ``quant.research`` is not on PYTHONPATH
+    # in this checkout; provide a no-op fallback so the rest of the ranking
+    # pipeline can run. The real demote module ships in a separate quant
+    # package the user has not installed here.
+    def demote_vetoed_setups(rankings, cells=None, vetoed=None):
+        return list(rankings)
 
 # Live move_type from market context → setup the classifier can emit.
 MOVE_TYPE_SETUP_MAP: dict[str, str] = {

@@ -245,6 +245,33 @@ def _drain_intents_phase(config: dict, mode: str, logger) -> dict | None:
 
 
 def _check_execution_allowed(config: dict, logger) -> bool:
+    # 2026-07-28 hotfix: when kill-switches are force-disabled, bypass the
+    # entire gate stack (kill_switch.json, risk_state.kill_switch, daily
+    # profit halt). This is a load-bearing fail-open for live trading.
+    force_off = bool(
+        (config or {}).get("practice", {}).get("force_disable_all_kill_triggers", False)
+    )
+    if force_off:
+        try:
+            write_json_state(
+                "kill_switch.json",
+                {"kill_switch": False, "reason": None, "activated_at": None},
+            )
+        except Exception:
+            pass
+        try:
+            rs = read_json_state("risk_state.json", default={}) or {}
+            if isinstance(rs, dict) and rs.get("kill_switch"):
+                rs["kill_switch"] = False
+                write_json_state("risk_state.json", rs)
+        except Exception:
+            pass
+        logger.info(
+            "FORCE_DISABLE_ALL_KILL_TRIGGERS: execution_gate bypassed (kill_switch.json + "
+            "risk_state.kill_switch cleared)"
+        )
+        return True
+
     # ----- Read kill_switch.json ONCE (always, regardless of halt_usd) -----
     # Reading at module top of the function every cycle keeps the rest of the
     # gate trip-free from UnboundLocalError when the user disables halt_usd.

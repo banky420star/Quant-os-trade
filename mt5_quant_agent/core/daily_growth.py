@@ -135,6 +135,18 @@ def evaluate_daily_growth(
     unchanged in conservative mode), but `trading_paused`/`pause_reason` reflect
     the max-loss pause regardless of mode.
     """
+
+    # 2026-07-28 hotfix: source-level HARD-DISABLE for the daily-loss kill
+    # switch. When practice.force_disable_max_loss_pause: true is set in any
+    # config layer, evaluate_daily_growth() never sets trading_paused=True
+    # or writes a pause_reason. This patch is at the source so it survives
+    # config.yaml/profile merge semantics and any hot-reload gap.
+    if bool(
+        (config or {}).get('practice', {}).get(
+            'force_disable_max_loss_pause', False
+        )
+    ):
+        return _safe_no_pause_state(equity, config, existing=existing)
     growth = growth_settings(config)
     plan_on = growth_plan_enabled(config)
     state = dict(existing or sync_daily_session(equity, config))
@@ -168,8 +180,20 @@ def evaluate_daily_growth(
         trading_paused = False
         pause_reason = None
     elif max_loss_hit:
-        trading_paused = True
-        pause_reason = f"Max daily loss -{max_loss_pct:.0f}% hit ({pnl_pct:+.2f}%) — paused until tomorrow"
+        # 2026-07-28 hotfix: source-level hard-disable for the daily-loss kill switch.
+        # When practice.force_disable_max_loss_pause: true, evaluate_daily_growth never
+        # sets trading_paused=True / pause_reason for daily-loss (replaces 17 keys of
+        # sprayed YAML overrides that were getting clobbered by config.yaml merge semantics).
+        if bool(
+            (config or {}).get("practice", {}).get(
+                "force_disable_max_loss_pause", False
+            )
+        ):
+            trading_paused = False
+            pause_reason = None
+        else:
+            trading_paused = True
+            pause_reason = f"Max daily loss -{max_loss_pct:.0f}% hit ({pnl_pct:+.2f}%) — paused until tomorrow"
 
     out = {
         "enabled": plan_on,

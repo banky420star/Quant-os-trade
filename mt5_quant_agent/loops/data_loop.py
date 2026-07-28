@@ -65,12 +65,18 @@ def run() -> dict:
         connection.connect()
         timings["connect_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
-    # NOTE: account.json is written canonically by MT5ConnectionManager._try_path
-    # on every successful connect. Keeping a second writer here was racing with
-    # fast_tick_loop's session lock — data_loop's connect() often failed under
-    # contention, leaving account.json stale for days. Don't reintroduce.
-    account = connection.account_snapshot()
-    logger.info("Account: login=%s server=%s mode=%s", account["login"], account["server"], account["account_mode"])
+        # NOTE: account.json is written canonically by MT5ConnectionManager._try_path
+        # on every successful connect. Keeping a second writer here was racing with
+        # fast_tick_loop's session lock — data_loop's connect() often failed under
+        # contention, leaving account.json stale for days. Don't reintroduce.
+        # (2026-07-28 hotfix: re-indented under try; the previous refactor left
+        # these statements at function scope, producing an orphan `try:` with no
+        # matching except/finally and breaking the syntax check on first launch.)
+        account = connection.account_snapshot()
+        logger.info(
+            "Account: login=%s server=%s mode=%s",
+            account["login"], account["server"], account["account_mode"],
+        )
 
         symbol_mgr = SymbolManager(config, logger)
         t0 = time.perf_counter()

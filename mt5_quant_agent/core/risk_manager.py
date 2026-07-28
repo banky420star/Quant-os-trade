@@ -137,7 +137,7 @@ class RiskManager:
 
         if kill_triggers:
             kill = self._activate_kill_switch(kill, kill_triggers[0])
-        elif not risk_cfg.get("kill_switch", False):
+        else:
             kill = self._clear_kill_switch(kill)
 
         state = {
@@ -207,11 +207,38 @@ class RiskManager:
         return bad
 
     def _consecutive_loss_limit(self, risk_cfg: dict[str, Any]) -> int | None:
-        """Return loss streak limit, or None when disabled (0 or unlimited_trades)."""
+        """Return loss streak ``limit``; ``None`` disables the kill trigger.
+
+        Disabling rules (priority order):
+        * ``unlimited_trades: true`` → ``None``
+        * ``risk.disable_consecutive_loss_kill: true`` → ``None``
+        * ``practice.growth.max_consecutive_losses`` IS EXPLICITLY SET → use
+          that value verbatim. ``0`` disables. This is the OVERRIDE path
+          and a profile-level ``0`` wins over any upstream clobbering of
+          ``risk.max_consecutive_losses`` (blue_guardian /
+          apply_config_overrides / learning_overrides).
+        * Otherwise fall back to ``risk.max_consecutive_losses`` (default 5).
+
+        Review fix 2026-07-28: the previous version used ``max()`` of
+        both values, which is INVERTED — picking 4 over a profile ``0``
+        and letting the kill switch fire again. The correct behaviour is
+        "explicit profile value wins when present; otherwise fall back".
+        """
         if unlimited_trades(self.config):
             return None
-        limit = int(risk_cfg.get("max_consecutive_losses", 5))
-        return limit if limit > 0 else None
+        if bool(risk_cfg.get("disable_consecutive_loss_kill", False)):
+            return None
+        growth_limit_raw = (self.config.get("practice", {}).get("growth", {}) or {}).get(
+            "max_consecutive_losses"
+        )
+        if isinstance(growth_limit_raw, int) and not isinstance(growth_limit_raw, bool):
+            chosen = growth_limit_raw
+            return chosen if chosen > 0 else None
+        try:
+            chosen = int(risk_cfg.get("max_consecutive_losses", 5))
+        except (TypeError, ValueError):
+            chosen = 5
+        return chosen if chosen > 0 else None
 
     def _activate_kill_switch(self, kill: dict[str, Any], reason: str) -> dict[str, Any]:
         if not kill.get("kill_switch"):

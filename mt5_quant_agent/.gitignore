@@ -1,0 +1,29 @@
+# Python build / cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.pytest_bt/
+.pytest_tmp_fast/
+pytest_tmp/
+manual_state_check/
+
+# .env / vault / secrets
+.env
+.env.*
+!.env.example
+
+# Light session-only state kept off-git
+state/
+logs/
+.freebuff/**.tmp
+
+# === MT5 historical candle cache (regenerated from broker feed) ===
+data/history/*.parquet
+data/history/**/*.parquet
+data/history/*.parquet.lock
+data/history/**/*.parquet.lock
+data/history/*.lock
+data/history/**/*.lock

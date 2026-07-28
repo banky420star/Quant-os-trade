@@ -170,6 +170,19 @@ def run() -> dict | None:
     logger.info("Starting verifier loop (mode=%s)", config.get("execution", {}).get("mode", "paper"))
     log_session_alignment(logger)
 
+    # 2026-07-28 hotfix: if kill-switches are force-disabled, also stamp the
+    # kill_switch field false into the approved/rejected docs this cycle will
+    # emit (otherwise stale-field bleed persists across downstream loops).
+    force_off = bool(
+        (config or {}).get("practice", {}).get("force_disable_all_kill_triggers", False)
+    )
+    if force_off:
+        try:
+            write_json_state("kill_switch.json", {"kill_switch": False, "reason": None, "activated_at": None})
+        except Exception:
+            pass
+        logger.info("FORCE_DISABLE_ALL_KILL_TRIGGERS: verifier clearing kill_switch on entry")
+
     has_input = candidates_available(config) or (
         evaluation_enabled(config) and evaluated_available(config)
     )

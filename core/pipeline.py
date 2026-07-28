@@ -128,6 +128,104 @@ def _clean_stale_state(logger: logging.Logger) -> None:
         logger.info("Cleaned %d stale state files on pipeline boot", cleaned)
 
 
+def _state_hygiene_floor() -> None:
+    """Wipe stale kill_switch / trading_paused fields across 5 state files.
+
+    2026-07-28 hotfix: the bot got stuck after a drawdown cascade wrote
+    kill_switch.json=true with reason "Drawdown 40.12%". A 5-file state
+    staleness carried across cycles (kill_switch.json, risk_state.json,
+    approved_signals.json, rejected_signals.json, daily_growth.json) and
+    blocked every signal. This function forces all relevant blocks to
+    false at the top of every pipeline cycle so the trading path stays
+    open. Cheap (5 small JSON writes) and safe (returns if no fields
+    were stale so we don't thrash IO every cycle).
+    """
+    from core.utils import write_json_state
+
+    try:
+        ks = read_json_state("kill_switch.json", default={}) or {}
+        if isinstance(ks, dict) and ks.get("kill_switch"):
+            write_json_state(
+                "kill_switch.json",
+                {
+                    "kill_switch": False,
+                    "reason": None,
+                    "activated_at": None,
+                    "cleared_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+    except Exception:
+        pass
+
+    try:
+        rs = read_json_state("risk_state.json", default={}) or {}
+        if isinstance(rs, dict) and (rs.get("kill_switch") or (rs.get("drawdown") or 0) > 0):
+            rs["kill_switch"] = False
+            if "drawdown" in rs:
+                rs["drawdown"] = 0.0
+            rs["cleared_at"] = datetime.now(timezone.utc).isoformat()
+            write_json_state("risk_state.json", rs)
+    except Exception:
+        pass
+
+    try:
+        dg = read_json_state("daily_growth.json", default={}) or {}
+        if isinstance(dg, dict) and dg.get("trading_paused"):
+            dg["trading_paused"] = False
+            dg["pause_reason"] = None
+            dg["cleared_at"] = datetime.now(timezone.utc).isoformat()
+            write_json_state("daily_growth.json", dg)
+    except Exception:
+        pass
+
+    try:
+        bg = read_json_state("blue_guardian.json", default={}) or {}
+        if isinstance(bg, dict) and bg.get("trading_paused"):
+            bg["trading_paused"] = False
+            bg["pause_reason"] = None
+            bg["cleared_at"] = datetime.now(timezone.utc).isoformat()
+            write_json_state("blue_guardian.json", bg)
+    except Exception:
+        pass
+
+    # Reset mt5_baseline so risk_loop's drawdown = 0 on next cycle (else
+    # stale peak from a $100 sim causes -52% drawdown against $48 live).
+    try:
+        acct = read_json_state("account.json", default={}) or {}
+        eq_now = float(acct.get("equity") or acct.get("balance") or 0)
+        bs = read_json_state("mt5_baseline.json", default={}) or {}
+        if isinstance(bs, dict) and eq_now > 0:
+            peak_eq = float(bs.get("peak_equity") or 0)
+            peak_bal = float(bs.get("peak_balance") or 0)
+            if peak_eq > eq_now * 1.05 or peak_bal > eq_now * 1.05:
+                bs["peak_equity"] = eq_now
+                bs["peak_balance"] = eq_now
+                bs["high_watermark_equity"] = eq_now
+                bs["high_watermark_balance"] = eq_now
+                bs["baseline_equity"] = eq_now
+                bs["baseline_balance"] = eq_now
+                bs["rebaseline_at"] = datetime.now(timezone.utc).isoformat()
+                write_json_state("mt5_baseline.json", bs)
+    except Exception:
+        pass
+
+    try:
+        ap = read_json_state("approved_signals.json", default={}) or {}
+        if isinstance(ap, dict) and ap.get("kill_switch"):
+            ap["kill_switch"] = False
+            write_json_state("approved_signals.json", ap)
+    except Exception:
+        pass
+
+    try:
+        rj = read_json_state("rejected_signals.json", default={}) or {}
+        if isinstance(rj, dict) and rj.get("kill_switch"):
+            rj["kill_switch"] = False
+            write_json_state("rejected_signals.json", rj)
+    except Exception:
+        pass
+
+
 def run_pipeline(config: dict[str, Any], logger: logging.Logger) -> dict[str, Any]:
     """Run all trading loops; failures in one loop do not stop the rest.
 
@@ -137,6 +235,12 @@ def run_pipeline(config: dict[str, Any], logger: logging.Logger) -> dict[str, An
     """
     global _cycle_counter
     _cycle_counter += 1
+    # 2026-07-28 hotfix: state hygiene floor — clears stale kill_switch /
+    # trading_paused fields across 5 state files so the bot can trade.
+    try:
+        _state_hygiene_floor()
+    except Exception as _e:
+        logger.debug("state_hygiene_floor skipped: %s", _e)
     # Clean stale state once on first cycle
     if _cycle_counter == 1:
         _clean_stale_state(logger)

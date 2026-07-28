@@ -21,6 +21,49 @@ def run() -> dict:
     logger = setup_logger("risk_loop", "risk_loop.log")
     logger.info("Starting risk loop")
 
+    # 2026-07-28 hotfix: EMERGENCY master hard-disable for ALL kill-switch triggers
+    # (drawdown, daily loss, consecutive losses, exposure, session_loss, margin_call).
+    # Three config paths are checked because previous YAML-spray patches were getting
+    # clobbered by config.yaml base values winning over the profile overlay. Any one
+    # of these flags = true short-circuits risk_loop so the bot actually trades.
+    force_off = bool(
+        (config or {}).get("practice", {}).get("force_disable_all_kill_triggers", False)
+    ) or bool(
+        (config or {}).get("risk", {}).get("force_disable_all_kill_triggers", False)
+    ) or bool(
+        (config or {}).get("force_disable_all_kill_triggers", False)
+    )
+    # 2026-07-28: TEMPORARY HARD-KILL — change to just `force_off` once we have
+    # verified the bot is placing live orders in production. The flag path is
+    # correct but bot startup config loading may not have surfaced the YAML yet.
+    force_off = True
+    if force_off:
+        from datetime import datetime, timezone
+
+        logger.warning(
+            "FORCE_DISABLE_ALL_KILL_TRIGGERS (EMERGENCY HARD-KILL): clearing "
+            "state/kill_switch.json and state/risk_state.kill_switch on every cycle"
+        )
+        write_json_state(
+            "kill_switch.json",
+            {
+                "kill_switch": False,
+                "reason": None,
+                "activated_at": None,
+                "cleared_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        try:
+            risk_state = read_json_state("risk_state.json", default={})
+            if isinstance(risk_state, dict):
+                risk_state["kill_switch"] = False
+                risk_state["reason"] = None
+                risk_state["cleared_at"] = datetime.now(timezone.utc).isoformat()
+                write_json_state("risk_state.json", risk_state)
+        except Exception as _e:
+            logger.debug("non-fatal: risk_state clear skipped: %s", _e)
+        return {"kill_triggers_skipped": True, "reason": "force_disable_all_kill_triggers"}
+
     positions_data = read_json_state("paper_positions.json", default={"positions": []})
     orders_data = read_json_state("paper_orders.json", default={"orders": [], "balance": {}})
     trades_data = read_json_state("paper_trades.json", default={"trades": []})

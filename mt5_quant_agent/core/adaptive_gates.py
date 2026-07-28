@@ -81,6 +81,30 @@ def compute_adaptive_gates(config: dict[str, Any]) -> dict[str, Any]:
     base_min_conf = float((config.get("signals") or {}).get("min_confidence") or 50)
     base_blocklist = list(base_eval.get("symbol_blocklist") or [])
 
+    # 2026-07-28 hotfix: ``hard_off: true`` short-circuits ALL evaluation
+    # before any trade-history read. This is the operator-level escape hatch
+    # that guarantees ``tier=defensive`` cannot re-arm regardless of upstream
+    # config-layer surprises (the original ``enabled: false`` was being
+    # silently shadowed by a blue_guardian / apply_config_overrides layer in
+    # load_config). When ``hard_off`` is true, we write an ``off`` baseline and
+    # return early — the verifier / signal_loop see ``tier=off`` and pass.
+    _off_baseline = {
+        "enabled": False,
+        "tier": "off",
+        "min_policy_score": 0.0,
+        "min_confidence": 0.0,
+        "blocked_symbols": [],
+        "lookback_n": 0,
+        "recent_win_rate_pct": 50.0,
+        "recent_net_pnl": 0.0,
+        "consecutive_losses": 0,
+        "reason": "hard_off flag",
+        "timestamp": utc_now_iso(),
+    }
+    if bool(cfg.get("hard_off", False)):
+        write_json_state(STATE_FILE, _off_baseline)
+        return _off_baseline
+
     baseline = {
         "enabled": adaptive_gates_enabled(config),
         "tier": "off",

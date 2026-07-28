@@ -31,6 +31,138 @@ from core.utils import (
 )
 
 
+def _mt5_drain_with_ipc_retry(
+    config: dict,
+    logger: logging.Logger,
+    approved: list,
+    orders: list,
+    trades: list,
+    positions: list,
+) -> dict:
+    """Run the MT5 broker.process_approved_signals call with a single IPC reconnect retry.
+
+    Hotfix 2026-07-28: MT5 order placement occasionally fails with
+    ``(-10004, 'No IPC connection')`` when a previous loop (fast_position_guard
+    / data_loop) disconnected the terminal between the ``execution_loop``
+    session check and the actual ``order_send`` call. Without a retry, every
+    approved signal hits the dead IPC handle and the bot sits idle for the
+    rest of the cycle. We re-establish the connection up to once and run the
+    broker call again; second failure is logged and surfaced to the dashboard
+    via ``paper_orders.json`` so the operator can see it instead of silently
+    dropping the intent.
+    """
+    # Tight IPC error signatures — NOT a bare substring match. Real Money
+    # 2026-07-28: bare "IPC" would catch unrelated module paths; only
+    # MT5-specific error codes / messages should trigger the reconnect.
+    IPC_ERR_SIGS = ("-10004", "No IPC connection", "IPC pipe closed", "not connected to MetaTrader")
+    attempts = 0
+    while attempts < 2:
+        attempts += 1
+        connection = MT5ConnectionManager(config, logger)
+        try:
+            connection.connect()
+            broker = MT5Broker(config, logger)
+            try:
+                result = broker.process_approved_signals(
+                    approved,
+                    orders,
+                    existing_trades=trades,
+                    existing_positions=positions,
+                )
+                return _finalize_mt5_execution(config=config, logger=logger, result=result)
+            except Exception as exc:
+                err_str = str(exc) or ""
+                if attempts < 2 and any(sig in err_str for sig in IPC_ERR_SIGS):
+                    logger.warning(
+                        "MT5 IPC error during process_approved_signals (attempt %d): %s - reconnecting",
+                        attempts, err_str,
+                    )
+                    continue
+                raise
+        except Exception as exc:
+            err_str = str(exc) or ""
+            if attempts < 2 and any(sig in err_str for sig in IPC_ERR_SIGS):
+                logger.warning(
+                    "MT5 IPC error in outer attempt %d: %s - reconnecting and retrying once",
+                    attempts, err_str,
+                )
+                continue
+            logger.error("MT5 execution outer failure: %s", err_str)
+            raise
+        finally:
+            try:
+                connection.disconnect()
+            except Exception:
+                pass
+    # Unreachable. The inner except in the second iteration (attempts == 2)
+    # raises directly when the IPC error fires — both attempts either return
+    # early on success or raise before the loop re-evaluates. The post-loop
+    # raise was kept here previously as belt-and-braces but never executed.
+    # If a future change ever lands here, fail loudly rather than silently.
+
+
+def _finalize_mt5_execution(*, config: dict, logger, result: dict) -> dict:
+    """Persist + alert on the broker result produced by _mt5_drain_with_ipc_retry."""
+    orders_doc = {
+        "timestamp": result["timestamp"],
+        "mode": "mt5",
+        "balance": result["balance"],
+        "account": result["account"],
+        "orders": result["orders"],
+    }
+    positions_doc = {
+        "timestamp": result["timestamp"],
+        "mode": "mt5",
+        "positions": result["positions"],
+    }
+    trades_doc = {
+        "timestamp": result["timestamp"],
+        "mode": "mt5",
+        "trades": result["trades"],
+    }
+    write_json_state("paper_orders.json", orders_doc)
+    write_json_state("paper_positions.json", positions_doc)
+    write_json_state("paper_trades.json", trades_doc)
+    sync_store_from_doc(config, "orders", orders_doc)
+    sync_store_from_doc(config, "positions", positions_doc)
+    sync_store_from_doc(config, "trades", trades_doc)
+    new_closed = result.get("new_closed_trades", [])
+    if new_closed:
+        wins = sum(1 for t in new_closed if t.get("result") == "win")
+        logger.info("Closed trades detected: %d (%d wins, %d losses)", len(new_closed), wins, len(new_closed) - wins)
+    logger.info(
+        "MT5 execution: placed=%d errors=%d positions=%d equity=%.2f",
+        len(result.get("placed", [])),
+        len(result.get("errors", [])),
+        len(result["positions"]),
+        result["balance"]["equity"],
+    )
+    # REVIEW FIX 2026-07-28: do NOT swallow audit/alert errors silently.
+    # Original inline code did not wrap these calls — let any failure surface
+    # to the supervisor so the operator sees the alert failure rather than
+    # not knowing the audit silently failed.
+    from core.audit_log import append_event
+    from core.ops_alerts import alert_execution_error
+
+    for order in result.get("placed", []):
+        append_event(
+            "order.placed",
+            symbol=order.get("symbol"),
+            details={"ticket": order.get("ticket"), "side": order.get("side"), "lot": order.get("volume")},
+        )
+    for err in result.get("errors", []):
+        sym = err.get("symbol", "?")
+        msg = str(err.get("error") or err)
+        append_event("order.error", symbol=sym, details={"error": msg})
+        alert_execution_error(config, sym, msg)
+        if is_market_closed_error(err):
+            record_market_closed(sym, config)
+            logger.info("Market closed for %s - backing off %.0f min", sym, float((config.get('execution') or {}).get('market_closed_backoff_minutes', 5)))
+    for order in result.get("placed", []):
+        clear_backoff(order.get("symbol"))
+    return result
+
+
 def _price_fallback_from_features(features: dict) -> dict[str, float]:
     prices: dict[str, float] = {}
     for symbol, feat in features.get("symbols", {}).items():
@@ -153,73 +285,14 @@ def run() -> dict | None:
     balance = orders_state.get("balance")
 
     if mode == "mt5":
-        connection = MT5ConnectionManager(config, logger)
-        try:
-            connection.connect()
-            broker = MT5Broker(config, logger)
-            result = broker.process_approved_signals(
-                approved,
-                orders,
-                existing_trades=trades,
-                existing_positions=positions,
-            )
-            orders_doc = {
-                "timestamp": result["timestamp"],
-                "mode": "mt5",
-                "balance": result["balance"],
-                "account": result["account"],
-                "orders": result["orders"],
-            }
-            positions_doc = {
-                "timestamp": result["timestamp"],
-                "mode": "mt5",
-                "positions": result["positions"],
-            }
-            trades_doc = {
-                "timestamp": result["timestamp"],
-                "mode": "mt5",
-                "trades": result["trades"],
-            }
-            write_json_state("paper_orders.json", orders_doc)
-            write_json_state("paper_positions.json", positions_doc)
-            write_json_state("paper_trades.json", trades_doc)
-            sync_store_from_doc(config, "orders", orders_doc)
-            sync_store_from_doc(config, "positions", positions_doc)
-            sync_store_from_doc(config, "trades", trades_doc)
-            new_closed = result.get("new_closed_trades", [])
-            if new_closed:
-                wins = sum(1 for t in new_closed if t.get("result") == "win")
-                logger.info("Closed trades detected: %d (%d wins, %d losses)", len(new_closed), wins, len(new_closed) - wins)
-            logger.info(
-                "MT5 execution: placed=%d errors=%d positions=%d equity=%.2f",
-                len(result.get("placed", [])),
-                len(result.get("errors", [])),
-                len(result["positions"]),
-                result["balance"]["equity"],
-            )
-            from core.audit_log import append_event
-            from core.ops_alerts import alert_execution_error
-
-            for order in result.get("placed", []):
-                append_event(
-                    "order.placed",
-                    symbol=order.get("symbol"),
-                    details={"ticket": order.get("ticket"), "side": order.get("side"), "lot": order.get("volume")},
-                )
-            for err in result.get("errors", []):
-                sym = err.get("symbol", "?")
-                msg = str(err.get("error") or err)
-                append_event("order.error", symbol=sym, details={"error": msg})
-                alert_execution_error(config, sym, msg)
-                if is_market_closed_error(err):
-                    record_market_closed(sym, config)
-                    logger.info("Market closed for %s - backing off %.0f min", sym, float((config.get('execution') or {}).get('market_closed_backoff_minutes', 5)))
-            for order in result.get("placed", []):
-                # a successful placement means the market reopened -> clear back-off
-                clear_backoff(order.get("symbol"))
-            return result
-        finally:
-            connection.disconnect()
+        return _mt5_drain_with_ipc_retry(
+            config=config,
+            logger=logger,
+            approved=approved,
+            orders=orders,
+            trades=trades,
+            positions=positions,
+        )
     else:
         if config["execution"].get("live_trading_enabled") is True:
             logger.error("live_trading_enabled blocked — use mode: mt5 instead")
