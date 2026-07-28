@@ -62,6 +62,24 @@ def run() -> dict:
     equity = float(account.get("equity", balance) or balance)
     daily = evaluate_daily_state(config, balance=balance, equity=equity)
 
+    # 2026-07-28 hotfix: force-disable the BG kill-switch override. BG can
+    # call evaluate_daily_state → trading_paused=true independent of the
+    # kill_switch gate. When kill-switches are force-disabled, suppress BG's
+    # kill_switch.json write (gated on `if daily.get("trading_paused"):` at
+    # bottom) so BG cannot contradict the trade-unblock posture.
+    force_off = bool(
+        (config or {}).get("practice", {}).get("force_disable_all_kill_triggers", False)
+    )
+    if force_off and isinstance(daily, dict):
+        if daily.get("trading_paused"):
+            logger.warning(
+                "FORCE_DISABLE_ALL_KILL_TRIGGERS: clearing blue_guardian trading_paused (was: %s)",
+                daily.get("pause_reason"),
+            )
+        daily["trading_paused"] = False
+        daily["pause_reason"] = None
+        daily["force_disabled_at"] = utc_now_iso()
+
     positions: list[dict] = []
     close_results: list[dict] = []
     portfolio_action = None
