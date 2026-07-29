@@ -1181,7 +1181,7 @@ def manage_mt5_positions(
                     summary["updated"] += 1
                     # Tier-2: time-stop close is the canonical Stale axis source.
                     _archive_mgmt_row(
-                        ticket, mgmt_row.get("positions", {}).get(ticket_key, {}) or {},
+                        ticket, (mgmt.get("positions") or {}).get(ticket_key, {}) or {},
                         reason="time_stop",
                         side=side, entry=float(pos.get("entry", 0) or 0), symbol=symbol,
                     )
