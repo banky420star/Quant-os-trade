@@ -438,6 +438,54 @@ def test_risk_loop_writes_account_state_into_history(
     assert last.get("account_state", {}).get("actual_account_mode") == "real"
 
 
+def test_switching_from_mt5_to_paper_ignores_persisted_mt5_state(
+    isolated_state, paper_config, monkeypatch
+):
+    """Paper mode must use paper_orders.json after a prior MT5 run."""
+    monkeypatch.setattr("loops.risk_loop.load_config", lambda: paper_config)
+
+    def _unexpected_mt5_connection(*args, **kwargs):
+        raise AssertionError("paper mode must not initialize MT5")
+
+    monkeypatch.setattr(
+        "loops.risk_loop.MT5ConnectionManager", _unexpected_mt5_connection
+    )
+
+    # Simulate MT5 state retained when the operator switches back to paper.
+    write_json_state("mt5_baseline.json", {"starting_cash": 5000.0})
+    write_json_state(
+        "account.json",
+        {"balance": 4000.0, "equity": 3750.0, "account_mode": "real"},
+    )
+
+    # These are the only balances paper-mode risk is allowed to consume.
+    write_json_state("paper_positions.json", {"positions": []})
+    write_json_state(
+        "paper_orders.json",
+        {
+            "orders": [],
+            "balance": {
+                "starting_cash": 1000.0,
+                "cash": 925.0,
+                "equity": 900.0,
+            },
+        },
+    )
+    write_json_state("paper_trades.json", {"trades": []})
+    write_json_state("features.json", {"symbols": {}})
+    write_json_state("kill_switch.json", {"kill_switch": False})
+
+    import loops.risk_loop as risk_loop
+
+    result = risk_loop.run()
+    state = result["risk_state"]
+
+    assert state["account_state"]["mode"] == "paper"
+    assert state["equity"] == 900.0
+    assert state["cash"] == 925.0
+    assert state["drawdown"] == 10.0
+
+
 # ---------------------------------------------------------------------------
 # Connection logging + freshness helper
 # ---------------------------------------------------------------------------
