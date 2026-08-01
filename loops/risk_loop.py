@@ -112,26 +112,22 @@ def run() -> dict:
     trades = trades_data.get("trades", [])
 
     account_context: dict[str, Any] = {}
-    baseline = read_json_state("mt5_baseline.json", default={})
-    if baseline.get("starting_cash") is not None:
-        balance["starting_cash"] = float(baseline["starting_cash"])
 
     if config.get("execution", {}).get("mode") == "mt5":
+        # MT5-owned state must never influence paper-mode risk calculations.
+        baseline = read_json_state("mt5_baseline.json", default={})
+        if baseline.get("starting_cash") is not None:
+            balance["starting_cash"] = float(baseline["starting_cash"])
+
         mt5_ctx, snapshot = _refresh_mt5_account(config, logger)
         account_context = mt5_ctx
 
-        # Use fresh MT5 values when the snapshot is valid; only fall back to disk
-        # when the snapshot did not include them.
+        # Use fresh MT5 values when the snapshot is valid. Persisted account.json
+        # is refreshed for observability only and is never consumed in paper mode.
         if snapshot.get("equity") is not None and not mt5_ctx.get("account_error"):
             balance["equity"] = float(snapshot["equity"])
         if snapshot.get("balance") is not None and not mt5_ctx.get("account_error"):
             balance["cash"] = float(snapshot["balance"])
-    else:
-        account = read_json_state("account.json", default={})
-        if account.get("equity") is not None:
-            balance["equity"] = float(account["equity"])
-        if account.get("balance") is not None:
-            balance["cash"] = float(account["balance"])
 
     manager = RiskManager(config, logger)
     result = manager.evaluate(positions, orders, balance, trades, features, kill_existing, account_context=account_context)
