@@ -496,6 +496,43 @@ class MT5Broker:
                 "type_filling": filling,
             }
 
+        # ----- None-safe margin pre-check (2026-07-29) -----
+        # mt5.order_calc_margin returns None on error (not zero). When it
+        # returns 0.0, that is NOT automatically a failure — unusual leverage,
+        # hedged-margin rules, or MT5 calculation quirks can produce zero.
+        # Instead, defer to order_check() when calc_margin is None or zero
+        # so the broker does NOT reject valid orders with a false negative.
+        _required = mt5.order_calc_margin(
+            request["type"],
+            request["symbol"],
+            request["volume"],
+            request["price"],
+        )
+        _free = float(getattr(account, "margin_free", 0.0) or 0.0)
+        if _required is None:
+            # Calculation error — fall back to order_check() before blocking
+            _check = mt5.order_check(request)
+            if _check is None or int(_check.retcode) != 0:
+                _err_code = int(_check.retcode) if _check is not None else -1
+                self.logger.warning(
+                    "Margin check failed: %s %s vol=%s required=ERR free=%.2f check_retcode=%s",
+                    symbol, side, volume, _free, _err_code,
+                )
+                return {
+                    "success": False,
+                    "error": f"margin_check_failed: mt5.last_error()={mt5.last_error()} check_retcode={_err_code}",
+                }
+        elif _required > _free * 0.90:
+            self.logger.info(
+                "Margin check: %s %s vol=%s required=%.2f free=%.2f — insufficient",
+                symbol, side, volume, _required, _free,
+            )
+            return {
+                "success": False,
+                "error": f"insufficient_margin: requires={_required:.2f} free={_free:.2f}",
+            }
+        # else: required_margin is 0.0 or affordable — not a failure.
+
         self.logger.info("Sending order: %s", {k: v for k, v in request.items() if k != "comment"})
         result = mt5.order_send(request)
 

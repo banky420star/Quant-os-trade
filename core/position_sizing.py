@@ -6,7 +6,7 @@ from typing import Any
 
 from core.blue_guardian import max_lot_for_symbol
 from core.dynamic_entry import pyramid_layer_index, scale_lot_for_layer
-from core.kelly_sizing import kelly_for_signal
+from core.kelly_sizing import clamp_risk_percent, kelly_for_signal
 from core.micro_profile import micro_profile_enabled
 from core.risk_cap import effective_risk_cap, estimate_stop_loss_usd, risk_per_trade_cap
 
@@ -84,6 +84,7 @@ def calc_executable_volume(
 
     positions = list(open_positions or [])
     exec_cfg = config.get("execution", {})
+    symbol = signal["symbol"]
     default_risk_pct = float(config.get("signals", {}).get("default_risk_percent", 1))
     kelly = kelly_for_signal(signal, config, default_risk_pct)
     if stamp_kelly:
@@ -96,6 +97,7 @@ def calc_executable_volume(
     # IDEAL-amplification was silently cancelled by min_lot + USD-cap
     # `cap_size_to_exposure_limits`. Observe-only — solely the canary
     # state file is the persistent surface; no config mutation.
+    _canary_multiplier = 1.0
     try:
         from core.canary import lot_multiplier_for as _canary_mult
         _canary_boost = float(_canary_mult(symbol, config=config) or 1.0)
@@ -103,8 +105,8 @@ def calc_executable_volume(
     except Exception:
         _canary_boost = 1.0
     if _canary_boost > 1.0:
+        _canary_multiplier = _canary_boost
         risk_pct = risk_pct * _canary_boost
-        details["canary_multiplier"] = round(_canary_boost, 3)
 
     # Risk-parity scaling: when the candidate carries a stream share (e.g.
     # donchian_breakout 0.25), we reduce per-trade risk_pct AND USD cap by
@@ -113,10 +115,11 @@ def calc_executable_volume(
     rp_active = rp_share is not None and 0 < float(rp_share) <= 1
     if rp_active:
         risk_pct = risk_pct * float(rp_share)
+    # Apply the absolute per-trade ceiling after every adaptive multiplier.
+    risk_pct = clamp_risk_percent(risk_pct, config)
 
     max_lot = float(exec_cfg.get("max_lot", 0.1))
     default_lot = float(exec_cfg.get("default_lot", 0.01))
-    symbol = signal["symbol"]
     entry = float(signal.get("entry", 0))
     sl = float(signal.get("sl", 0))
     risk_dist = abs(entry - sl)
@@ -125,15 +128,31 @@ def calc_executable_volume(
     tick_size = float(symbol_spec.get("trade_tick_size") or symbol_spec.get("point") or 0)
     vmin = float(symbol_spec.get("volume_min") or 0.01)
 
+    # The explicit USD cap and the equity-fraction cap are both active. The
+    # latter is a hard ceiling: even a profile that asks for (for example)
+    # $21 on a $37 account is limited to 5% of current equity.
+    cap_usd = effective_risk_cap(config, balance, symbol=symbol)
+    risk_cfg_eq = config.get("risk") or {}
+    try:
+        configured_pct = float(risk_cfg_eq.get("max_risk_per_trade_pct", 5.0))
+    except (TypeError, ValueError):
+        configured_pct = 5.0
+    max_risk_pct = min(5.0, configured_pct) if configured_pct > 0 else 5.0
+    equity_risk_cap = float(equity) * (max_risk_pct / 100.0)
+    equity_cap_enabled = bool(risk_cfg_eq.get("enforce_equity_risk_cap", True))
+    hard_cap_usd = (
+        min(cap_usd, equity_risk_cap) if cap_usd is not None
+        else equity_risk_cap
+    ) if equity_cap_enabled and equity > 0 else cap_usd
+
     if risk_dist <= 0:
         ideal = default_lot
     else:
         risk_money = float(equity) * (risk_pct / 100.0)
-        cap_usd = effective_risk_cap(config, balance, symbol=symbol)
-        if cap_usd is not None:
+        if hard_cap_usd is not None:
             # Cap also scales by risk_parity share so a 0.25-share stream
             # can't blow through the per-trade USD cap at full size.
-            scaled_cap = cap_usd * float(rp_share) if rp_active else cap_usd
+            scaled_cap = hard_cap_usd * float(rp_share) if rp_active else hard_cap_usd
             risk_money = min(risk_money, scaled_cap)
         if tick_value > 0 and tick_size > 0:
             ticks = risk_dist / tick_size
@@ -159,9 +178,9 @@ def calc_executable_volume(
     except Exception:
         _canary_boost = 1.0
     if _canary_boost > 1.0:
+        _canary_multiplier = max(_canary_multiplier, _canary_boost)
         ideal = ideal * _canary_boost
         ideal = max(vmin, min(ideal, max_lot))
-        details["canary_multiplier"] = round(_canary_boost, 3)
 
     # Scalable lot sizing: scale the ideal lot by signal confidence and current
     # drawdown. High confidence + low drawdown -> larger lot (up to max_lot);
@@ -207,6 +226,7 @@ def calc_executable_volume(
         "volume_min": vmin,
         "kelly": kelly,
         "risk_percent": risk_pct,
+        "canary_multiplier": round(_canary_multiplier, 3),
     }
     if _ls_info:
         details["lot_scaling"] = _ls_info
@@ -242,13 +262,12 @@ def calc_executable_volume(
     except Exception:
         _canary = 1.0
     if _canary > 1.0:
-        details["canary_multiplier"] = round(_canary, 3)
+        _canary_multiplier = max(_canary_multiplier, _canary)
 
     vol = normalize_volume(vol, symbol_spec)
 
-    cap_usd = effective_risk_cap(config, balance, symbol=symbol)
-    if cap_usd is not None and risk_dist > 0 and vol > 0:
-        scaled_cap = cap_usd * float(rp_share) if rp_active else cap_usd
+    if hard_cap_usd is not None and risk_dist > 0 and vol > 0:
+        scaled_cap = hard_cap_usd * float(rp_share) if rp_active else hard_cap_usd
         loss_usd = estimate_stop_loss_usd(
             risk_dist=risk_dist,
             volume=vol,
@@ -284,6 +303,39 @@ def calc_executable_volume(
                 else:
                     details["reject_reason"] = "min_lot_stop_risk_exceeds_cap"
                 return 0.0, details
+
+    # 2026-07-31 — equity-fraction per-trade risk cap (micro-account ruin
+    # guard). Root cause of the 2026-07-30 real-account wipe: the min-lot floor
+    # (line ~145) overrides Kelly sizing upward — on a ~$100 account, 0.01 lot
+    # NAS100m risks ~$104 at the SL (one stop-out = ~100% of equity). The
+    # exposure caps above are set as multiples of equity (growth: 6x/12x), so
+    # they do NOT catch a single min-lot position whose SL risk exceeds the
+    # whole account. The explicit USD cap used by micro profiles remains the
+    # authoritative micro-account control; this equity-fraction fallback fills
+    # the gap only when no explicit per-trade USD cap exists.
+    if (
+        equity_cap_enabled
+        and risk_dist > 0
+        and vol > 0
+        and float(equity) > 0
+    ):
+        _loss_usd_final = estimate_stop_loss_usd(
+            risk_dist=risk_dist,
+            volume=vol,
+            tick_value=tick_value,
+            tick_size=tick_size,
+        )
+        details["stop_loss_usd"] = round(_loss_usd_final, 2)
+        details["equity_risk_cap_usd"] = round(equity_risk_cap, 2)
+        details["equity_risk_cap_pct"] = max_risk_pct
+        # Only enforce when we could actually measure SL risk (tick specs
+        # present). Without tick_value the fallback `risk_dist*vol` is
+        # meaningless, so we do not false-reject on missing specs.
+        _measurable = tick_value > 0 and tick_size > 0
+        if _measurable and _loss_usd_final > equity_risk_cap + 0.05:
+            details["reject_reason"] = "per_trade_risk_exceeds_equity_fraction"
+            details["equity_risk_breach_usd"] = round(_loss_usd_final - equity_risk_cap, 4)
+            return 0.0, details
 
     details["executable_volume"] = vol
     return vol, details

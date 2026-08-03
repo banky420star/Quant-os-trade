@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.evaluation_policy import evaluate_batch, evaluation_enabled, evaluation_mode
+from core.trade_history import read_closed_trades
 from core.fast_mode import fast_mode_enabled
 from core.fast_signal_cache import refresh_cache
 from core.state_store import (
@@ -80,7 +81,10 @@ def run() -> dict | None:
         return doc
 
     features = read_json_state("features.json", default={})
-    trades = read_json_state("paper_trades.json", default={"trades": []})
+    # Keep live MT5 evaluation isolated from the paper/research ledger. The
+    # selected history feeds recent-symbol and policy gates, so mixing ledgers
+    # can silently block valid live entries with stale paper losses.
+    trades = read_closed_trades(config)
     spread_data: dict[str, float] = {}
     for sym, feat in (features.get("symbols") or {}).items():
         try:
@@ -95,7 +99,7 @@ def run() -> dict | None:
         features,
         config,
         spread_data=spread_data,
-        recent_trades=list(trades if isinstance(trades, list) else (trades or {}).get("trades") or []),
+        recent_trades=trades,
         logger=logger,
     )
 

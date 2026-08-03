@@ -41,7 +41,7 @@ def _is_verifier_approved(signal_id: str, config: dict[str, Any]) -> bool:
 
 
 def _executed_ids(config: dict[str, Any], state: dict[str, Any]) -> set[str]:
-    orders = read_json_state("paper_orders.json", default={"orders": []}).get("orders") or []
+    orders = read_json_state("mt5_orders.json", default={"orders": []}).get("orders") or []
     from_orders = {o["signal_id"] for o in orders if o.get("signal_id")}
     from_state = set(state.get("executed_signals") or [])
     return from_orders | from_state
@@ -98,9 +98,11 @@ def _persist_mt5_result(config: dict[str, Any], result: dict[str, Any]) -> None:
         "mode": "mt5",
         "trades": result.get("trades", []),
     }
-    write_json_state("paper_orders.json", orders_doc)
-    write_json_state("paper_positions.json", positions_doc)
-    write_json_state("paper_trades.json", trades_doc)
+    # MT5 namespace: persists to mt5_* so paper_* stays clean.
+    # Dashboard reads from mt5_* when mode is mt5 (see dashboard/server.py).
+    write_json_state("mt5_orders.json", orders_doc)
+    write_json_state("mt5_positions.json", positions_doc)
+    write_json_state("mt5_trades.json", trades_doc)
     sync_store_from_doc(config, "orders", orders_doc)
     sync_store_from_doc(config, "positions", positions_doc)
     sync_store_from_doc(config, "trades", trades_doc)
@@ -155,9 +157,9 @@ def execute_fast_entry(
         return {"blocked": True, "reason": "evaluated_signal_missing"}
 
     signal = _prepare_signal(signal, cache_entry, decision)
-    orders = list(read_json_state("paper_orders.json", default={"orders": []}).get("orders") or [])
-    positions = list(read_json_state("paper_positions.json", default={"positions": []}).get("positions") or [])
-    trades = list(read_json_state("paper_trades.json", default={"trades": []}).get("trades") or [])
+    orders = list(read_json_state("mt5_orders.json", default={"orders": []}).get("orders") or [])
+    positions = list(read_json_state("mt5_positions.json", default={"positions": []}).get("positions") or [])
+    trades = list(read_json_state("mt5_trades.json", default={"trades": []}).get("trades") or [])
     executed = _executed_ids(config, state)
 
     connection = MT5ConnectionManager(config, log)

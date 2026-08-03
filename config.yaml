@@ -3,6 +3,32 @@ culturing:
   min_n: 8
   veto_win_rate_pct: 40
   cost_r: 0.0
+  # 2026-07-31 — cost-aware veto: paper_cost_r applies ONLY to records without
+  # an mt5_deal (paper-simulated, mid-price entries whose R omits the spread).
+  # Fill records keep cost_r=0 (spread already in the fill). 0.0 = unchanged.
+  paper_cost_r: 0.0
+  # 2026-07-31 — Thompson-sampling bandit over culturing cells (SHADOW).
+  # Replaces the hard binary veto with a continuous posterior + sampled
+  # selection score in state/culturing_bandit.json. Default OFF; even when
+  # enabled it does NOT gate trades (apply_shadow=false) — observe only.
+  bandit:
+    enabled: false
+    apply_shadow: false
+    prior_mean_r: 0.0
+    prior_weight: 8.0
+    thin_exploration_scale: 1.0
+    min_n: 8
+  # 2026-07-31 — setup-level aggregate veto. The per-cell culturing veto above
+  # fragments evidence across ~50 (symbol|setup|regime|align|session) cells, so
+  # a setup that loses in aggregate (pullback was 66% of all trades, 33% win rate,
+  # the #1 loss driver per the MT5-journal review) never trips a per-cell veto.
+  # This coarser gate looks at each setup's FULL sample and vetoes proven losers.
+  # min_n=100 (high) so a setup-level call is only made on real evidence.
+  setup_aggregate_veto:
+    enabled: true
+    min_n: 100
+    veto_win_rate_pct: 40
+    veto_net_r: 0.0
 adaptation:
   enabled: true
   calibrate_be_trail: true
@@ -52,6 +78,24 @@ policy_optimizer:
   min_trades_suggest: 10
   min_trades_soft: 30
   min_trades_auto: 50
+# 2026-07-31 — LLM news-sentiment SHADOW risk filter (cycle-19 pipeline wired
+# live). Default OFF. When enabled, loops/news fetches recent RSS headlines,
+# classifies polarity via Ollama/LLM, and writes state/news_sentiment_snapshot.json.
+# The verifier exposes a 'news_sentiment' check that ALWAYS passes while
+# sentiment_gate=false (shadow/observe). Turn sentiment_gate=true to hard-reject
+# risk-on entries against a strong bearish macro-news backdrop (and vice versa).
+# Research found NO tradeable news edge at 30bps — this is risk hygiene, not alpha.
+news:
+  enabled: false
+  sentiment_gate: false
+  source: rss
+  sentiment: auto
+  ollama_model: kimi-k2.5:cloud
+  lookback_hours: 24
+  max_items_per_theme: 10
+  themes: ["inflation", "employment", "taxes", "war"]
+  strong_hint_threshold: 0.4
+  strong_hint_min_items: 3
 learning:
   enabled: true
   mode: live_apply_limited
@@ -691,8 +735,8 @@ filters:
     US500m: 100
     US30m: 120
     NAS100m: 140
-    UK100m: 250
-    FR40m: 120
+    UK100m: 500
+    FR40m: 1000
     JP225m: 130
   min_atr_ratio: 0.0002
   avoid_news: true
@@ -724,10 +768,13 @@ intelligence:
   regime_filter: true
   trend_structure_veto_enabled: true
   setup_confidence_mult: 0.72
-  memory_veto_win_rate: 35
+  # Memory veto disabled: historical win-rate stats currently block every
+  # generated signal after the recent losing streak. Keep other consensus gates
+  # (risk/regime/structure) active; trades are now gated by live verifier.
+  memory_veto_win_rate: 0
   # 2026-07-21: lowered 15 → 5 (response to gate relaxation — react to losing streak sooner)
   memory_veto_min_trades: 5
-  memory_veto_cell_win_rate: 45
+  memory_veto_cell_win_rate: 0
   memory_veto_cell_min_trades: 4
 replay:
   symbol: XAUUSDm
@@ -847,7 +894,7 @@ quant:
       require_top_ranked_setup: false
 practice:
   micro:
-    enabled: true
+    enabled: false
     account_size_usd: 30
     # 2026-07-21: expanded from 1 symbol to all 14 mt5 symbols so the user sees 14
     # position slots in the dashboard. Paper mode only — no real orders will fire.
@@ -1063,6 +1110,41 @@ optimizer:
 signals:
   gold_never_rejectable: false
   min_confidence: 35
+  # 2026-07-31 — specialized ICT/SMC killzone setups sourced from TradingView
+  # community indicators (Gold SMC Dashboard, Smart Money Gold Map, XAU/USD
+  # Killzones 2026 playbook). OFF by default. When enabled, the new setup_types
+  # (silver_bullet, london_judas) are emitted as normal classifier candidates
+  # and flow through EVERY verifier gate (kill_switch, data_driven_veto,
+  # setup_aggregate_veto, ...) — if one loses on a symbol, the culturing ledger
+  # blocks it. HONEST: per VERDICT.md there is no deployable edge at retail
+  # 30bps; this is GRANULARITY for per-symbol evidence collection, not edge.
+  # symbols: [] = all configured symbols; set e.g. ["XAUUSDm"] to trial on gold.
+  # setups: [] = all specialized setups; set e.g. ["silver_bullet"] to opt in
+  # one setup at a time as the hourly loop accumulates culturing evidence.
+  specialized_setups:
+    enabled: false
+    symbols: []
+    setups: []
+    # 2026-07-31 iteration 6 — per-symbol-per-setup granular allowlist. When a
+    # symbol is keyed here, only the listed setups may fire on it (intersected
+    # with the global symbols/setups gates above). Empty = no extra restriction.
+    # This is the "very symbol specific" lever: each symbol accumulates culturing
+    # evidence only on the setups trialed on it. Example seed (commented):
+    #   per_symbol:
+    #     AUDUSDm: [sydney_open_orb]
+    #     USDCHFm: [london_close_reversal, london_morning_breakout]
+    per_symbol: {}
+    # 2026-07-31 iteration 8 — shadow fire-ledger. When true, every specialized
+    # fire is appended to state/specialized_shadow_ledger.jsonl independent of
+    # `enabled`. With enabled=false this logs fires WITHOUT placing any orders
+    # (safe per-symbol evidence accumulation pre-trading). With enabled=true it
+    # logs AND trades. Default off.
+    # 2026-08-01 iteration 11 — flipped shadow=true. The bot's kill switch is
+    # TRIPPED (98% DD, 07-31 18:33) so it is NOT placing orders regardless; this
+    # makes the live loop append every specialized fire to the shadow ledger so
+    # per-symbol fire-frequency evidence accumulates safely. enabled stays false
+    # (no orders even after the kill switch clears). No live trading, untouched.
+    shadow: true
   # 2026-07-24: restored 0.40 -> 1.05. The adaptive_exit engine targets
   # ≥1.5:1 R:R, but the signals-layer gate is the safety net when AE is
   # disabled or a symbol lacks AE params; 0.85 demonstrably bled money
@@ -1277,6 +1359,18 @@ risk:
   # 2026-07-24: scaled 400 -> 15 to be reachable on the ~$100-125 micro
   # account (~12% day). 400 was calibrated for a $5k demo and could never fire.
   daily_profit_halt_usd: 15
+  # 2026-07-31 — HARD equity-fraction per-trade risk cap (micro-account ruin
+  # guard). See core/position_sizing.py:calc_executable_volume. Unconditional:
+  # rejects any trade whose realized SL risk at the final (possibly min-lot-
+  # floored) volume exceeds this % of equity. Prevents a single stop-out from
+  # wiping a micro-account when min-lot risk > equity (e.g. 0.01-lot NAS100m =
+  # ~$104 SL risk on a ~$100 account — the 2026-07-30 wipe). Independent of
+  # max_loss_per_trade_usd / cap_loss_to_balance (unset in growth →
+  # effective_risk_cap returns None → the per-trade cap gate was skipped).
+  # On a $100 account, 5% = $5 max risk/trade → index CFDs whose min-lot risk
+  # exceeds that are correctly rejected as un-tradable at this account size.
+  enforce_equity_risk_cap: true
+  max_risk_per_trade_pct: 5
 strategy_arena:
   enabled: true
   emit_all_setups: true
@@ -1343,6 +1437,38 @@ blue_guardian:
     NAS100m: 0.03
     FR40m: 0.03
     JP225m: 0.03
+
+# Heartbeat loop — writes state/heartbeat.json with service status, uptime,
+# and memory usage every 15s. Visible as a loop tile on the dashboard.
+heartbeat_loop:
+  enabled: true
+  loop_interval_seconds: 15
+
+# Read-only MT5 audit. It snapshots account/history/journal/calendar availability
+# without placing orders or changing MT5 state.
+mt5_audit_loop:
+  enabled: true
+  loop_interval_seconds: 300
+  history_days: 30
+  max_recent_rows: 100
+  journal_files: 4
+  journal_tail_lines: 5000
+
+# Hourly specialized setup observer. Reads existing feature/context snapshots;
+# observe-only and never starts MT5 or submits orders.
+specialized_setup_loop:
+  enabled: true
+  loop_interval_seconds: 3600
+  max_symbols_to_scan: 20
+
+# Offline safety/profitability validation. This never starts MT5 or submits orders.
+# It runs as a supervisor service every five minutes and writes validation_cycle.json.
+validation_loop:
+  enabled: true
+  loop_interval_seconds: 300
+  instance_count: 10000
+  test_timeout_seconds: 120
+
 thesis_reviewer:
   enabled: true
   loop_interval_seconds: 60
@@ -1389,6 +1515,26 @@ self_learning:
   # Minimum closed trades before the reward-weighted weight optimizer will
   # emit a candidate (below this it returns the baseline, status=insufficient).
   min_trades: 15
+  # Per-symbol tick/outcome learner. Shadow-only: proposals are persisted for
+  # replay/paper validation and never alter live config or order sizing.
+  adaptive_symbol_learning:
+    enabled: true
+    mode: shadow
+    tick_sample_seconds: 5
+    lookback: 200
+    min_trades: 20
+    max_risk_multiplier_up: 1.10
+    max_risk_multiplier_down: 0.50
+    high_spread_atr_ratio: 0.20
+    weak_volume_ratio: 0.80
+    validation:
+      enabled: true
+      min_forward_trades: 25
+      min_control_trades: 5
+      min_reward_margin: 0.30
+      min_expectancy_r: 0.0
+      # Validation is paper-only and never auto-promotes to live config.
+      operator_approval_required: true
 
 # ---------------------------------------------------------------------------
 # Strategy diversification: 4 uncorrelated signal streams + meta-decision.

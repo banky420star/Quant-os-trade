@@ -21,7 +21,7 @@ from core.regime_evolution import (
     regime_evolution_enabled,
 )
 from core.dynamic_entry import evaluate_dynamic_entry, symbol_capacity_available
-from core.strategy_policy import culturing_cell_key, setup_allowed, symbol_rule, threshold_overrides
+from core.strategy_policy import culturing_cell_key, normalize_setup_type, setup_allowed, symbol_rule, threshold_overrides
 from core.entry_staging import touch_and_check
 from core.trade_limits import (
     humanize_verifier_failure,
@@ -275,6 +275,18 @@ class Verifier:
         vetoed_cells = set(sym_veto.get("vetoed_cells", []) or [])
         checks["data_driven_veto"] = veto_cell not in vetoed_cells
 
+        # 2026-07-31 — setup-level aggregate veto. The per-cell veto above
+        # fragments evidence across ~50 (symbol|setup|regime|align|session)
+        # cells, so a setup that loses in aggregate (pullback was 66% of all
+        # trades at 33% win rate, the project's biggest loss driver per the MT5
+        # journal review) never trips a per-cell veto. This gate reads the
+        # top-level vetoed_setups list from symbol_policy_live.json (written by
+        # forward_test_loop._build_setup_aggregates) and hard-rejects any signal
+        # whose normalized setup_type is in it. Empty/missing -> permissive.
+        vetoed_setups = set(self._live_veto.get("vetoed_setups", []) or [])
+        norm_setup = normalize_setup_type(setup_type) or setup_type
+        checks["setup_aggregate_veto"] = norm_setup not in vetoed_setups
+
         if self._positive_evolution_cfg.get("enabled"):
             pe_ok, _pe_reason = evaluate_cell_gate(
                 self.config,
@@ -393,6 +405,33 @@ class Verifier:
         checks["macro_news_safe"] = bool(news_ctx.get("safe_for_entry", True))
         if not checks["macro_news_safe"]:
             checks["news_safe"] = False
+
+        # 2026-07-31 — LLM news-sentiment SHADOW risk filter. Reads the live
+        # snapshot (state/news_sentiment_snapshot.json) written by
+        # core/news_sentiment.py. SHADOW by default: when news.sentiment_gate
+        # is false (default) this check ALWAYS passes — the hint is recorded
+        # for observability only. When an operator turns the gate on, a
+        # strong bearish macro-news backdrop rejects new BUY entries (risk-on
+        # caution) and a strong bullish backdrop rejects new SELLs. Neutral
+        # or missing data always passes — we never block on a news API hiccup.
+        try:
+            from core.news_sentiment import sentiment_hint_for
+            _ns = sentiment_hint_for(signal.get("symbol"), self.config)
+            checks["news_sentiment_hint"] = _ns["hint"]
+            if not _ns["available"] or not _ns["gate"]:
+                checks["news_sentiment"] = True
+            else:
+                _hint = _ns["hint"]
+                _side = signal.get("side")
+                if _hint == "bearish":
+                    checks["news_sentiment"] = _side != "BUY"
+                elif _hint == "bullish":
+                    checks["news_sentiment"] = _side != "SELL"
+                else:
+                    checks["news_sentiment"] = True
+        except Exception:  # noqa: BLE001
+            checks["news_sentiment"] = True
+            checks["news_sentiment_hint"] = "unavailable"
         bg_code = None
         if blue_guardian_enabled(self.config):
             bg_ok, bg_code, _bg_details = entry_gates(self.config, active_signals, signal)
@@ -407,6 +446,7 @@ class Verifier:
             "regime_setup_demoted",
             "gold_never_rejectable",
             "gold_forced_approve",
+            "news_sentiment_hint",
         })
         failure_codes: list[str] = []
         for name, passed in checks.items():
@@ -424,6 +464,8 @@ class Verifier:
                 failure_codes.append("session_misaligned")
             elif name == "data_driven_veto":
                 failure_codes.append("data_driven_veto")
+            elif name == "setup_aggregate_veto":
+                failure_codes.append("setup_aggregate_veto")
             elif name == "positive_evolution":
                 failure_codes.append("positive_evolution")
             else:

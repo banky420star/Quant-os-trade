@@ -15,6 +15,31 @@ from core.strategy_policy import culturing_cell_key
 from core.utils import read_json_state
 
 
+# Absolute safety ceiling: no adaptive/Kelly/conviction multiplier may risk
+# more than 5% of equity on a single trade. The config can choose a lower cap,
+# but cannot raise this hard ceiling.
+HARD_MAX_RISK_PERCENT = 5.0
+
+
+def clamp_risk_percent(value: float, config: dict[str, Any] | None = None) -> float:
+    """Clamp requested per-trade risk to the configured cap and hard 5% ceiling."""
+    try:
+        requested = float(value)
+    except (TypeError, ValueError):
+        requested = 0.0
+    if not math.isfinite(requested):
+        requested = 0.0
+    risk_cfg = (config or {}).get("risk", {}) or {}
+    try:
+        configured_cap = float(risk_cfg.get("max_risk_per_trade_pct", HARD_MAX_RISK_PERCENT))
+    except (TypeError, ValueError):
+        configured_cap = HARD_MAX_RISK_PERCENT
+    if not math.isfinite(configured_cap) or configured_cap <= 0:
+        configured_cap = HARD_MAX_RISK_PERCENT
+    cap = min(HARD_MAX_RISK_PERCENT, configured_cap)
+    return round(max(0.0, min(requested, cap)), 4)
+
+
 def aggregate_symbol_stats(sym_cells: dict[str, Any]) -> dict[str, Any]:
     """Weighted rollup of all culturing cells for one symbol."""
     n_total = 0
@@ -63,8 +88,8 @@ def kelly_fraction(cell_stats: dict[str, Any], cfg: dict[str, Any]) -> dict[str,
     """
     min_n = int(cfg.get("min_n", 8))
     frac = float(cfg.get("kelly_fraction", 0.25) or 0.25)
-    max_fraction = float(cfg.get("max_fraction", 5.0) or 5.0)
-    default_frac = float(cfg.get("fallback_fraction", 2.5) or 2.5)
+    max_fraction = min(float(cfg.get("max_fraction", 5.0) or 5.0), HARD_MAX_RISK_PERCENT)
+    default_frac = min(float(cfg.get("fallback_fraction", 2.5) or 2.5), HARD_MAX_RISK_PERCENT)
     criteria_mode = bool(cfg.get("criteria_mode", False))
 
     n = int(cell_stats.get("n", 0) or 0)
@@ -150,14 +175,17 @@ def kelly_for_signal(
 
     if not cfg.get("enabled", False):
         return {
-            "fraction": round(float(default_risk_pct), 4),
+            "fraction": clamp_risk_percent(default_risk_pct, config),
             "gated": True,
             "reason": "disabled",
             "cell": None,
             "symbol": symbol,
         }
 
-    fallback = float(cfg.get("fallback_fraction", default_risk_pct) or default_risk_pct)
+    fallback = clamp_risk_percent(
+        float(cfg.get("fallback_fraction", default_risk_pct) or default_risk_pct),
+        config,
+    )
 
     mc = signal.get("market_context") or {}
     if not isinstance(mc, dict):
@@ -200,7 +228,7 @@ def kelly_for_signal(
         res = kelly_fraction(cell_stats, cfg)
     else:
         res = kelly_fraction({}, cfg)
-    res["fraction"] = round(fallback, 4)
+    res["fraction"] = clamp_risk_percent(fallback, config)
     if not cell_stats:
         res["reason"] = "no cell data"
     res["cell"] = cell
@@ -231,4 +259,9 @@ def resolve_risk_percent(
             kelly = {**kelly, "conviction_size_mult": float(conv_mult)}
         except (TypeError, ValueError):
             pass
+    fraction = clamp_risk_percent(fraction, config)
+    kelly = {**kelly, "fraction": fraction, "risk_cap_percent": min(
+        HARD_MAX_RISK_PERCENT,
+        float((config.get("risk") or {}).get("max_risk_per_trade_pct", HARD_MAX_RISK_PERCENT) or HARD_MAX_RISK_PERCENT),
+    )}
     return fraction, kelly

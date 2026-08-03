@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -325,6 +326,142 @@ def start(once: bool = False, profile: str | None = None) -> None:
         logger.info(
             "Self-learning loop registered (interval=%.0fs, observe_only=True)",
             sl_interval,
+        )
+
+    # Heartbeat loop — writes state/heartbeat.json with service status, uptime,
+    # and memory usage. Visible as a loop tile on the dashboard. Runs every 15s
+    # by default; disable via heartbeat_loop.enabled: false.
+    hb_cfg = config.get("heartbeat_loop") or {}
+    if hb_cfg.get("enabled", True):
+        hb_interval = float(hb_cfg.get("loop_interval_seconds", 15))
+
+        def _heartbeat() -> dict:
+            from loops import heartbeat_loop
+            return heartbeat_loop.run(config) or {}
+
+        supervisor.register(ManagedService(
+            "heartbeat_loop",
+            "Heartbeat",
+            _heartbeat,
+            hb_interval,
+            logger,
+        ))
+        logger.info("Heartbeat loop registered (interval=%.0fs)", hb_interval)
+
+    # Read-only MT5 audit loop — snapshots terminal/account/history/journal data
+    # without calling order_send or changing trading state.
+    audit_cfg = config.get("mt5_audit_loop") or {}
+    if audit_cfg.get("enabled", True) and not once:
+        audit_interval = float(audit_cfg.get("loop_interval_seconds", 300))
+
+        def _mt5_audit() -> dict:
+            from loops import mt5_audit_loop
+            return mt5_audit_loop.run(config) or {}
+
+        supervisor.register(ManagedService(
+            "mt5_audit_loop",
+            "MT5 Audit",
+            _mt5_audit,
+            audit_interval,
+            logger,
+        ))
+        logger.info("MT5 read-only audit loop registered (interval=%.0fs)", audit_interval)
+
+    # Hourly specialized setup observer — analytical only. It reads the normal
+    # feature/context snapshots, classifies existing setup types, and never
+    # starts MT5 or submits orders.
+    specialized_cfg = config.get("specialized_setup_loop") or {}
+    if specialized_cfg.get("enabled", True) and not once:
+        specialized_interval = float(specialized_cfg.get("loop_interval_seconds", 3600))
+
+        def _specialized_setup() -> dict:
+            from loops import specialized_setup_loop
+            return specialized_setup_loop.run(config) or {}
+
+        supervisor.register(ManagedService(
+            "specialized_setup_loop",
+            "Specialized Setups",
+            _specialized_setup,
+            specialized_interval,
+            logger,
+        ))
+        logger.info(
+            "Specialized setup loop registered (interval=%.0fs, observe_only=True)",
+            specialized_interval,
+        )
+
+    # Offline validation loop — runs in a child-test process and only writes
+    # validation_cycle/history artifacts. It never starts MT5 or submits orders.
+    # Keep it in the supervisor so the five-minute cadence survives restarts.
+    validation_cfg = config.get("validation_loop") or {}
+    if validation_cfg.get("enabled", True) and not once:
+        validation_interval = float(validation_cfg.get("loop_interval_seconds", 300))
+
+        def _validation() -> dict:
+            # Execute outside the trading process. The worker runs focused
+            # pytest checks and 10k consistency checks, then exits; this keeps
+            # pytest imports/GIL/temporary state out of the live supervisor.
+            timeout = max(30, int(validation_cfg.get("test_timeout_seconds", 120)) + 30)
+            try:
+                proc = subprocess.run(
+                    [sys.executable, "-m", "loops.validation_loop"],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                    check=False,
+                    env={**os.environ, "MT5_QUANT_VALIDATION": "1"},
+                )
+            except subprocess.TimeoutExpired as exc:
+                write_json_state("validation_cycle.json", {
+                    "timestamp": __import__("core.utils", fromlist=["utc_now_iso"]).utc_now_iso(),
+                    "status": "attention",
+                    "safety": {"offline_only": True, "mt5_started": False, "orders_submitted": 0, "config_changed": False},
+                    "tests": {"status": "timeout", "summary": str(exc)},
+                    "warnings": ["offline validation worker timed out; no trading action was taken"],
+                    "next_action": "manual_review",
+                    "auto_fix": {"enabled": False, "reason": "validation never edits source, config, or trading ledgers"},
+                })
+                logger.warning("Offline validation worker timed out after %ss", timeout)
+                return {"validation_loop": "error"}
+            except OSError as exc:
+                write_json_state("validation_cycle.json", {
+                    "timestamp": __import__("core.utils", fromlist=["utc_now_iso"]).utc_now_iso(),
+                    "status": "attention",
+                    "safety": {"offline_only": True, "mt5_started": False, "orders_submitted": 0, "config_changed": False},
+                    "tests": {"status": "error", "summary": str(exc)},
+                    "warnings": ["offline validation worker could not start; no trading action was taken"],
+                    "next_action": "manual_review",
+                    "auto_fix": {"enabled": False, "reason": "validation never edits source, config, or trading ledgers"},
+                })
+                logger.warning("Offline validation worker could not start: %s", exc)
+                return {"validation_loop": "error"}
+            if proc.returncode:
+                logger.warning(
+                    "Offline validation worker failed (exit=%s): %s",
+                    proc.returncode,
+                    (proc.stdout + "\\n" + proc.stderr)[-1500:],
+                )
+                return {"validation_loop": "error"}
+            if proc.stdout.strip():
+                logger.info("Offline validation worker: %s", proc.stdout.strip()[-1000:])
+            # The detailed verdict is persisted in validation_cycle.json. Keep
+            # findings as report data; only a crashed worker is a service error.
+            return {"validation_loop": "OK"}
+
+        supervisor.register(ManagedService(
+            "validation_loop",
+            "Offline Validation",
+            _validation,
+            validation_interval,
+            logger,
+        ))
+        logger.info(
+            "Offline validation loop registered (interval=%.0fs, instances=%s)",
+            validation_interval,
+            validation_cfg.get("instance_count", 10000),
         )
 
     # Live-trade thesis reviewer (net-new 2026-07-13). Re-scores OPEN positions

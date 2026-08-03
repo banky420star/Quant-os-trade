@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Any
 
-from core.entry_narrative import build_exit_narrative
+from core.entry_narrative import build_exit_narrative, r_multiple as entry_r_multiple
 from core.exit_manager import near_take_profit
 from core.symbol_manager import logical_symbol
 from core.strategy_policy import normalize_setup_type
@@ -291,10 +291,17 @@ class TradeTracker:
             elif paper_be:
                 exit_reason = "break_even_stop"
             # else keep "closed_externally" as the fallback
-            closed_trades.append({
+            try:
+                entry = float(pos.get("entry"))
+                stop = float(pos.get("sl"))
+                realized_r = round(entry_r_multiple(pos.get("side", ""), entry, stop, exit_price), 3)
+            except (TypeError, ValueError):
+                realized_r = None
+            closed_trade = {
                 "trade_id": str(uuid.uuid4()),
                 "position_id": pid,
                 "signal_id": pos.get("signal_id"),
+                "adaptive_symbol_proposal_id": pos.get("adaptive_symbol_proposal_id"),
                 "symbol": pos["symbol"],
                 "side": pos["side"],
                 "entry": pos["entry"],
@@ -320,7 +327,10 @@ class TradeTracker:
                 "mae_R": mgmt_row.get("mae_R"),
                 "mfe_R": mgmt_row.get("mfe_R"),
                 "closed_at": utc_now_iso(),
-            })
+            }
+            if realized_r is not None and abs(realized_r) > 0:
+                closed_trade["r_multiple"] = realized_r
+            closed_trades.append(closed_trade)
 
         if closed_trades:
             from core.entry_staging import clear_symbol

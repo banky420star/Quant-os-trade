@@ -319,7 +319,11 @@ def _check_execution_allowed(config: dict, logger) -> bool:
     # + today's day_stamp and return False. Float / unrealized PnL is ignored —
     # only closed-trade pnl counts (core/daily_pnl.today_realized_pnl_usd).
     if halt_usd > 0:
-        pnl_today = today_realized_pnl_usd("paper_trades.json")
+        # Check both paper and MT5 trade files so the daily halt works regardless
+        # of which execution mode wrote the closed trades.
+        _pnl_paper = today_realized_pnl_usd("paper_trades.json")
+        _pnl_mt5 = today_realized_pnl_usd("mt5_trades.json")
+        pnl_today = _pnl_paper + _pnl_mt5
         if pnl_today >= halt_usd:
             # Invariant: existing.get("kill_switch") is False at this point
             # (top check fired otherwise). So writing a fresh daily halt is
@@ -417,9 +421,14 @@ def run() -> dict | None:
             pass
         return {"timestamp": None, "mode": mode, "placed": 0}
 
-    orders_state = read_json_state("paper_orders.json", default={"orders": []})
-    positions_state = read_json_state("paper_positions.json", default={"positions": []})
-    trades_state = read_json_state("paper_trades.json", default={"trades": []})
+    if mode == "mt5":
+        orders_state = read_json_state("mt5_orders.json", default={"orders": []})
+        positions_state = read_json_state("mt5_positions.json", default={"positions": []})
+        trades_state = read_json_state("mt5_trades.json", default={"trades": []})
+    else:
+        orders_state = read_json_state("paper_orders.json", default={"orders": []})
+        positions_state = read_json_state("paper_positions.json", default={"positions": []})
+        trades_state = read_json_state("paper_trades.json", default={"trades": []})
 
     orders = orders_state.get("orders", [])
     positions = positions_state.get("positions", [])
@@ -488,9 +497,12 @@ def run() -> dict | None:
                 "mode": "mt5",
                 "trades": result["trades"],
             }
-            write_json_state("paper_orders.json", orders_doc)
-            write_json_state("paper_positions.json", positions_doc)
-            write_json_state("paper_trades.json", trades_doc)
+            # MT5 namespace: writes to mt5_* so paper_* stays clean.
+            # Dashboard reads from mt5_* when in MT5 mode (see dashboard/server.py
+            # _build_live_portfolio — prefers mt5_* over paper_* when mode is mt5).
+            write_json_state("mt5_orders.json", orders_doc)
+            write_json_state("mt5_positions.json", positions_doc)
+            write_json_state("mt5_trades.json", trades_doc)
             sync_store_from_doc(config, "orders", orders_doc)
             sync_store_from_doc(config, "positions", positions_doc)
             sync_store_from_doc(config, "trades", trades_doc)
@@ -542,6 +554,15 @@ def run() -> dict | None:
         )
         # For paper mode, the positions were already removed in-place by the
         # helper function. No actual broker close needed.
+
+        # Paper-only adaptive validation routing. This deterministically tags
+        # half of eligible shadow candidates and leaves the other half as the
+        # same-symbol control arm. It never runs in the MT5 branch above.
+        try:
+            from core.adaptive_symbol_validation import annotate_paper_validation_signals
+            approved = annotate_paper_validation_signals(approved, config)
+        except Exception as exc:
+            logger.warning("Adaptive paper validation routing skipped: %s", exc)
 
         broker = PaperBroker(config, logger)
         result = broker.process_approved_signals(approved, prices, orders, positions, trades, balance)

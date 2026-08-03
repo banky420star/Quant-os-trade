@@ -34,6 +34,7 @@ def run(config: dict | None = None) -> dict:
         return {"self_learning_loop": "disabled"}
 
     out: dict = {}
+    verdict: dict = {}
 
     # 1) Reward-weighted candidate weights (from realized profit).
     try:
@@ -69,5 +70,37 @@ def run(config: dict | None = None) -> dict:
     except Exception as exc:
         _logger.warning("shadow_experiments failed: %s", exc)
         out["shadow_experiments"] = f"error:{exc}"
+
+    # 4) Per-symbol adaptive proposals from sampled ticks + closed outcomes.
+    # This is intentionally shadow-only: it writes evidence and bounded
+    # proposals, but never changes the live config or order path.
+    try:
+        from core.adaptive_symbol_learner import run_adaptive_symbol_learning
+        symbol_learning = run_adaptive_symbol_learning(config, persist=True)
+        out["adaptive_symbols"] = len(symbol_learning.get("symbols") or {})
+        out["adaptive_symbol_mode"] = symbol_learning.get("mode")
+    except Exception as exc:
+        _logger.warning("adaptive_symbol_learning failed: %s", exc)
+        symbol_learning = {}
+        out["adaptive_symbols"] = f"error:{exc}"
+
+    # 5) Validate proposals only against explicitly tagged forward-paper
+    # outcomes. The validator never reads the MT5 ledger and never promotes a
+    # candidate itself. A degrading monitor verdict holds candidates and clears
+    # any separately-approved override file back to baseline.
+    try:
+        from core.adaptive_symbol_validation import run_adaptive_symbol_validation
+        validation = run_adaptive_symbol_validation(
+            config,
+            proposals_doc=symbol_learning,
+            rollback_recommended=bool(verdict.get("rollback_recommended")),
+            persist=True,
+        )
+        out["adaptive_symbol_validation"] = validation.get("status")
+        out["adaptive_symbol_promotions"] = len(validation.get("promotion_candidates") or [])
+    except Exception as exc:
+        _logger.warning("adaptive_symbol_validation failed: %s", exc)
+        out["adaptive_symbol_validation"] = f"error:{exc}"
+        out["adaptive_symbol_promotions"] = 0
 
     return {"self_learning_loop": "OK", **out}

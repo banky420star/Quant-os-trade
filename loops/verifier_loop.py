@@ -16,6 +16,7 @@ from core.symbol_manager import broker_symbol
 from core.mt5_connection_manager import MT5ConnectionManager
 from core.position_sync import fetch_mt5_agent_positions
 from core.trade_limits import enrich_positions_with_orders
+from core.trade_history import read_closed_trades
 from core.verifier import Verifier
 from core.evaluation_policy import evaluation_enabled
 from core.state_store import (
@@ -156,7 +157,10 @@ def _collect_active_positions(
             "source": "mt5_sync",
             "positions": active,
         }
-        write_json_state("paper_positions.json", positions_doc)
+        # Keep the live position mirror in the MT5 namespace. Writing this
+        # snapshot to paper_positions.json makes paper/live state appear to
+        # agree even when the paper ledger is stale.
+        write_json_state("mt5_positions.json", positions_doc)
         sync_store_from_doc(config, "positions", positions_doc)
         return active, "mt5"
     finally:
@@ -187,7 +191,9 @@ def run() -> dict | None:
         )
     features = read_json_state("features.json")
     active_positions, position_source = _collect_active_positions(config, logger)
-    orders_data = read_json_state("paper_orders.json", default={"orders": []})
+    live_mt5 = config.get("execution", {}).get("mode") == "mt5"
+    orders_filename = "mt5_orders.json" if live_mt5 else "paper_orders.json"
+    orders_data = read_json_state(orders_filename, default={"orders": []})
     active_positions = enrich_positions_with_orders(
         active_positions,
         orders_data.get("orders", []),
@@ -201,10 +207,9 @@ def run() -> dict | None:
             spread_data,
         )
 
-    orders_data = read_json_state("paper_orders.json", default={"balance": {}})
+    orders_data = read_json_state(orders_filename, default={"balance": {}})
     account_data = read_json_state("account.json", default={})
     balance = orders_data.get("balance", {})
-    live_mt5 = config.get("execution", {}).get("mode") == "mt5"
     if live_mt5:
         # Prefer fresh MT5 account.json over stale paper_orders balance on live runs.
         equity = float(
@@ -236,8 +241,10 @@ def run() -> dict | None:
     if symbol_specs:
         write_json_state("symbol_specs.json", {"timestamp": utc_now_iso(), "specs": symbol_specs})
 
-    trades_data = read_json_state("paper_trades.json", default={"trades": []})
-    closed_trades = list(trades_data.get("trades", []))
+    # Verifier risk checks must use the active execution ledger. Reading the
+    # paper ledger during an MT5 run can apply stale simulated losses to live
+    # entries and make the two execution modes contaminate each other.
+    closed_trades = read_closed_trades(config)
 
     verifier = Verifier(config, logger)
     approved, rejected = verifier.verify_batch(

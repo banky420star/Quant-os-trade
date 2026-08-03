@@ -197,6 +197,7 @@ class PaperBroker:
         return {
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
+            "adaptive_symbol_proposal_id": signal.get("adaptive_symbol_proposal_id"),
             "symbol": signal["symbol"],
             "side": signal["side"],
             "type": order_type,
@@ -246,6 +247,7 @@ class PaperBroker:
             "position_id": str(uuid.uuid4()),
             "order_id": order["order_id"],
             "signal_id": order["signal_id"],
+            "adaptive_symbol_proposal_id": order.get("adaptive_symbol_proposal_id"),
             "symbol": order["symbol"],
             "side": order["side"],
             "entry": fill_price,
@@ -468,10 +470,13 @@ class PaperBroker:
                             lock_sl = post_partial_sl(side, entry, risk_sl, atr, self.config)
                             diff = (tp1_level - entry) if side == "BUY" else (entry - tp1_level)
                             partial_pnl = diff * close_vol
+                            from core.entry_narrative import r_multiple as _r_multiple
+                            partial_r = _r_multiple(side, entry, risk_sl, tp1_level)
                             trades.append({
                                 "trade_id": str(uuid.uuid4()),
                                 "position_id": pos["position_id"],
                                 "signal_id": pos.get("signal_id"),
+                                "adaptive_symbol_proposal_id": pos.get("adaptive_symbol_proposal_id"),
                                 "symbol": symbol,
                                 "side": side,
                                 "entry": entry,
@@ -479,6 +484,7 @@ class PaperBroker:
                                 "sl": pos.get("sl"),
                                 "tp1": tp1_level,
                                 "pnl": round(partial_pnl, 2),
+                                "r_multiple": round(partial_r, 3),
                                 "result": "win" if partial_pnl > 0 else "loss",
                                 "exit_reason": "partial_take_profit",
                                 "partial": True,
@@ -586,6 +592,8 @@ class PaperBroker:
                     diff = -diff
                 pnl = diff * pos["size"]
                 realized += pnl
+                from core.entry_narrative import r_multiple as _r_multiple
+                realized_r = _r_multiple(side, entry, float(pos.get("initial_sl") or sl_start), exit_price)
                 meta = pos.get("signal_meta") or {}
                 exit_narrative = build_exit_narrative(side, entry, sl_now, tp_target, exit_price, exit_reason, pnl)
                 closed.append({**pos, "closed_at": utc_now_iso(),
@@ -595,6 +603,7 @@ class PaperBroker:
                         "trade_id": str(uuid.uuid4()),
                         "position_id": pos["position_id"],
                         "signal_id": pos["signal_id"],
+                        "adaptive_symbol_proposal_id": pos.get("adaptive_symbol_proposal_id"),
                         "symbol": pos["symbol"],
                         "side": pos["side"],
                         "entry": pos["entry"],
@@ -604,6 +613,7 @@ class PaperBroker:
                         "tp2": pos.get("tp2"),
                         "partial_tp_done": bool(pos.get("partial_tp_done")),
                         "pnl": round(pnl, 2),
+                        "r_multiple": round(realized_r, 3),
                         "result": "win" if pnl > 0 else "loss",
                         "exit_reason": exit_reason,
                         "setup_type": pos.get("setup_type"),

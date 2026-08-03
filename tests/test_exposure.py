@@ -117,9 +117,10 @@ def test_micro_xau_passes_risk_exposure_not_price_notional(config):
         balance=37.23,
         symbol_specs={"XAUUSDm": spec},
     )
-    assert ok is True
-    assert details.get("executable_volume") == 0.01
-    assert details.get("projected_notional", 0) < 25
+    # A $37.23 account cannot safely trade this 0.01 minimum lot under the
+    # global 5% ceiling: the stop risk is about $2.04 vs a $1.86 cap.
+    assert ok is False
+    assert details.get("reject_reason") == "min_lot_stop_risk_exceeds_cap"
 
 
 def test_verifier_rejects_min_lot_stop_risk_exceeds_cap(config):
@@ -725,9 +726,10 @@ def test_independent_symbol_exposure_ignores_other_positions(config):
         balance=30.0,
         symbol_specs={"XAUUSDm": spec, "UK100m": uk_spec},
     )
-    assert ok is True
-    assert details.get("executable_volume") == 0.01
-    assert details.get("total_ok") is True
+    # Independent symbol exposure does not override the global 5% per-trade
+    # ceiling; XAU's minimum lot is still too large for this $30 account.
+    assert ok is False
+    assert details.get("reject_reason") == "min_lot_stop_risk_exceeds_cap"
 
 
 def test_risk_state_includes_exposure_used_pct(config):

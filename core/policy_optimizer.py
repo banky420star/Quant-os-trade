@@ -150,28 +150,62 @@ def _gate_reason(
 
 
 def _extract_policy_candidates(scores_doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Normalize policy_scores.json into cell -> [candidate policies]."""
-    raw = scores_doc.get("policies") or scores_doc.get("cells") or {}
-    if not isinstance(raw, dict):
-        return {}
+    """Normalize policy_scores.json into cell -> [candidate policies].
 
+    Handles three documented shapes:
+      1. ``policies``/``cells``: dict keyed by cell -> variants list/single.
+      2. ``variants``: a FLAT top-level list of variant dicts each carrying
+         ``symbol``/``setup_type``/``session`` — grouped into cells here.
+         (This is the shape the live scorer writes: 576 variants, 48 cells.)
+      3. ``best_by_key``: dict keyed by cell -> single best variant dict —
+         used as a last-resort fallback if ``variants`` is absent.
+    """
     out: dict[str, list[dict[str, Any]]] = {}
-    for cell, payload in raw.items():
-        if not isinstance(payload, (list, dict)):
-            continue
-        variants: list[dict[str, Any]]
-        if isinstance(payload, list):
-            variants = [v for v in payload if isinstance(v, dict)]
-        else:
-            nested = payload.get("variants") or payload.get("candidates") or payload.get("policies")
-            if isinstance(nested, list):
-                variants = [v for v in nested if isinstance(v, dict)]
-            elif payload.get("entry_type") or payload.get("management_profile"):
-                variants = [payload]
+
+    # Shape 1 — explicit cell-keyed dict.
+    raw = scores_doc.get("policies") or scores_doc.get("cells") or {}
+    if isinstance(raw, dict):
+        for cell, payload in raw.items():
+            if not isinstance(payload, (list, dict)):
+                continue
+            if isinstance(payload, list):
+                variants = [v for v in payload if isinstance(v, dict)]
             else:
-                variants = []
-        if variants:
-            out[str(cell)] = variants
+                nested = payload.get("variants") or payload.get("candidates") or payload.get("policies")
+                if isinstance(nested, list):
+                    variants = [v for v in nested if isinstance(v, dict)]
+                elif payload.get("entry_type") or payload.get("management_profile"):
+                    variants = [payload]
+                else:
+                    variants = []
+            if variants:
+                out[str(cell)] = variants
+
+    # Shape 2 — flat variants list, group by symbol|setup|session.
+    if not out:
+        flat = scores_doc.get("variants")
+        if isinstance(flat, list):
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for v in flat:
+                if not isinstance(v, dict):
+                    continue
+                symbol = v.get("symbol")
+                if not symbol:
+                    continue
+                setup = normalize_setup_type(v.get("setup_type"))
+                session = str(v.get("session") or "unknown")
+                cell = policy_cell_key(str(symbol), setup, session)
+                grouped.setdefault(cell, []).append(v)
+            out = grouped
+
+    # Shape 3 — best_by_key fallback (cell -> single best variant).
+    if not out:
+        bbk = scores_doc.get("best_by_key")
+        if isinstance(bbk, dict):
+            for cell, payload in bbk.items():
+                if isinstance(payload, dict):
+                    out[str(cell)] = [payload]
+
     return out
 
 

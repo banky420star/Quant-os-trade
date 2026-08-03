@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 from typing import Any
 
 from core.mt5_terminal_manager import MT5TerminalManager, get_python_session_id
 
+_MT5_IMPORT_ERROR: Exception | None = None
 try:
     import MetaTrader5 as mt5
-except ImportError:
+except ImportError as exc:
     mt5 = None  # type: ignore
+    _MT5_IMPORT_ERROR = exc
 
 IPC_TIMEOUT_CODE = -10005
 _MT5_SESSION_LOCK = threading.RLock()
@@ -42,7 +45,13 @@ class MT5ConnectionManager:
         if self._connected:
             return True
         if mt5 is None:
-            raise ConnectionError("MetaTrader5 package not installed")
+            detail = str(_MT5_IMPORT_ERROR or "module import returned None")
+            raise ConnectionError(
+                "MetaTrader5 is unavailable in this Python runtime "
+                f"({sys.executable}). Import error: {detail}. "
+                "Install it into this interpreter with "
+                f'\"{sys.executable}\" -m pip install -r requirements.txt'
+            )
 
         import time
 

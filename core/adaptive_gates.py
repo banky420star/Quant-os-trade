@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from core.trade_history import read_closed_trades
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
 STATE_FILE = "adaptive_gates.json"
@@ -49,15 +50,11 @@ def _is_win(t: dict[str, Any]) -> bool:
     return False
 
 
-def _recent_closed_trades(limit: int) -> list[dict[str, Any]]:
-    """Most-recent-first closed trades from trade_log (falls back to paper_trades)."""
-    tl = read_json_state("trade_log.json", default=[]) or []
-    trades = list(tl if isinstance(tl, list) else (tl or {}).get("trades") or [])
-    if not trades:
-        pt = read_json_state("paper_trades.json", default={"trades": []}) or {}
-        trades = list(pt.get("trades") or [])
-    trades = sorted(trades, key=lambda t: t.get("closed_at") or t.get("filled_at") or "", reverse=True)
-    return trades[:limit]
+def _recent_closed_trades(config: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    """Most-recent-first rows from the active execution-mode ledger."""
+    # Pass this module's reader explicitly so isolated tests and callers that
+    # provide a state backend remain effective; production still uses JSON.
+    return read_closed_trades(config, limit=limit, reader=read_json_state)
 
 
 def _trailing_consecutive(rows: list[dict[str, Any]]) -> int:
@@ -101,7 +98,7 @@ def compute_adaptive_gates(config: dict[str, Any]) -> dict[str, Any]:
 
     lookback = int(cfg.get("lookback", 15))
     min_sample = int(cfg.get("min_sample", 5))
-    trades = _recent_closed_trades(lookback)
+    trades = _recent_closed_trades(config, lookback)
     n = len(trades)
     wins = sum(1 for t in trades if _is_win(t))
     win_rate = 100.0 * wins / n if n else 50.0

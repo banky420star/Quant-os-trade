@@ -52,7 +52,7 @@ def _append(name: str, row: dict[str, Any]) -> None:
 def _trim(name: str) -> None:
     p = _path(name)
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return
     if len(lines) <= MAX_LINES:
@@ -66,7 +66,7 @@ def read_jsonl(name: str, *, limit: int = 50) -> list[dict[str, Any]]:
     if not p.exists():
         return []
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
     out: list[dict[str, Any]] = []

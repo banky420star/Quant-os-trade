@@ -28,6 +28,41 @@ FEATURE_SCHEMA_FIELDS = (
     "bb_middle",
     "bb_lower",
     "bb_position",
+    "bb_squeeze_pct",
+    "rsi",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "macd_cross",
+    "cci",
+    "mfi",
+    "adx",
+    "di_plus",
+    "di_minus",
+    "obv",
+    "obv_ema",
+    "obv_cross",
+    "atr_pct",
+    "cmf",
+    "vwap",
+    "vwap_upper",
+    "vwap_lower",
+    "vwap_position",
+    "supertrend_dir",
+    "supertrend_flip",
+    "ichimoku_tenkan",
+    "ichimoku_kijun",
+    "ichimoku_senkou_a",
+    "ichimoku_senkou_b",
+    "ichimoku_cloud_position",
+    "ichimoku_tk_cross",
+    "fvg",
+    "fvg_size_atr",
+    "engulfing",
+    "inside_bar",
+    "close_streak",
+    "order_block",
+    "ha_trend",
 )
 
 
@@ -126,6 +161,24 @@ class FeatureEngine:
         breakout = self._breakout_breakdown(df_m5, support, resistance)
         alignment = m5_trend == m15_trend
         volatility_regime = self._volatility_regime(df_m5, atr, price)
+        bb_squeeze_pct = self._bb_squeeze(df_m5)
+        rsi = self._rsi(df_m5)
+        macd = self._macd(df_m5)
+        cci = self._cci(df_m5)
+        mfi = self._mfi(df_m5)
+        adx = self._adx(df_m5)
+        obv = self._obv(df_m5)
+        atr_pct = self._atr_pct(df_m5)
+        cmf = self._cmf(df_m5)
+        vwap = self._vwap(df_m5)
+        supertrend = self._supertrend(df_m5)
+        ichimoku = self._ichimoku(df_m5)
+        fvg = self._fvg(df_m5, atr)
+        engulfing = self._engulfing(df_m5)
+        inside_bar = self._inside_bar(df_m5)
+        close_streak = self._close_streak(df_m5)
+        order_block = self._order_block(df_m5, atr)
+        ha_trend = self._ha_trend(df_m5)
 
         return {
             "symbol": symbol,
@@ -136,6 +189,41 @@ class FeatureEngine:
             "bb_middle": round(bb["middle"], 5),
             "bb_lower": round(bb["lower"], 5),
             "bb_position": round(bb["position"], 4),
+            "bb_squeeze_pct": round(bb_squeeze_pct, 4),
+            "rsi": round(rsi, 2),
+            "macd": round(macd["macd"], 6),
+            "macd_signal": round(macd["signal"], 6),
+            "macd_hist": round(macd["hist"], 6),
+            "macd_cross": macd["cross"],
+            "cci": round(cci, 2),
+            "mfi": round(mfi, 2),
+            "adx": round(adx["adx"], 2),
+            "di_plus": round(adx["di_plus"], 2),
+            "di_minus": round(adx["di_minus"], 2),
+            "obv": round(obv["obv"], 2),
+            "obv_ema": round(obv["ema"], 2),
+            "obv_cross": obv["cross"],
+            "atr_pct": round(atr_pct, 4),
+            "cmf": round(cmf, 4),
+            "vwap": round(vwap["vwap"], 5),
+            "vwap_upper": round(vwap["upper"], 5),
+            "vwap_lower": round(vwap["lower"], 5),
+            "vwap_position": round(vwap["position"], 4),
+            "supertrend_dir": supertrend["dir"],
+            "supertrend_flip": supertrend["flip"],
+            "ichimoku_tenkan": round(ichimoku["tenkan"], 5),
+            "ichimoku_kijun": round(ichimoku["kijun"], 5),
+            "ichimoku_senkou_a": round(ichimoku["senkou_a"], 5),
+            "ichimoku_senkou_b": round(ichimoku["senkou_b"], 5),
+            "ichimoku_cloud_position": ichimoku["cloud_position"],
+            "ichimoku_tk_cross": ichimoku["tk_cross"],
+            "fvg": fvg["fvg"],
+            "fvg_size_atr": round(fvg["size_atr"], 4),
+            "engulfing": engulfing,
+            "inside_bar": inside_bar,
+            "close_streak": close_streak,
+            "order_block": order_block,
+            "ha_trend": ha_trend,
             "stoch_k": round(stoch["k"], 2),
             "stoch_d": round(stoch["d"], 2),
             "stoch_cross": stoch["cross"],
@@ -182,6 +270,270 @@ class FeatureEngine:
         position = (price - lower) / width if width > 0 else 0.5
         return {"upper": float(upper), "middle": float(middle), "lower": float(lower), "position": float(position)}
 
+    def _bb_squeeze(self, df: pd.DataFrame, period: int = 20, std_mult: float = 2.0,
+                    lookback: int = 50) -> float:
+        """Bollinger-bandwidth compression percentile — iteration 19.
+
+        Returns the percentile rank of the CURRENT BB bandwidth within the prior
+        ``lookback`` bars, in [0, 1]: 0.0 = tightest squeeze (most compressed),
+        1.0 = widest. A low value (e.g. <= 0.20) means volatility is compressed
+        relative to recent history — the "squeeze" state that precedes expansion.
+        This is the rolling-compression baseline the specialized squeeze-breakout
+        entry model keys off (the existing ``volatility_regime`` "low" gate is an
+        ABSOLUTE threshold, far too rare to fire ~0.06% of bars; this RELATIVE
+        percentile is per-symbol-adaptive and fires often enough to measure).
+
+        Computed identically in the vectorized replay
+        (``specialized_replay_labeler._vectorized_features``) so live/research
+        parity holds — the iter-13 dead-setup lesson. bw = (upper-lower)/middle;
+        pct = bw.rolling(lookback).rank(pct=True) (current value ranked within the
+        window including itself). Returns 0.5 (neutral) during warmup.
+        """
+        close = df["close"]
+        mid = close.rolling(period).mean()
+        std = close.rolling(period).std()
+        upper = mid + std_mult * std
+        lower = mid - std_mult * std
+        bw = (upper - lower) / mid.replace(0, np.nan)
+        pct = bw.rolling(lookback).rank(pct=True)
+        val = pct.iloc[-1]
+        return float(val) if pd.notna(val) else 0.5
+
+    def _rsi(self, df: pd.DataFrame, period: int = 14) -> float:
+        """Wilder's Relative Strength Index — iteration 21.
+
+        Returns the RSI(14) of the current bar, in [0, 100]. A genuinely-new
+        feature: no prior setup used RSI (stoch_k is a price-RANGE position
+        oscillator; RSI is a smoothed momentum-ratio oscillator — mathematically
+        distinct, and one of the most-used TradingView oscillators). Keys the
+        RSI-reversion entry model (oversold/overbought fade), a clean test of
+        whether a different oscillator avoids the "stoch stays overbought in a
+        trend" trap that made stoch_reversion (iter 16) a broad per-symbol loser.
+
+        Wilder's smoothing = ewm(alpha=1/period, adjust=False). Computed
+        identically in the vectorized replay
+        (``specialized_replay_labeler._vectorized_features``) so live/research
+        parity holds (the iter-13 dead-setup lesson). Returns 50 (neutral) during
+        warmup / zero-range edge cases.
+        """
+        close = df["close"]
+        delta = close.diff()
+        gain = delta.clip(lower=0.0)
+        loss = (-delta).clip(lower=0.0)
+        avg_gain = gain.ewm(alpha=1.0 / period, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1.0 / period, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi_series = 100.0 - 100.0 / (1.0 + rs)
+        val = rsi_series.iloc[-1]
+        return float(val) if pd.notna(val) else 50.0
+
+    def _macd(self, df: pd.DataFrame, fast: int = 12, slow: int = 26,
+              signal: int = 9) -> dict:
+        """Moving Average Convergence Divergence — iteration 22.
+
+        Returns the MACD line (EMA fast - EMA slow), its signal line (EMA of the
+        MACD line), the histogram (MACD - signal), and the signal-line cross
+        event this bar (bullish_cross / bearish_cross / none). A genuinely-new
+        feature: no prior setup used MACD. MACD is a SMOOTHED-MOMENTUM oscillator
+        (EMA12-EMA26, the difference of two EMAs) — mathematically distinct from
+        stoch_k (price-RANGE position oscillator), from the EMA20-slope m5_trend
+        (single-EMA slope, not a fast/slow EMA difference), and from RSI
+        (momentum-ratio). Keys the MACD-cross entry model (signal-line
+        momentum-continuation), a clean test of whether a different oscillator's
+        cross works per symbol — stoch_cross (iter 12) was the prior cross-event
+        model, on a different oscillator.
+
+        Standard TradingView MACD(12,26,9). Computed identically in the
+        vectorized replay (``specialized_replay_labeler._vectorized_features``)
+        so live/research parity holds (the iter-13 dead-setup lesson). Returns
+        0 / "none" during warmup.
+        """
+        close = df["close"]
+        ema_fast = close.ewm(span=fast, adjust=False).mean()
+        ema_slow = close.ewm(span=slow, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+        hist = macd_line - signal_line
+
+        m = float(macd_line.iloc[-1]) if pd.notna(macd_line.iloc[-1]) else 0.0
+        s = float(signal_line.iloc[-1]) if pd.notna(signal_line.iloc[-1]) else 0.0
+        h = float(hist.iloc[-1]) if pd.notna(hist.iloc[-1]) else 0.0
+        m_prev = float(macd_line.iloc[-2]) if len(macd_line) > 1 and pd.notna(macd_line.iloc[-2]) else m
+        s_prev = float(signal_line.iloc[-2]) if len(signal_line) > 1 and pd.notna(signal_line.iloc[-2]) else s
+
+        cross = "none"
+        if m_prev <= s_prev and m > s:
+            cross = "bullish_cross"
+        elif m_prev >= s_prev and m < s:
+            cross = "bearish_cross"
+        return {"macd": m, "signal": s, "hist": h, "cross": cross}
+
+    def _cci(self, df: pd.DataFrame, period: int = 20) -> float:
+        """Commodity Channel Index — iteration 23.
+
+        Returns the CCI(20) of the current bar. CCI = (TP - SMA(TP, period)) /
+        (0.015 * mean_deviation(TP, period)), where TP = (high+low+close)/3 and
+        mean_deviation = mean of |TP_i - SMA| over the window. A genuinely-new
+        feature: no prior setup used CCI. CCI is a PRICE-DEVIATION-FROM-MA
+        oscillator (how far price sits from its own SMA, in units of mean
+        deviation) — mathematically distinct from RSI (gain/loss momentum
+        ratio, iter 21), stoch_k (price-RANGE position), and MACD (EMA
+        difference, iter 22). Keys the CCI-reversion entry model (|CCI| >= 100
+        fade), a third oscillator-reversion cell — a clean per-symbol test of
+        whether a price-deviation oscillator's extreme-fade works where RSI
+        (iter 21) and stoch (iter 16) fades didn't.
+
+        Standard TradingView CCI(20, 0.015). Computed identically in the
+        vectorized replay (``specialized_replay_labeler._vectorized_features``)
+        so live/research parity holds (the iter-13 dead-setup lesson). Returns
+        0 (neutral) during warmup / zero-deviation edge cases.
+        """
+        tp = (df["high"] + df["low"] + df["close"]) / 3.0
+        sma = tp.rolling(period).mean()
+        md = tp.rolling(period).apply(
+            lambda x: np.abs(x - x.mean()).mean(), raw=True
+        )
+        cci_series = (tp - sma) / (0.015 * md.replace(0, np.nan))
+        val = cci_series.iloc[-1]
+        return float(val) if pd.notna(val) else 0.0
+
+    def _mfi(self, df: pd.DataFrame, period: int = 14) -> float:
+        """Money Flow Index — iteration 24.
+
+        Returns the MFI(14) of the current bar, in [0, 100]. MFI is a
+        VOLUME-WEIGHTED oscillator (the volume-weighted cousin of RSI): TP =
+        (high+low+close)/3, raw money flow = TP * volume, positive flow is the
+        sum of raw flows on bars where TP rose, negative flow where TP fell, and
+        MFI = 100 - 100/(1 + pos_flow/neg_flow) over the window. A genuinely-new
+        feature: no prior setup used MFI. It is mathematically DISTINCT from RSI
+        (iter 21, a pure price gain/loss ratio with NO volume), CCI (iter 23,
+        price-deviation-from-MA, no volume), stoch_k (price-range position, no
+        volume), and MACD (iter 22, EMA difference, no volume) — MFI is the ONLY
+        oscillator here that folds in volume via the money-flow ratio. Keys the
+        MFI-reversion entry model (oversold/overbought fade), a fifth
+        oscillator-reversion cell — a clean per-symbol test of whether a
+        volume-weighted fade distinguishes symbols (volume-informative crypto /
+        oil / indices) where the pure-price RSI/CCI/stoch fades did not.
+
+        Standard TradingView MFI(14) (20/80 oversold/overbought). Computed
+        identically in the vectorized replay
+        (``specialized_replay_labeler._vectorized_features``) so live/research
+        parity holds (the iter-13 dead-setup lesson). Uses a rolling SUM (not an
+        EMA) so values are exact windowed matches after 14 bars, not just
+        converged — parity is byte-tight past warmup. Returns 50 (neutral) during
+        warmup / zero-negative-flow edge cases.
+        """
+        tp = (df["high"] + df["low"] + df["close"]) / 3.0
+        raw_mf = tp * df["volume"]
+        tp_prev = tp.shift(1)
+        pos_flow = pd.Series(np.where(tp > tp_prev, raw_mf, 0.0), index=df.index)
+        neg_flow = pd.Series(np.where(tp < tp_prev, raw_mf, 0.0), index=df.index)
+        pos_sum = pos_flow.rolling(period).sum()
+        neg_sum = neg_flow.rolling(period).sum()
+        mfr = pos_sum / neg_sum.replace(0, np.nan)
+        mfi_series = 100.0 - 100.0 / (1.0 + mfr)
+        val = mfi_series.iloc[-1]
+        return float(val) if pd.notna(val) else 50.0
+
+    def _adx(self, df: pd.DataFrame, period: int = 14) -> dict:
+        """Wilder's Average Directional Index (DMI) — iteration 25.
+
+        Returns the ADX(14) trend-STRENGTH line and the +DI/-DI directional
+        indicators of the current bar. ADX = the Wilder-smoothed average of
+        DX = 100 * |+DI - -DI| / (+DI + -DI), where +DI/-DI = 100 * Wilder-smoothed
+        (+DM / -DM) / Wilder-smoothed TR. +DM = up-move when up>down & up>0; -DM =
+        down-move when down>up & down>0; TR = max(H-L, |H-prevC|, |L-prevC|).
+        Wilder smoothing = ewm(alpha=1/period, adjust=False) = RMA (matches
+        TradingView's RMA, the standard DMI/ADX). ADX is in [0, 100]: >= 25 is a
+        strong trend (classic threshold), regardless of direction; +DI/-DI give
+        the direction.
+
+        A genuinely-new FEATURE and a genuinely-new DIMENSION: ADX is a
+        TREND-STRENGTH oscillator (non-directional — it reads how strong a trend
+        is, not which way). NO prior setup measures strength — the 15 prior
+        entry models use DIRECTION (breakout/cross/trend/m15_trend), REVERSION
+        (oscillator extremes: bb/stoch/rsi/cci/mfi), or VOLUME (volume_spike/
+        volume_breakout). ADX is mathematically distinct from all of them (DI
+        smoothing of directional moves, normalized to a strength index). Keys
+        the ADX-trend continuation entry model (strong-trend + DI direction),
+        a clean per-symbol test of whether a TRENGTH-STRENGTH filter works where
+        the directional trend models (mtf_align iter15, htf_breakout iter18,
+        vol_expansion iter13) split without a clear edge.
+
+        Computed identically in the vectorized replay
+        (``specialized_replay_labeler._vectorized_features``) so live/research
+        parity holds (the iter-13 dead-setup lesson). Wilder ewm(alpha=1/14)
+        converges in ~60 bars. Returns 0 / 0 / 0 during warmup / zero-TR edge
+        cases.
+        """
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+        up_move = high.diff()
+        down_move = -low.diff()  # low_prev - low
+        plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+        minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
+            axis=1,
+        ).max(axis=1)
+        atr_w = tr.ewm(alpha=1.0 / period, adjust=False).mean()  # Wilder-smoothed TR
+        plus_di = 100.0 * plus_dm.ewm(alpha=1.0 / period, adjust=False).mean() / atr_w.replace(0, np.nan)
+        minus_di = 100.0 * minus_dm.ewm(alpha=1.0 / period, adjust=False).mean() / atr_w.replace(0, np.nan)
+        dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        adx_series = dx.ewm(alpha=1.0 / period, adjust=False).mean()
+
+        a = float(adx_series.iloc[-1]) if pd.notna(adx_series.iloc[-1]) else 0.0
+        p = float(plus_di.iloc[-1]) if pd.notna(plus_di.iloc[-1]) else 0.0
+        m = float(minus_di.iloc[-1]) if pd.notna(minus_di.iloc[-1]) else 0.0
+        return {"adx": a, "di_plus": p, "di_minus": m}
+
+    def _obv(self, df: pd.DataFrame, ema_period: int = 20) -> dict:
+        """On-Balance Volume — iteration 26.
+
+        OBV is a CUMULATIVE signed-volume line: each bar adds +volume if close
+        rose, -volume if close fell, 0 if unchanged. A genuinely-new VOLUME
+        dimension: no prior setup uses cumulative volume. ``volume_ratio``
+        (iter 14/20) is a single-bar volume spike / volume+breakout compound;
+        ``mfi`` (iter 24) is a windowed pos/neg money-flow RATIO (bounded
+        oscillator). OBV is the volume-ACCUMULATION trend line — the running
+        total of signed volume — so its DIRECTION (vs its own EMA) measures
+        whether buyers or sellers are accumulating across many bars, not one
+        bar. Keys the OBV-EMA-cross entry model (volume-accumulation momentum
+        continuation), a clean test of whether cumulative-volume direction
+        works per symbol — the prior volume models (volume_spike/volume_breakout
+        = single-bar spike, mfi = windowed ratio) didn't.
+
+        Standard TradingView On Balance Volume + OBV EMA(20) cross. OBV is
+        path-dependent (cumulative from the first bar), so the absolute LEVEL
+        differs between live (full history) and the replay cap (max_bars tail).
+        The setup keys off the CROSS EVENT (obv > obv_ema flipping), which after
+        EMA warmup (~ema_period*5 bars) is independent of the starting level
+        (a constant offset shifts both OBV and its EMA equally), so live/research
+        SIGNAL parity holds even though the levels differ. Computed identically
+        in the vectorized replay (``specialized_replay_labeler._vectorized_features``).
+        Returns 0 / "none" during warmup.
+        """
+        close = df["close"]
+        volume = df["volume"]
+        # sign of close change: +1 up, -1 down, 0 unchanged (np.sign(0)=0)
+        direction = np.sign(close.diff().fillna(0.0))
+        obv_series = (direction * volume).cumsum()
+        ema_series = obv_series.ewm(span=ema_period, adjust=False).mean()
+
+        o = float(obv_series.iloc[-1]) if pd.notna(obv_series.iloc[-1]) else 0.0
+        e = float(ema_series.iloc[-1]) if pd.notna(ema_series.iloc[-1]) else 0.0
+        o_prev = float(obv_series.iloc[-2]) if len(obv_series) > 1 and pd.notna(obv_series.iloc[-2]) else o
+        e_prev = float(ema_series.iloc[-2]) if len(ema_series) > 1 and pd.notna(ema_series.iloc[-2]) else e
+
+        cross = "none"
+        if o_prev <= e_prev and o > e:
+            cross = "bullish_cross"
+        elif o_prev >= e_prev and o < e:
+            cross = "bearish_cross"
+        return {"obv": o, "ema": e, "cross": cross}
+
     def _stochastic(self, df: pd.DataFrame, k_period: int = 14, d_period: int = 3) -> dict:
         low_min = df["low"].rolling(k_period).min()
         high_max = df["high"].rolling(k_period).max()
@@ -213,6 +565,677 @@ class FeatureEngine:
             axis=1,
         ).max(axis=1)
         return float(tr.rolling(period).mean().iloc[-1])
+
+    def _atr_pct(self, df: pd.DataFrame, atr_period: int = 14,
+                 lookback: int = 100) -> float:
+        """ATR percentile rank — iteration 27.
+
+        The percentile rank (0..1) of the current ATR(14) within its own
+        rolling ``lookback``-bar ATR history — a non-parametric RELATIVE
+        volatility measure. A genuinely-new VOLATILITY-RANK dimension: no
+        prior setup uses it. ``volatility_regime`` / vol_expansion (iter 5/13)
+        gate on ABSOLUTE ``atr_ratio`` (ATR/price) thresholded into
+        high/normal/low — a spot, cross-symbol-normalized level. ATR-percentile
+        instead asks where current vol sits within its OWN recent history
+        (rank), capturing vol EXPANSION/CONTRACTION dynamics that a spot
+        atr_ratio does not: a symbol whose vol is perpetually high in absolute
+        terms sits forever in ``volatility_regime=high`` but only registers on
+        atr_pct when it is high RELATIVE to its own recent history. Mathematically
+        distinct (a rolling rank, not a thresholded ratio). Keys the
+        ATR-percentile-breakout entry model (relative-vol-expansion momentum
+        continuation), a clean test of whether a relative-vol gate works per
+        symbol where the absolute-vol gate (vol_expansion) didn't.
+
+        Windowed (rolling rank, NOT cumulative) so live/research parity is
+        byte-tight: rolling(lookback).rank(pct=True) at the last bar depends
+        only on the last ``lookback`` ATR values, identical between live
+        (full history tail) and the replay cap (max_bars tail) once both have
+        >= lookback+atr_period bars. Computed identically in the vectorized
+        replay (``specialized_replay_labeler._vectorized_features``). Returns
+        0.5 (mid rank) during warmup.
+        """
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
+            axis=1,
+        ).max(axis=1)
+        atr_series = tr.rolling(atr_period).mean()
+        pct = atr_series.rolling(lookback).rank(pct=True)
+        val = pct.iloc[-1]
+        return float(val) if pd.notna(val) else 0.5
+
+    def _cmf(self, df: pd.DataFrame, period: int = 20) -> float:
+        """Chaikin Money Flow — iteration 28.
+
+        CMF(period) = sum(money_flow_multiplier * volume, period) /
+                      sum(volume, period), where the money-flow multiplier is
+        (2*close - high - low) / (high - low) = the close LOCATION within the
+        bar's range, in [-1, +1]. A genuinely-new VOLUME dimension: no prior
+        setup keys off intrabar close-location weighted by volume. The three
+        existing volume features each measure something different —
+        ``volume_ratio`` (iter 14/20) is a single-bar volume LEVEL vs its
+        average; ``mfi`` (iter 24) is a price-CHANGE-weighted money-flow ratio
+        (uses close-to-close direction, reversion); ``obv`` (iter 26) is the
+        CUMULATIVE signed-DIRECTION volume line (cross). CMF instead asks where
+        price closed WITHIN each bar's range, weighted by volume, summed and
+        normalized — accumulation/distribution PRESSURE as a bounded [-1, +1]
+        oscillator. A close near the bar high on high volume => strong buying
+        pressure (+multiplier * big volume); a close near the low on high
+        volume => distribution. Captures intrabar flow that close-to-close
+        (MFI/OBV) and level-only (volume_ratio) both miss. Keys the
+        CMF-confirmed-continuation entry model (accumulation + bullish M5 trend
+        => BUY / distribution + bearish trend => SELL), a clean test of whether
+        intrabar money-flow pressure works per symbol where the other three
+        volume dimensions didn't.
+
+        Standard TradingView Chaikin Money Flow. Windowed (rolling sum, NOT
+        cumulative) so live/research parity is byte-tight: the last-bar value
+        depends only on the last ``period`` bars, identical between live (full
+        history tail) and the replay cap (max_bars tail) once both have >=
+        period bars. Computed identically in the vectorized replay
+        (``specialized_replay_labeler._vectorized_features``). Returns 0
+        (neutral flow) during warmup or when all bars in the window have zero
+        range.
+        """
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+        volume = df["volume"]
+        rng = high - low
+        # money-flow multiplier in [-1, +1]; zero range => 0 pressure
+        mfm = ((2 * close - high - low) / rng.replace(0, np.nan)).fillna(0.0)
+        mfv = mfm * volume
+        vol_sum = volume.rolling(period).sum()
+        cmf_series = mfv.rolling(period).sum() / vol_sum.replace(0, np.nan)
+        val = cmf_series.iloc[-1]
+        return float(val) if pd.notna(val) else 0.0
+
+    def _vwap(self, df: pd.DataFrame, period: int = 20, std_mult: float = 1.5) -> dict:
+        """Rolling Volume-Weighted Average Price + bands — iteration 34.
+
+        VWAP(period) = sum(typical_price * volume, period) / sum(volume, period),
+        where typical_price = (high + low + close) / 3. Bands at
+        vwap +/- std_mult * rolling(period).std(typical_price). vwap_position is
+        the close's location within the bands in [0, 1] (0 = at/below lower band,
+        1 = at/above upper band), clipped — the same shape as bb_position but on a
+        VOLUME-WEIGHTED anchor instead of a price-only SMA.
+
+        A genuinely-new PRICE-ANCHOR dimension: no prior setup keys off a
+        volume-weighted price level. The four existing volume features measure
+        FLOW/LEVEL (volume_ratio = single-bar level, mfi = price-change ratio,
+        obv = cumulative signed line, cmf = intrabar close-location pressure);
+        VWAP instead anchors a PRICE LEVEL by volume — where the "fair" weighted
+        price sits and how far spot has extended from it. Distinct from
+        bb_position (Bollinger bands on a plain SMA of close) because the anchor
+        and bands both fold in volume: a high-volume bar pulls VWAP toward it,
+        so the bands adapt to volume distribution, not just price dispersion.
+
+        Windowed (rolling sum, NOT session-cumulative) so live/research parity is
+        byte-tight: the last-bar value depends only on the last ``period`` bars,
+        identical between live (full history tail) and the replay cap (max_bars
+        tail) once both have >= period bars. (Session-anchored cumulative VWAP —
+        the textbook TradingView definition — is path-dependent on the session
+        boundary and would diverge between the live window and the replay tail;
+        the rolling form is the parity-honest choice and is still a legitimate
+        volume-weighted average price.) Computed identically in the vectorized
+        replay (``specialized_replay_labeler._vectorized_features``). Returns
+        vwap=price, position=0.5 (mid) during warmup or zero-volume windows.
+        """
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+        volume = df["volume"]
+        tp = (high + low + close) / 3.0
+        tp_vol = tp * volume
+        vol_sum = volume.rolling(period).sum()
+        vwap_series = tp_vol.rolling(period).sum() / vol_sum.replace(0, np.nan)
+        std_series = tp.rolling(period).std()
+        upper = vwap_series + std_mult * std_series
+        lower = vwap_series - std_mult * std_series
+        width = upper - lower
+        pos = ((close - lower) / width.replace(0, np.nan)).clip(0.0, 1.0).fillna(0.5)
+        v = vwap_series.iloc[-1]
+        u = upper.iloc[-1]
+        l = lower.iloc[-1]
+        price = float(close.iloc[-1])
+        return {
+            "vwap": float(v) if pd.notna(v) else price,
+            "upper": float(u) if pd.notna(u) else price,
+            "lower": float(l) if pd.notna(l) else price,
+            "position": float(pos.iloc[-1]) if pd.notna(pos.iloc[-1]) else 0.5,
+        }
+
+    def _supertrend(self, df: pd.DataFrame, period: int = 10, mult: float = 3.0) -> dict:
+        """Supertrend trend-STATE indicator + flip event — iteration 35.
+
+        Classic TradingView Supertrend: an ATR-band trend overlay whose band
+        collapses toward price on reversals and holds on continuations, with an
+        explicit up/down direction that flips when close crosses the trailing
+        band. Formula (TradingView default period=10, mult=3.0):
+          hl2 = (high + low) / 2;  atr = ATR(period)
+          basic_upper = hl2 + mult*atr;  basic_lower = hl2 - mult*atr
+          final_upper[i] = basic_upper[i]  if  basic_upper[i] < final_upper[i-1]
+                                              OR close[i-1] > final_upper[i-1]
+                           else final_upper[i-1]   (holds — band only drops in
+           an uptrend, so it ratchets to track the rising structure)
+          final_lower[i] = basic_lower[i]  if  basic_lower[i] > final_lower[i-1]
+                                              OR close[i-1] < final_lower[i-1]
+                           else final_lower[i-1]   (ratchets up in a downtrend)
+          direction[i] = UP   if close[i] > final_upper[i-1]  (close above the
+                                                              trailing upper band)
+                       = DOWN if close[i] < final_lower[i-1]
+                       = direction[i-1] otherwise                 (hold)
+
+        supertrend_flip = bullish_flip (DOWN->UP) / bearish_flip (UP->DOWN) /
+        none. The band LEVEL is recursive (carry-forward of final_upper/lower),
+        so it is PATH-DEPENDENT: live (500-bar tail) and replay (full-history
+        tail) start the recursion at different bars and the absolute band LEVELS
+        differ early on. BUT final_upper/lower are bounded by recent hl2 +/-
+        mult*ATR and forget their initial condition in ~2*period bars, so for
+        any bar past ~30 bars of warmup the band level — and therefore the
+        direction/FLIP — converges identical between live and replay. This is
+        the same parity argument as the OBV cross (iter 26): the SIGNAL event
+        matches even though the level series can differ in warmup. Parity-
+        verified on the last bar (which is what live uses) against the vectorized
+        replay. Computed identically in
+        ``specialized_replay_labeler._vectorized_features``.
+
+        A genuinely-new TREND-STATE dimension: no prior setup keys off an
+        ATR-band trend overlay with an explicit flip. m5_trend (EMA slope) gives
+        trend DIRECTION; adx (iter 25) gives trend STRENGTH; Supertrend gives a
+        third thing — a BAND-BOUNDED trend STATE that flips on a clean
+        ATR-adjusted cross, the canonical TradingView trend-continuation trigger.
+        Keys the Supertrend-flip-continuation entry model (bullish_flip -> BUY
+        / bearish_flip -> SELL). Returns dir="up", flip="none" during warmup
+        (<2*period bars).
+        """
+        high = df["high"].to_numpy()
+        low = df["low"].to_numpy()
+        close = df["close"].to_numpy()
+        n = len(df)
+        # ATR(period) — simple rolling mean of True Range (matches the labeler).
+        prev_close = np.concatenate(([np.nan], close[:-1]))
+        tr = np.maximum.reduce([
+            high - low,
+            np.abs(high - prev_close),
+            np.abs(low - prev_close),
+        ])
+        tr[0] = high[0] - low[0]  # no prior close on bar 0 -> NaN would poison cumsum
+        # rolling-mean ATR with min_periods=period (NaN until enough bars)
+        atr = np.full(n, np.nan)
+        if n >= period:
+            csum = np.cumsum(tr)
+            atr[period - 1:] = (csum[period - 1:] - np.concatenate(([0.0], csum[:-period])) ) / period
+        hl2 = (high + low) / 2.0
+        basic_upper = hl2 + mult * atr
+        basic_lower = hl2 - mult * atr
+        final_upper = np.full(n, np.nan)
+        final_lower = np.full(n, np.nan)
+        direction = np.array(["up"] * n, dtype=object)
+        if n == 0:
+            return {"dir": "up", "flip": "none"}
+        # seed at the first bar where ATR is defined
+        start = period - 1 if n >= period else 0
+        if n > period:
+            final_upper[start] = basic_upper[start]
+            final_lower[start] = basic_lower[start]
+            direction[start] = "up" if close[start] > final_upper[start] else "down"
+        for i in range(start + 1, n):
+            fu = basic_upper[i] if (
+                basic_upper[i] < final_upper[i - 1] or close[i - 1] > final_upper[i - 1]
+            ) else final_upper[i - 1]
+            fl = basic_lower[i] if (
+                basic_lower[i] > final_lower[i - 1] or close[i - 1] < final_lower[i - 1]
+            ) else final_lower[i - 1]
+            final_upper[i] = fu
+            final_lower[i] = fl
+            if close[i] > final_upper[i - 1]:
+                d = "up"
+            elif close[i] < final_lower[i - 1]:
+                d = "down"
+            else:
+                d = direction[i - 1]
+            direction[i] = d
+        d_now = str(direction[-1])
+        d_prev = str(direction[-2]) if n >= 2 else d_now
+        if d_prev == "down" and d_now == "up":
+            flip = "bullish_flip"
+        elif d_prev == "up" and d_now == "down":
+            flip = "bearish_flip"
+        else:
+            flip = "none"
+        return {"dir": d_now, "flip": flip}
+
+    def _ichimoku(self, df: pd.DataFrame, tenkan_period: int = 9, kijun_period: int = 26,
+                  senkou_b_period: int = 52) -> dict:
+        """Ichimoku Kinko Hyo equilibrium — iteration 36.
+
+        Classic TradingView Ichimoku: rolling high-low MIDPOINT equilibria, the
+        core being the Tenkan-sen (9-bar midpoint) and Kijun-sen (26-bar
+        midpoint) whose cross is the iconic Ichimoku trend-continuation trigger,
+        confirmed by cloud position (price vs the Senkou Span A/B cloud). Formula
+        (TradingView defaults 9/26/52):
+          tenkan = (max(high,9)  + min(low,9))  / 2   — short-term equilibrium
+          kijun  = (max(high,26) + min(low,26)) / 2   — medium-term baseline
+          senkou_a = (tenkan + kijun) / 2              — cloud upper edge
+          senkou_b = (max(high,52) + min(low,52)) / 2  — cloud lower edge
+          cloud_position = above / below / inside (price vs the senkou_a/b cloud)
+          tk_cross = bullish_cross (tenkan crosses above kijun) /
+                     bearish_cross (tenkan crosses below kijun) / none
+
+        A genuinely-new EQUILIBRIUM dimension: no prior setup keys off a rolling
+        high-low MIDPOINT. m5_trend (EMA slope) is a smoothed-price direction;
+        adx (iter 25) is trend strength; supertrend (iter 35) is an ATR-band
+        state flip; vwap (iter 34) is a volume-weighted price anchor; the
+        oscillators (rsi/stoch/cci/mfi) use close-vs-range. The rolling midpoint
+        of high/low is a distinct equilibrium measure — it IS the market's
+        short/medium-term fair value with no smoothing lag and no volume
+        weighting — and the Tenkan/Kijun cross confirmed by cloud side is the
+        canonical TradingView Ichimoku continuation signal. Keys the
+        Ichimoku-TK-cross-continuation entry model (bullish_cross + above cloud
+        -> BUY / bearish_cross + below cloud -> SELL).
+
+        PARITY: the rolling max/min midpoint is PATH-INDEPENDENT (a fixed
+        window — no carry-forward recursion like Supertrend/OBV), so live
+        (500-bar tail) and replay (full-history tail) produce identical values
+        for any bar past max(senkou_b_period)=52 bars of warmup. No NaN trap
+        (rolling max/min over a fully-observed window is defined for every bar
+        past the window). Parity-verified on the last bar against the vectorized
+        replay. Computed identically in
+        ``specialized_replay_labeler._vectorized_features``.
+        """
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+        n = len(df)
+        if n < 2:
+            return {"tenkan": 0.0, "kijun": 0.0, "senkou_a": 0.0, "senkou_b": 0.0,
+                    "cloud_position": "above", "tk_cross": "none"}
+        tenkan = (high.rolling(tenkan_period).max() + low.rolling(tenkan_period).min()) / 2.0
+        kijun = (high.rolling(kijun_period).max() + low.rolling(kijun_period).min()) / 2.0
+        senkou_a = (tenkan + kijun) / 2.0
+        senkou_b = (high.rolling(senkou_b_period).max() + low.rolling(senkou_b_period).min()) / 2.0
+        t = float(tenkan.iloc[-1]) if pd.notna(tenkan.iloc[-1]) else 0.0
+        k = float(kijun.iloc[-1]) if pd.notna(kijun.iloc[-1]) else 0.0
+        t_prev = float(tenkan.iloc[-2]) if pd.notna(tenkan.iloc[-2]) else t
+        k_prev = float(kijun.iloc[-2]) if pd.notna(kijun.iloc[-2]) else k
+        sa = float(senkou_a.iloc[-1]) if pd.notna(senkou_a.iloc[-1]) else 0.0
+        sb = float(senkou_b.iloc[-1]) if pd.notna(senkou_b.iloc[-1]) else 0.0
+        price = float(close.iloc[-1])
+        # cloud position: above both edges / below both / inside the cloud
+        cloud_top = max(sa, sb)
+        cloud_bot = min(sa, sb)
+        if price > cloud_top:
+            cloud_position = "above"
+        elif price < cloud_bot:
+            cloud_position = "below"
+        else:
+            cloud_position = "inside"
+        # Tenkan/Kijun cross event on the last bar
+        if t_prev <= k_prev and t > k:
+            tk_cross = "bullish_cross"
+        elif t_prev >= k_prev and t < k:
+            tk_cross = "bearish_cross"
+        else:
+            tk_cross = "none"
+        return {"tenkan": t, "kijun": k, "senkou_a": sa, "senkou_b": sb,
+                "cloud_position": cloud_position, "tk_cross": tk_cross}
+
+    def _fvg(self, df: pd.DataFrame, atr: float, min_size_atr: float = 0.25) -> dict:
+        """Fair Value Gap — ICT/SMC 3-bar structural imbalance — iteration 37.
+
+        A Fair Value Gap is a 3-bar price inefficiency where the move between
+        bar i-2 and bar i is so fast it leaves a GAP between the wicks of the
+        non-adjacent bars (bar i-1 is the impulse bar). Classic ICT/TradingView
+        definition:
+          bullish_fvg: bar[i-2].high < bar[i].low  -> gap up, imbalance to the
+                                                   upside, price tends to return
+                                                   to fill the (high[i-2], low[i])
+                                                   zone before continuing up
+          bearish_fvg: bar[i-2].low > bar[i].high  -> gap down, imbalance to the
+                                                     downside
+        The gap is only tradeable if it is non-trivial relative to volatility,
+        so it is gated by min_size_atr (gap size >= min_size_atr * ATR(14)) — a
+        sub-ATR gap is noise, not a real inefficiency. fvg_size_atr is the gap
+        size in ATR units (0.0 when no FVG).
+
+        A genuinely-new PRICE-IMBALANCE dimension: no prior setup keys off a
+        NON-ADJACENT-BAR gap. m5_trend (EMA slope) is smoothed direction; adx is
+        strength; supertrend is an ATR-band state; ichimoku (iter 36) is a
+        midpoint-equilibrium cross; the breakouts (breakout/compression/squeeze/
+        volume/htf/atr_pct) all use PRIOR-BAR S/R levels (a 1-bar structure); vwap
+        is a volume-weighted anchor. FVG is the only setup that detects a
+        3-bar STRUCTURAL gap between non-adjacent bars — the canonical ICT/SMC
+        inefficiency that price tends to fill, the most-traded FVG setup on
+        TradingView. Keys the FVG-continuation entry model (bullish_fvg -> BUY
+        / bearish_fvg -> SELL — trade the imbalance direction).
+
+        PARITY: the 3-bar gap is PATH-INDEPENDENT (a fixed lookback to i-2, no
+        carry-forward recursion), so live (500-bar tail) and replay (full-history
+        tail) produce identical fvg/fvg_size_atr for every bar past index 2. No
+        NaN trap (the gap is a direct comparison of observed highs/lows).
+        Parity-verified on the last bar against the vectorized replay. Computed
+        identically in ``specialized_replay_labeler._vectorized_features``.
+
+        HONESTY: per-cell CI lo>0 is selection-biased (iter33-36 all confirmed;
+        iter36 Ichimoku had 0/28 CI+). DSR/SPA + OOS across full K remains the
+        bar; the per-cell numbers below are necessary-not-sufficient, NOT a
+        deployable edge.
+        """
+        high = df["high"].to_numpy()
+        low = df["low"].to_numpy()
+        n = len(df)
+        if n < 3 or not atr or atr <= 0:
+            return {"fvg": "none", "size_atr": 0.0}
+        # FVG is confirmed on the last completed bar (i = n-1), using i-2 and i.
+        i = n - 1
+        h_prev2 = high[i - 2]
+        l_prev2 = low[i - 2]
+        h_now = high[i]
+        l_now = low[i]
+        gap_up = l_now - h_prev2  # bullish FVG gap (bar i-2 high -> bar i low)
+        gap_dn = l_prev2 - h_now  # bearish FVG gap (bar i-2 low -> bar i high)
+        if gap_up > 0 and (gap_up / atr) >= min_size_atr:
+            return {"fvg": "bullish_fvg", "size_atr": float(gap_up / atr)}
+        if gap_dn > 0 and (gap_dn / atr) >= min_size_atr:
+            return {"fvg": "bearish_fvg", "size_atr": float(gap_dn / atr)}
+        return {"fvg": "none", "size_atr": 0.0}
+
+    def _engulfing(self, df: pd.DataFrame) -> str:
+        """2-bar Engulfing candlestick pattern — iteration 38.
+
+        Classic TradingView candlestick reversal pattern: a 2-bar candle-BODY
+        structure where the current bar's body ENGULFS the prior bar's body.
+          bullish_engulfing: prior bar bearish (close < open) AND current bar
+                             bullish (close > open) AND current open <= prior
+                             close AND current close >= prior open  (the bullish
+                             body wraps the prior bearish body -> 2-bar reversal)
+          bearish_engulfing: prior bar bullish (close > open) AND current bar
+                             bearish (close < open) AND current open >= prior
+                             close AND current close <= prior open
+          none otherwise.
+
+        A genuinely-new CANDLE-STRUCTURE dimension: no prior setup keys off a
+        2-bar body-vs-body engulf. ``rejection`` / ``liquidity_sweep`` /
+        ``false_breakout`` (iters 1) all use the 1-bar WICK-vs-body rejection
+        (a single-bar wick signal); ``fvg`` (iter 37) uses a 3-bar gap between
+        non-adjacent bars; the oscillators/crosses use smoothed levels. The
+        2-bar engulfing body-wrap is the canonical TradingView candlestick
+        reversal pattern, a distinct entry model. Keys the Engulfing-reversal
+        entry model (bullish_engulfing -> BUY / bearish_engulfing -> SELL).
+
+        PARITY: the 2-bar pattern is PATH-INDEPENDENT (a fixed lookback to
+        i-1, no carry-forward recursion, no data-availability issue like daily
+        pivots), so live (500-bar tail) and replay (full-history tail) produce
+        identical engulfing for every bar past index 1. No NaN trap (direct
+        comparison of observed opens/closes). Parity-verified on the last bar
+        against the vectorized replay. Computed identically in
+        ``specialized_replay_labeler._vectorized_features``.
+
+        HONESTY: per-cell CI lo>0 is selection-biased (iter33-37 all confirmed;
+        iter37 FVG had 3/28 CI+ overlapping the iter33-adjudicated-negative
+        EUR/GBP L+NY cluster). DSR/SPA + OOS across full K remains the bar;
+        per-cell numbers below are necessary-not-sufficient, NOT a deployable
+        edge.
+        """
+        open_ = df["open"].to_numpy()
+        close = df["close"].to_numpy()
+        n = len(df)
+        if n < 2:
+            return "none"
+        o_prev, c_prev = open_[-2], close[-2]
+        o_now, c_now = open_[-1], close[-1]
+        prev_bear = c_prev < o_prev
+        prev_bull = c_prev > o_prev
+        now_bull = c_now > o_now
+        now_bear = c_now < o_now
+        if prev_bear and now_bull and o_now <= c_prev and c_now >= o_prev:
+            return "bullish_engulfing"
+        if prev_bull and now_bear and o_now >= c_prev and c_now <= o_prev:
+            return "bearish_engulfing"
+        return "none"
+
+    def _inside_bar(self, df: pd.DataFrame) -> str:
+        """3-bar Inside-Bar breakout — iteration 39.
+
+        Classic TradingView candlestick pattern: a mother bar, an inside bar
+        whose full range nests within the mother bar's range (contraction), then
+        a breakout bar that closes outside the mother bar's range (expansion).
+          bullish_inside_breakout: bar[i-1] is inside bar[i-2]
+                                   (high[i-1] <= high[i-2] AND low[i-1] >=
+                                   low[i-2]) AND bar[i] close > high[i-2]
+                                   (breakout UP through the mother high -> BUY)
+          bearish_inside_breakout: same inside condition AND bar[i] close <
+                                   low[i-2] (breakout DOWN through the mother
+                                   low -> SELL)
+          none otherwise.
+
+        A genuinely-new CANDLE-STRUCTURE dimension: no prior setup keys off a
+        2-3-bar RANGE-NESTING relationship. ``engulfing`` (iter 38) is a 2-bar
+        BODY-vs-body wrap; ``fvg`` (iter 37) is a 3-bar price GAP between
+        non-adjacent bars; ``rejection``/``liquidity_sweep``/``false_breakout``
+        (iter 1) are 1-bar WICK signals; legacy ``breakout``/``compression_
+        breakout`` key off a 1-bar S/R state / BB-squeeze width (continuous
+        metrics), not raw 2-bar range containment. Inside-bar is the canonical
+        TradingView volatility-contraction-then-expansion pattern, a distinct
+        entry model. Keys the inside-bar-breakout entry model
+        (bullish_inside_breakout -> BUY / bearish_inside_breakout -> SELL).
+
+        PARITY: the 3-bar pattern is PATH-INDEPENDENT (a fixed lookback to
+        i-2/i-1, no carry-forward recursion, no data-availability issue like
+        daily pivots), so live (500-bar tail) and replay (full-history tail)
+        produce identical inside_bar for every bar past index 2. No NaN trap
+        (direct comparison of observed highs/lows/close). Parity-verified on
+        the last bar against the vectorized replay. Computed identically in
+        ``specialized_replay_labeler._vectorized_features``.
+
+        HONESTY: per-cell CI lo>0 is selection-biased (iter33-38 all confirmed;
+        iter38 Engulfing was the cleanest negative 0/28 CI+). DSR/SPA + OOS
+        across full K remains the bar; per-cell numbers below are
+        necessary-not-sufficient, NOT a deployable edge.
+        """
+        high = df["high"].to_numpy()
+        low = df["low"].to_numpy()
+        close = df["close"].to_numpy()
+        n = len(df)
+        if n < 3:
+            return "none"
+        h_mother, l_mother = high[-3], low[-3]
+        h_inside, l_inside = high[-2], low[-2]
+        c_now = close[-1]
+        is_inside = (h_inside <= h_mother) and (l_inside >= l_mother)
+        if not is_inside:
+            return "none"
+        if c_now > h_mother:
+            return "bullish_inside_breakout"
+        if c_now < l_mother:
+            return "bearish_inside_breakout"
+        return "none"
+
+    def _close_streak(self, df: pd.DataFrame) -> int:
+        """Consecutive same-direction close streak — iteration 40.
+
+        A RUN-LENGTH / statistical momentum dimension: the signed count of
+        consecutive same-direction closes ending at the current bar.
+          +N: the last N closes were each strictly higher than the prior close
+               (a consecutive up-close run of length N ending now)
+          -N: the last N closes were each strictly lower than the prior close
+               (a consecutive down-close run of length N ending now)
+          0: the current close equals the prior close, or fewer than 2 bars.
+
+        A genuinely-new STATISTICAL dimension: no prior setup keys off a
+        consecutive-close run-length. ``m5_trend`` is an EMA-ribbon STATE;
+        ``adx_trend`` is ADX STRENGTH; ``mtf_align`` is m5-vs-m15 trend
+        AGREEMENT; the oscillators use smoothed LEVELS/crosses; the candle-
+        structure setups (rejection/engulfing/fvg/inside_bar) use 1-3-bar
+        PATTERNS. None count a run of consecutive same-direction closes. The
+        run-length is the canonical TradingView "consecutive candle
+        streak" / "N-bar momentum" signal, a distinct entry model. Keys the
+        close-streak-continuation entry model (streak >= +threshold -> BUY
+        continuation / streak <= -threshold -> SELL continuation).
+
+        PARITY: the run-length at the current bar is PATH-INDEPENDENT — it is
+        the count of consecutive same-direction closes ending at the last bar,
+        which depends only on the observed close series in the lookback window,
+        not on any carry-forward state or data availability beyond the window.
+        Live (500-bar tail) and replay (full-history tail) produce the SAME
+        streak value at the last bar as long as the streak length is shorter
+        than the window (true for any practical threshold: a 500-bar window
+        holds runs up to 500, far beyond any signaling threshold of 3-5). No
+        NaN trap (direct comparison of observed closes). Parity-verified on the
+        last bar against the vectorized replay. Computed identically in
+        ``specialized_replay_labeler._vectorized_features``.
+
+        HONESTY: per-cell CI lo>0 is selection-biased (iter33-39 all confirmed;
+        iter38+iter39 both 0/28 CI+). DSR/SPA + OOS across full K remains the
+        bar; per-cell numbers below are necessary-not-sufficient, NOT a
+        deployable edge.
+        """
+        close = df["close"].to_numpy()
+        n = len(df)
+        if n < 2:
+            return 0
+        # walk backward from the last bar while same direction
+        streak = 0
+        prev_dir = 0  # +1 up, -1 down, 0 flat
+        for i in range(n - 1, 0, -1):
+            d = 0
+            if close[i] > close[i - 1]:
+                d = 1
+            elif close[i] < close[i - 1]:
+                d = -1
+            if d == 0:
+                break
+            if prev_dir == 0:
+                prev_dir = d
+                streak = d
+            elif d == prev_dir:
+                streak += d
+            else:
+                break
+        return int(streak)
+
+    def _order_block(self, df: pd.DataFrame, atr: float,
+                     min_displacement_atr: float = 0.8) -> str:
+        """ICT/SMC Order-Block displacement origin — iteration 41.
+
+        A CANDLE-STRUCTURE + impulse-magnitude dimension: the last bar is a
+        strong DISPLACEMENT candle whose origin is the prior OPPOSITE-colored
+        candle (the "order block"). Bullish order block = prior bearish candle
+        followed by a bullish displacement bar whose body >= min_displacement_atr
+        * ATR(14); bearish = mirror. The prior opposite candle is the institutional
+        origin level; the strong body is the displacement away from it.
+
+        Genuinely distinct from the other candle-structure setups:
+          - engulfing (iter 38) keys off a 2-bar BODY WRAP (curr body wraps prior
+            body) with NO magnitude gate; order_block keys off IMPULSE MAGNITUDE
+            (body >= k*ATR) with NO wrap requirement. A strong impulse that does
+            not wrap the prior body fires order_block but not engulfing; a tiny
+            body that wraps fires engulfing but not order_block.
+          - inside_bar (iter 39) keys off range-NESTING then expansion (3 bars).
+          - fvg (iter 37) keys off a 3-bar gap between NON-adjacent bars.
+          - rejection/liquidity_sweep/false_breakout use a 1-bar WICK signal.
+        None require a displacement-magnitude body after an opposite origin
+        candle. The order-block is the canonical TradingView ICT/SMC "displacement
+        origin" signal, a distinct entry model.
+
+        PARITY: PATH-INDEPENDENT 2-bar structure (prior + current bar only, no
+        recursion, no carry-forward state). Live (500-bar tail, last-bar atr) and
+        replay (full-history tail, last-bar atr) produce the SAME order_block
+        label at the last bar as long as atr > 0 (true on any liquid symbol after
+        the 14-bar warmup). No NaN trap (direct comparison of observed OHLC).
+        Parity-verified on the last bar against the vectorized replay. Computed
+        identically in ``specialized_replay_labeler._vectorized_features``.
+
+        HONESTY: per-cell CI lo>0 is selection-biased across the full specialized-
+        replay search (iter33-40 all confirmed; iter40 Close-streak had 4/28 CI+
+        overlapping the iter33-adjudicated-negative EUR/GBP L+NY cluster). DSR/SPA
+        + OOS across full K remains the bar; per-cell numbers below are necessary-
+        not-sufficient, NOT a deployable edge.
+        """
+        if len(df) < 2 or not atr or atr <= 0:
+            return "none"
+        o = df["open"].to_numpy()
+        c = df["close"].to_numpy()
+        o_prev, c_prev = float(o[-2]), float(c[-2])
+        o_now, c_now = float(o[-1]), float(c[-1])
+        body_now = abs(c_now - o_now)
+        threshold = float(min_displacement_atr) * float(atr)
+        if body_now < threshold:
+            return "none"
+        prev_bear = c_prev < o_prev
+        prev_bull = c_prev > o_prev
+        now_bull = c_now > o_now
+        now_bear = c_now < o_now
+        if prev_bear and now_bull:
+            return "bullish_order_block"
+        if prev_bull and now_bear:
+            return "bearish_order_block"
+        return "none"
+
+    def _ha_trend(self, df: pd.DataFrame, lookback: int = 500) -> str:
+        """Heikin-Ashi smoothed-candle strong-trend signal — iteration 42.
+
+        A PRICE-TRANSFORM dimension: Heikin-Ashi replaces raw OHLC with a smoothed
+        candle series, then reads the SMOOTHED CANDLE's wick structure for a
+        strong-trend signal. No prior setup transforms the OHLC series before
+        reading structure — they all read raw OHLC:
+          - close_streak (iter 40) counts raw closes;
+          - engulfing (iter 38) / inside_bar (iter 39) / fvg (iter 37) / order_block
+            (iter 41) read raw 2-3-bar patterns;
+          - rejection reads a raw 1-bar wick.
+        HA dampens noise (HA_open is a 0.5-alpha recursive average of prior
+        HA_open+HA_close), so a smoothed no-lower-wick / no-upper-wick candle is a
+        genuinely different strong-trend signal. This is the canonical TradingView
+        "Heikin-Ashi smoothed candle" signal, a distinct 6th family.
+
+        HA_close[i] = (O+H+L+C)/4; HA_open[i] = (HA_open[i-1]+HA_close[i-1])/2,
+        seeded HA_open[0] = (O[0]+C[0])/2. bullish_ha_strong = HA_close > HA_open
+        (green HA) AND low >= HA_open (no lower wick — the real low did not poke
+        below the HA open, a strong bullish HA candle). bearish_ha_strong =
+        HA_close < HA_open (red HA) AND high <= HA_open (no upper wick). else none.
+
+        PARITY: HA_open is a 0.5-alpha recursion that forgets its seed at rate
+        0.5/bar — after ~20 bars the seed contributes <1e-6, after 500 bars
+        <1e-150. The live method uses the last `lookback`=500 bars (seeded 500
+        bars back); the vectorized replay uses full history (seeded at bar 0).
+        Both converge to the SAME HA_open at the last bar to ~300 decimal places,
+        so the last-bar ha_trend label matches exactly (the wick-absence
+        comparison low>=HA_open is robust unless HA_open is within 1e-150 of low,
+        which cannot occur). This is the same accepted approximation the project
+        uses for all recursive features (EMA/supertrend/ichimoku/vwap). No NaN
+        trap. Parity-verified on the last bar against the vectorized replay.
+        Computed identically in ``specialized_replay_labeler._vectorized_features``.
+
+        HONESTY: per-cell CI lo>0 is selection-biased across the full specialized-
+        replay search (iter33-41 all confirmed; iter41 Order-Block 1/28 CI+ clean
+        negative). DSR/SPA + OOS across full K remains the bar; per-cell numbers
+        below are necessary-not-sufficient, NOT a deployable edge.
+        """
+        import numpy as np
+        o = df["open"].to_numpy(); h = df["high"].to_numpy()
+        l = df["low"].to_numpy(); c = df["close"].to_numpy()
+        n = len(df)
+        if n < 2:
+            return "none"
+        start = max(0, n - lookback)
+        ha_close = np.empty(n)
+        ha_open = np.empty(n)
+        ha_close[start] = (o[start] + h[start] + l[start] + c[start]) / 4.0
+        ha_open[start] = (o[start] + c[start]) / 2.0
+        for i in range(start + 1, n):
+            ha_close[i] = (o[i] + h[i] + l[i] + c[i]) / 4.0
+            ha_open[i] = (ha_open[i - 1] + ha_close[i - 1]) / 2.0
+        i = n - 1
+        gc = ha_close[i]; go = ha_open[i]
+        if gc > go and l[i] >= go:
+            return "bullish_ha_strong"
+        if gc < go and h[i] <= go:
+            return "bearish_ha_strong"
+        return "none"
 
     def _support_resistance(self, df: pd.DataFrame, lookback: int = 50) -> tuple[float, float]:
         window = df.tail(lookback)

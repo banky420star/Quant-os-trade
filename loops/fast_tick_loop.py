@@ -1,14 +1,25 @@
-"""Fast tick loop — tick-reactive entry layer (observe-only by default)."""
+"""Fast tick loop — tick-reactive entry layer (observe-only by default).
+
+Persistent MT5 connection (2026-07-29): ``_MT5_CONN`` is cached at module
+level so fast_tick_loop does NOT open and close an MT5 session on every
+1-second tick. Instead it reuses one connection across calls, only
+reconnecting when ``ping()`` reveals the session died or a new config
+is loaded. This eliminates the IPC contention + per-tick latency that
+was producing transient account reads and false ``insufficient_margin``
+errors (diagnosed in the 2026-07-29 runtime audit).
+"""
 
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.adaptive_symbol_learner import record_tick_snapshot
 from core.audit_log import append_event
 from core.fast_entry_executor import evaluate_entry
 from core.fast_mode import fast_mode_enabled, fast_mode_live, fast_mode_settings, fast_mode_symbols
@@ -19,12 +30,68 @@ from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, 
 
 _LOGGER = None
 
+# Persistent MT5 connection: cached across tick cycles so we don't
+# reconnect on every 1-second tick. Created on first use; reconnected
+# automatically when the session dies.
+_MT5_CONN: MT5ConnectionManager | None = None
+_MT5_CONN_LOCK: threading.Lock | None = None
+
 
 def _logger():
     global _LOGGER
     if _LOGGER is None:
         _LOGGER = setup_logger("fast_tick_loop", "fast_tick_loop.log")
     return _LOGGER
+
+
+def _get_mt5_connection(config: dict, logger) -> MT5ConnectionManager | None:
+    """Return the cached MT5 connection, reconnecting if dead or new config."""
+    global _MT5_CONN, _MT5_CONN_LOCK
+    if _MT5_CONN_LOCK is None:
+        _MT5_CONN_LOCK = threading.Lock()
+    with _MT5_CONN_LOCK:
+        if _MT5_CONN is not None and _MT5_CONN.connected:
+            try:
+                ping = _MT5_CONN.ping()
+                if ping.get("alive") and ping.get("logged_in"):
+                    return _MT5_CONN
+            except Exception:
+                pass
+            # Connection died — disconnect cleanly before recreating
+            try:
+                _MT5_CONN.disconnect()
+            except Exception:
+                pass
+            _MT5_CONN = None
+
+        if _MT5_CONN is None:
+            conn = MT5ConnectionManager(config, logger)
+            try:
+                conn.connect()
+                _MT5_CONN = conn
+                logger.info(
+                    "Persistent MT5 connection established (login=%s balance=%.2f)",
+                    conn.account_snapshot().get("login"),
+                    conn.account_snapshot().get("balance", 0),
+                )
+            except Exception as exc:
+                logger.warning("Persistent MT5 connect failed: %s — using features", exc)
+                return None
+        return _MT5_CONN
+
+
+def _close_mt5_connection() -> None:
+    """Explicitly close the persistent MT5 connection (used on shutdown)."""
+    global _MT5_CONN, _MT5_CONN_LOCK
+    if _MT5_CONN_LOCK is None:
+        return
+    with _MT5_CONN_LOCK:
+        if _MT5_CONN is not None:
+            try:
+                _MT5_CONN.disconnect()
+            except Exception:
+                pass
+            _MT5_CONN = None
 
 
 def _write_decisions(doc: dict, config: dict) -> None:
@@ -48,29 +115,35 @@ def _tick_prices(config, symbols: list[str], logger) -> dict[str, dict]:
     use_mt5_ticks = mode == "mt5" and fast_mode_live(config)
 
     if use_mt5_ticks:
-        conn = MT5ConnectionManager(config, logger)
-        try:
-            conn.connect()
-            from core.mt5_client import MT5Client
-
-            client = MT5Client(config, conn, logger)
-            for sym in symbols:
-                tick = client.get_current_price(sym)
-                spread = client.get_spread_points(sym)
-                if tick:
-                    prices[sym] = {
-                        "mid": tick["mid"],
-                        "bid": tick["bid"],
-                        "ask": tick["ask"],
-                        "spread_points": spread,
-                    }
-        except Exception as exc:
-            logger.warning("Fast tick MT5 read failed: %s — using features", exc)
-        finally:
+        conn = _get_mt5_connection(config, logger)
+        if conn is not None:
             try:
-                conn.disconnect()
-            except Exception:
-                pass
+                from core.mt5_client import MT5Client
+
+                client = MT5Client(config, conn, logger)
+                for sym in symbols:
+                    tick = client.get_current_price(sym)
+                    spread = client.get_spread_points(sym)
+                    if tick:
+                        prices[sym] = {
+                            "mid": tick["mid"],
+                            "bid": tick["bid"],
+                            "ask": tick["ask"],
+                            "spread_points": spread,
+                        }
+            except Exception as exc:
+                logger.warning("Fast tick MT5 read failed: %s — using features", exc)
+                # Connection may be dead — force reconnect on next tick
+                try:
+                    if conn.connected:
+                        conn.disconnect()
+                except Exception:
+                    pass
+        else:
+            logger.warning("No MT5 connection available — using features.json prices")
+
+        if not prices:
+            logger.debug("MT5 returned no prices, falling back to features")
 
     for sym in symbols:
         if sym in prices:
@@ -101,6 +174,16 @@ def run(config: dict | None = None) -> dict | None:
     symbols = fast_mode_symbols(config)
     cache = prune_expired(read_cache(config))
     cache_symbols = dict(cache.get("symbols") or {})
+    # Sample every configured fast symbol, even when no evaluated signal is
+    # cached. Learning must not stop merely because the entry cache is empty.
+    observation_target = symbols or list(cache_symbols.keys())
+    observation_prices = _tick_prices(config, observation_target, logger)
+    observation_features = read_json_state("features.json", default={"symbols": {}})
+    try:
+        record_tick_snapshot(config, observation_prices, observation_features)
+    except Exception as exc:
+        logger.warning("Adaptive tick observation failed: %s", exc)
+
     if not cache_symbols:
         logger.debug("Fast tick: empty cache")
         doc = {
@@ -108,13 +191,14 @@ def run(config: dict | None = None) -> dict | None:
             "mode": "live" if cfg.get("live_enabled") else "observe",
             "decisions": [],
             "cache_symbols": 0,
+            "observed_symbols": len(observation_prices),
         }
         _write_decisions(doc, config)
         return doc
 
     target = [s for s in symbols if s in cache_symbols] if symbols else list(cache_symbols.keys())
-    prices = _tick_prices(config, target, logger)
-    features = read_json_state("features.json", default={"symbols": {}})
+    prices = observation_prices if target == observation_target else _tick_prices(config, target, logger)
+    features = observation_features
     state = read_fast_state()
     decisions: list[dict] = []
 

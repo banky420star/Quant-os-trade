@@ -30,6 +30,9 @@ def snapshot_signal_meta(
     rank = signal.get("strategy_rank") if isinstance(signal.get("strategy_rank"), dict) else {}
     return {
         "signal_id": signal.get("signal_id"),
+        # Optional, explicit tag for paper-only adaptive validation. It is never
+        # inferred from generic proposal IDs, preventing cross-experiment mixing.
+        "adaptive_symbol_proposal_id": signal.get("adaptive_symbol_proposal_id"),
         "symbol": signal.get("symbol"),
         "side": signal.get("side"),
         "setup_type": signal.get("setup_type"),

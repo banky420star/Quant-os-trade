@@ -66,6 +66,26 @@ def test_kelly_for_signal_disabled():
     assert res["reason"] == "disabled"
 
 
+def test_resolve_risk_percent_hard_caps_conviction_multiplier():
+    signal = {
+        "symbol": "BTCUSDm",
+        "setup_type": "pullback",
+        "side": "BUY",
+        "conviction_size_mult": 3.0,
+    }
+    config = {
+        "signals": {
+            "kelly_sizing": {"enabled": False},
+            "default_risk_percent": 4.0,
+        },
+        "risk": {"max_risk_per_trade_pct": 5.0},
+    }
+    pct, meta = resolve_risk_percent(signal, config)
+    assert pct == 5.0
+    assert meta["fraction"] == 5.0
+    assert meta["risk_cap_percent"] == 5.0
+
+
 def test_resolve_risk_percent_returns_kelly_meta():
     signal = {
         "symbol": "XAUUSDm",

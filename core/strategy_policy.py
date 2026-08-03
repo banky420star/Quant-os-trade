@@ -7,6 +7,24 @@ from typing import Any
 from core.setup_library import SETUP_LIBRARY
 
 KNOWN_SETUPS = set(SETUP_LIBRARY.keys())
+
+# 2026-07-31 — broker-comment truncation repair. MT5 order comments are
+# truncated to 16 chars at the broker; a comment written as "qagent_donchian_breakout"
+# comes back as "qagent_donchian_" → extracted setup "donchian_" (9 chars). This
+# splits ONE setup across TWO cells in regime_evolution / forward_test_ledger
+# (e.g. "ma_crosso" n=14 vs "ma_crossover" n=13; "donchian_" n=15 vs
+# "donchian_breakout" n=151) so neither cell reaches a robust sample and the
+# data-driven veto/gate can't act on the full evidence. The diversification
+# stream names (donchian_breakout, ma_crossover, atr_expansion, liquidity) are
+# NOT in SETUP_LIBRARY, so they are listed here so their full forms pass through
+# unchanged and their truncated prefixes can be repaired by prefix-match below.
+_CANONICAL_SETUP_NAMES = KNOWN_SETUPS | {
+    "donchian_breakout",
+    "ma_crossover",
+    "atr_expansion",
+    "liquidity",
+}
+
 MOVE_TYPE_SETUP_MAP = {
     "pullback": "pullback",
     "continuation": "trend_continuation",
@@ -50,6 +68,19 @@ def normalize_setup_type(
     raw = (setup_type or "").strip()
     if raw in KNOWN_SETUPS:
         return raw
+
+    # 2026-07-31 — repair broker-comment truncation. If the raw label is a
+    # strict prefix of exactly one canonical setup name (and is long enough
+    # not to be a coincidental short prefix), resolve it to the full name.
+    # This unifies the split cells (ma_crosso→ma_crossover, donchian_→
+    # donchian_breakout, mean_reve→mean_reversion, false_bre→false_breakout)
+    # so the culturing ledger and evolution cells accumulate evidence on one
+    # key instead of two. Ambiguous (multi-match) or short prefixes are left
+    # unchanged rather than guessed.
+    if raw and len(raw) >= 8 and raw not in _CANONICAL_SETUP_NAMES:
+        _matches = [s for s in _CANONICAL_SETUP_NAMES if s.startswith(raw)]
+        if len(_matches) == 1:
+            return _matches[0]
 
     meta = meta or {}
     market_context = market_context or {}

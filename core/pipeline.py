@@ -18,6 +18,7 @@ ANALYTICAL_LOOPS: set[str] = {
     "policy_detection_loop",
     "policy_optimizer_loop",
     "adaptation_loop",
+    "news_sentiment_loop",
 }
 
 
@@ -40,6 +41,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         verifier_loop,
         trade_log_loop,
         babysit_loop,
+        news_sentiment_loop,
     )
     return [
         ("data_loop", data_loop.run),
@@ -64,6 +66,10 @@ def _init_loops() -> list[tuple[str, Any]]:
         # Observe profitability regressions every cycle (no fabricated equity).
         ("babysit_loop", babysit_loop.run),
         ("policy_optimizer_loop", policy_optimizer_loop.run),
+        # 2026-07-31 — LLM news-sentiment SHADOW risk filter. Network-bound +
+        # self-throttled (news.refresh_interval_seconds, default 900s). No-op
+        # when news.enabled is false (default). Never blocks the pipeline.
+        ("news_sentiment_loop", news_sentiment_loop.run),
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
 

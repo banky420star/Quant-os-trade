@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-_STATE_DIR = Path(__file__).resolve().parent.parent / "state"
+_PROJECT_STATE_DIR = Path(__file__).resolve().parent.parent / "state"
+# Offline validation workers redirect core.utils.STATE_DIR to a temporary
+# directory; keep this fixture in that same namespace so it never restores
+# production state from a child test process.
+_STATE_DIR = Path(os.environ.get("MT5_QUANT_TEST_STATE_DIR", str(_PROJECT_STATE_DIR)))
 _ACTIVE_PROFILE = _STATE_DIR / "active_profile.json"
 
 

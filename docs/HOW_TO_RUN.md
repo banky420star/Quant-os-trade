@@ -15,11 +15,18 @@ Active branch: `blue-guardian`
 | **Algo Trading ON** | MT5 toolbar → **Algo Trading** must be enabled (green) |
 | **Same session** | Bot attaches to the MT5 terminal in your Windows session (use `MT5Agent` terminal if running headless/RDP) |
 
-Install dependencies from the project root:
+Install dependencies from the project root. The Windows launcher selects a Python interpreter that can import `MetaTrader5` before starting the bot:
 
 ```powershell
 cd Quant-os-trade
-pip install -r requirements.txt
+C:\Python314\python.exe -m pip install -r requirements.txt
+```
+
+If you use another Python installation, install the same requirements into that exact interpreter. The selector checks `MT5_PYTHON_OVERRIDE`, then `C:\Python314\python.exe`, then `py -3.14`, then `python`. To force a different interpreter:
+
+```bat
+set MT5_PYTHON_OVERRIDE=C:\path\to\python.exe
+START_AGENT.bat
 ```
 
 ## First-time setup
@@ -65,19 +72,26 @@ Profiles live in `profiles/*.yaml`. Pick one with `--profile`:
 Set explicitly (recommended):
 
 ```powershell
-python start.py --profile 30-real
+C:\Python314\python.exe start.py --profile 30-real
 ```
 
-Or use auto-selection based on logged-in account equity (no `--profile`).
+Or use the batch launcher, which selects the MT5-capable interpreter automatically:
+
+```bat
+START_AGENT.bat
+START_AGENT.bat --profile growth
+LAUNCH.bat --profile 30-real
+```
 
 ## Start the bot
 
 **Recommended (single instance):**
 
 ```powershell
-cd mt5_quant_agent
+cd Quant-os-trade
 .\scripts\kill_agent.bat
-python start.py --profile 30-real
+C:\Python314\python.exe scripts\preflight.py
+C:\Python314\python.exe start.py --profile 30-real
 ```
 
 **Windows shortcut:**
@@ -86,12 +100,12 @@ python start.py --profile 30-real
 .\START_AGENT.bat
 ```
 
-`START_AGENT.bat` kills old processes first, then runs `python start.py` (auto profile).
+`START_AGENT.bat` kills old processes, selects a Python interpreter that can import `MetaTrader5`, and forwards arguments to `start.py`.
 
 **One pipeline cycle only (smoke test):**
 
 ```powershell
-python start.py --profile 30-real --once
+C:\Python314\python.exe start.py --profile 30-real --once
 ```
 
 ## Stop the bot
@@ -120,7 +134,7 @@ Clears kill switch, daily baselines, edge memory, and signal history. **Does not
 CLI equivalent:
 
 ```powershell
-python scripts\reset_session_memory.py
+C:\Python314\python.exe scripts\reset_session_memory.py
 ```
 
 Use this after switching MT5 login/account so drawdown and daily-loss baselines match the new equity.
@@ -129,8 +143,8 @@ Use this after switching MT5 login/account so drawdown and daily-loss baselines 
 
 1. Log into the new account in MT5 (same terminal path the bot uses).
 2. Run `.\scripts\kill_agent.bat`
-3. Run `python scripts\reset_session_memory.py` (or dashboard reset).
-4. Start again: `python start.py --profile 30-real`
+3. Run `C:\Python314\python.exe scripts\reset_session_memory.py` (or dashboard reset).
+4. Start again: `.\START_AGENT.bat --profile 30-real`
 
 The risk loop auto-rebaselines on login change, but a manual reset avoids stale kill-switch state.
 
@@ -147,11 +161,12 @@ The risk loop auto-rebaselines on login change, but a manual reset avoids stale 
 
 | Symptom | Fix |
 |---------|-----|
+| `MetaTrader5 is unavailable in this Python runtime` | Use `.\START_AGENT.bat`, or install with `C:\Python314\python.exe -m pip install -r requirements.txt` |
 | Dashboard shows BUY, no trade | Check `state/rejected_signals.json` for `failure_codes`; verify Algo Trading is ON |
 | `MT5 Algo Trading is OFF` | Enable Algo Trading in MT5 toolbar |
 | Kill switch / daily loss pause | Dashboard **Reset state** or `reset_session_memory.py` after account change |
 | 100% exposure with one small position | Restart bot after pull — risk loop uses SL-risk not notional (fixed on `blue-guardian`) |
-| Two bots running | `.\scripts\kill_agent.bat` then one `start.py` |
+| Two bots running | `.\scripts\kill_agent.bat` then one `START_AGENT.bat` |
 | Gold blocked, other symbols open | Ensure profile has `independent_symbol_exposure: true` (`30-real` does) |
 
 ## Push your changes to GitHub
@@ -167,7 +182,7 @@ git push origin blue-guardian
 Before starting (or after switching accounts):
 
 ```powershell
-python scripts\preflight.py
+C:\Python314\python.exe scripts\preflight.py
 ```
 
 Exits 0 when ready; reports kill switch, health, and `trade_allowed` blockers.
@@ -195,12 +210,12 @@ Alerts fire on kill switch, health degradation, and execution errors. Audit trai
 ```powershell
 # Full restart (demo micro)
 .\scripts\kill_agent.bat
-python scripts\reset_session_memory.py   # optional, after account switch
-python start.py --profile 30-real
+C:\Python314\python.exe scripts\reset_session_memory.py   # optional, after account switch
+.\START_AGENT.bat --profile 30-real
 
 # Dashboard
 start http://127.0.0.1:8080
 
 # Tests
-python -m pytest tests/test_exposure.py -q
+C:\Python314\python.exe -m pytest tests/test_exposure.py -q
 ```

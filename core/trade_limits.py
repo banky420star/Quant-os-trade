@@ -400,6 +400,11 @@ def humanize_verifier_failure(
             f"{reg.get('primary', '?')}/{mc.get('session', '?')} loses on clean live data; "
             f"pruned by the forward-test ledger"
         )
+    if check_name == "setup_aggregate_veto":
+        return (
+            f"Setup aggregate veto — {signal.get('setup_type', '?')} is a proven loser "
+            f"across its full sample (setup-level forward-test gate); blocked"
+        )
     if check_name == "positive_evolution":
         mc = signal.get("market_context") or {}
         reg = mc.get("market_regime") or {}

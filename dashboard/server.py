@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import math
+import os
 import queue
 import socket
 import sys
@@ -53,6 +54,7 @@ except Exception as _ppm_import_err:
 
 STATE_FILES = (
     "health.json",
+    "heartbeat.json",
     "account.json",
     "risk_state.json",
     "kill_switch.json",
@@ -62,6 +64,9 @@ STATE_FILES = (
     "paper_positions.json",
     "paper_orders.json",
     "paper_trades.json",
+    "mt5_positions.json",
+    "mt5_orders.json",
+    "mt5_trades.json",
     "memory.json",
     "edge_scores.json",
     "market_context.json",
@@ -73,6 +78,8 @@ STATE_FILES = (
     "strategy_rankings.json",
     "research_report.json",
     "research_validation.json",
+    "validation_cycle.json",
+    "validation_history.json",
     "weight_candidates.json",
     "adaptive_weights.json",
     "supervisor.json",
@@ -102,6 +109,9 @@ STATE_FILES = (
     # the TradeTracker join missed at write-back time.
     "position_management.json",
     "trade_manager.json",
+    "mt5_audit.json",
+    "mt5_calendar.json",
+    "specialized_setup_report.json",
 )
 
 # Mobile / Tailscale: skip multi-MB blobs on the default dashboard poll.
@@ -111,22 +121,27 @@ LITE_SKIP_STATE = frozenset({
     "equity_history.json",
     "optimizer_results.json",
     "paper_orders.json",
+    "mt5_orders.json",
+    "mt5_positions.json",
+    "mt5_trades.json",
     "replay_results.json",
     "latest_candles.json",
     "trade_log.json",
+    "mt5_audit.json",
+    "mt5_calendar.json",
 })
 
 
 def _slim_state_file(name: str, data: dict) -> dict:
     """Trim heavy state files for phone-friendly API responses."""
-    if name == "paper_orders.json":
+    if name in ("paper_orders.json", "mt5_orders.json"):
         orders = data.get("orders") or []
         return {
             **{k: v for k, v in data.items() if k != "orders"},
             "orders": orders[-8:],
             "order_count": len(orders),
         }
-    if name == "paper_trades.json":
+    if name in ("paper_trades.json", "mt5_trades.json"):
         trades = data.get("trades") or []
         return {**data, "trades": trades[-40:], "trade_count": len(trades)}
     if name == "features.json":
@@ -244,11 +259,37 @@ def _build_live_portfolio(
     paper_orders: dict,
     paper_positions: dict,
     paper_trades: dict,
+    mt5_orders: dict,
+    mt5_positions: dict,
+    mt5_trades: dict,
     features: dict,
 ) -> dict:
-    """Live balance, equity, and open-trade PnL — prefer account.json over stale orders."""
-    order_acct = (paper_orders or {}).get("account", {})
-    balance = (paper_orders or {}).get("balance", {})
+    """Live balance, equity, and open-trade PnL — prefer account.json over stale orders.
+
+    Source priority:
+      1. account.json (MT5 terminal snapshot — freshest but may be stale)
+      2. mt5_*.json (written by MT5 execution path — live orders)
+      3. paper_*.json (written by paper simulation path)
+    Returns a ``source`` field indicating which source is driving the display.
+    """
+    # Determine which source is driving: prefer mt5_* over paper_* when non-empty.
+    _use_mt5_source = bool((mt5_orders or {}).get("orders")) or bool((mt5_positions or {}).get("positions"))
+
+    if _use_mt5_source:
+        order_acct = (mt5_orders or {}).get("account", {})
+        balance = (mt5_orders or {}).get("balance", {})
+        _orders_for_source = mt5_orders
+        _positions_for_source = mt5_positions
+        _trades_for_source = mt5_trades
+        _live_source = "mt5_live"
+    else:
+        order_acct = (paper_orders or {}).get("account", {})
+        balance = (paper_orders or {}).get("balance", {})
+        _orders_for_source = paper_orders
+        _positions_for_source = paper_positions
+        _trades_for_source = paper_trades
+        _live_source = "paper_orders"
+
     baseline = read_json_state("mt5_baseline.json", default={})
 
     cash = float(
@@ -269,10 +310,10 @@ def _build_live_portfolio(
         or cash
     )
 
-    positions = (paper_positions or {}).get("positions", [])
+    positions = (_positions_for_source or {}).get("positions", [])
     unrealized_pnl = round(sum(float(p.get("profit", 0)) for p in positions), 2)
 
-    trades = (paper_trades or {}).get("trades", [])
+    trades = (_trades_for_source or {}).get("trades", [])
     realized_pnl = round(sum(float(t.get("pnl", 0)) for t in trades), 2)
 
     open_positions = []
@@ -296,6 +337,25 @@ def _build_live_portfolio(
     session_pnl = round(equity - starting, 2)
     session_pnl_pct = round((session_pnl / starting * 100) if starting else 0, 2)
 
+    # source_timeline: which source was active and when
+    _source_timeline = {}
+    _ts_account = account.get("timestamp")
+    _ts_mt5 = _orders_for_source.get("timestamp") if _use_mt5_source else None
+    _ts_paper = paper_orders.get("timestamp") if not _use_mt5_source else None
+    if _ts_account:
+        _source_timeline["account.json"] = _ts_account
+    if _ts_mt5:
+        _source_timeline["mt5_orders.json"] = _ts_mt5
+    if _ts_paper:
+        _source_timeline["paper_orders.json"] = _ts_paper
+
+    # Stale fallback detection: if account has equity but ALL active sources
+    # are absent, the data is stale account.json.
+    _has_account_equity = bool(account.get("equity"))
+    if _has_account_equity and not _use_mt5_source and not paper_orders.get("orders"):
+        _live_source = "account.json"
+        _source_timeline["account.json"] = account.get("timestamp")
+
     return {
         "cash": round(cash, 2),
         "equity": round(equity, 2),
@@ -309,8 +369,9 @@ def _build_live_portfolio(
         "trade_count": len(trades),
         "account_login": account.get("login"),
         "account_server": account.get("server"),
-        "source": "account.json" if account.get("equity") else "paper_orders",
-        "updated_at": account.get("timestamp") or paper_orders.get("timestamp"),
+        "source": _live_source,
+        "source_timeline": _source_timeline,
+        "updated_at": account.get("timestamp") or _orders_for_source.get("timestamp"),
     }
 
 
@@ -2518,20 +2579,27 @@ def aggregate_state(*, lite: bool = False) -> dict:
 
     features_data = payload.get("features", {})
     market_ctx_data = payload.get("market_context", {})
-    positions_data = payload.get("paper_positions", {})
+    # Prefer mt5_* positions/trades when MT5 is the active source (non-empty),
+    # fall back to paper_* for research/paper mode.
+    _has_mt5_positions = bool((payload.get("mt5_positions") or {}).get("positions"))
+    positions_data = payload.get("mt5_positions", {}) if _has_mt5_positions else payload.get("paper_positions", {})
+    trades_for_cards = payload.get("mt5_trades", {}) if _has_mt5_positions else payload.get("paper_trades", {})
 
     payload["symbols"] = features_data.get("symbols", {})
     payload["symbol_cards"] = _build_symbol_cards(
         features_data,
         market_ctx_data,
         positions_data,
-        payload.get("paper_trades", {}),
+        trades_for_cards,
     )
     payload["live_portfolio"] = _build_live_portfolio(
         payload.get("account", {}),
         payload.get("paper_orders", {}),
         positions_data,
         payload.get("paper_trades", {}),
+        payload.get("mt5_orders", {}),
+        payload.get("mt5_positions", {}),
+        payload.get("mt5_trades", {}),
         features_data,
     )
     payload["watchlist"] = _build_watchlist(candidates, features_data, market_ctx_data)
@@ -3012,6 +3080,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send_html()
+        elif path == "/api/health":
+            self._send_json({
+                "status": "ok",
+                "pid": os.getpid(),
+                "timestamp": utc_now_iso(),
+            })
         elif path in ("/api/state", "/api/summary"):
             query = parse_qs(urlparse(self.path).query)
             lite = path == "/api/summary" or query.get("lite", ["0"])[0] in ("1", "true", "yes")

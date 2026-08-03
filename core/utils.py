@@ -16,7 +16,11 @@ from typing import Any
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-STATE_DIR = PROJECT_ROOT / "state"
+# Validation workers can override state I/O for their child test process. The
+# normal bot path remains rooted at <project>/state; only the explicit test
+# environment variable redirects it to a temporary directory.
+_STATE_DIR_OVERRIDE = os.environ.get("MT5_QUANT_TEST_STATE_DIR")
+STATE_DIR = Path(_STATE_DIR_OVERRIDE) if _STATE_DIR_OVERRIDE else PROJECT_ROOT / "state"
 LOGS_DIR = PROJECT_ROOT / "logs"
 DATA_DIR = PROJECT_ROOT / "data"
 

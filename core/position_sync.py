@@ -21,8 +21,18 @@ _COMMENT_SETUP_RE = re.compile(r"^qagent_(.+)$")
 def _setup_type_from_comment(comment: str) -> str:
     if not comment:
         return "unknown"
-    match = _COMMENT_SETUP_RE.match(comment.strip())
-    return match.group(1) if match else comment.strip() or "unknown"
+    raw = comment.strip()
+    match = _COMMENT_SETUP_RE.match(raw)
+    extracted = match.group(1) if match else raw
+    # 2026-07-31 — route through normalize_setup_type so broker-truncated
+    # setup names (qagent_donchian_ → donchian_ → donchian_breakout) are
+    # repaired at the source. Deferred import avoids a core.strategy_policy
+    # import cycle. Falls back to the raw extracted label if anything breaks.
+    try:
+        from core.strategy_policy import normalize_setup_type
+        return normalize_setup_type(extracted) or "unknown"
+    except Exception:
+        return extracted or "unknown"
 
 
 def fetch_mt5_agent_positions(
