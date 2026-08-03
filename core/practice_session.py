@@ -60,8 +60,9 @@ def sync_practice_gates(config: dict[str, Any]) -> dict[str, Any]:
             sym_frac = float(growth.get("max_symbol_exposure_fraction", total_frac))
         risk["max_symbol_exposure_usd"] = round(equity * sym_frac, 2)
         risk["max_total_exposure_usd"] = round(equity * total_frac, 2)
+        # Growth may deliberately disable the ranking engine, but it must not
+        # silently rewrite the top-N policy for profiles that keep ranking on.
         quant["strategy_ranking_enabled"] = bool(growth.get("strategy_ranking_enabled", False))
-        quant["require_top_ranked_setup"] = False
         quant["min_rank_win_rate"] = float(growth.get("min_rank_win_rate", 0))
         trading["aggressive_mode"] = bool(growth.get("aggressive_mode", True))
         trading["max_session_trades_per_symbol"] = int(

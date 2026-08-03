@@ -110,6 +110,22 @@ def test_apply_overrides():
     assert cfg["signals"]["default_risk_percent"] == 0.5
 
 
+def test_apply_overrides_preserves_configured_ranking_policy():
+    """Guardian risk overrides must not silently disable top-N ranking."""
+    cfg = _config()
+    cfg["quant"] = {
+        "strategy_ranking_enabled": True,
+        "require_top_ranked_setup": True,
+        "ranking_flex_enabled": True,
+    }
+    cfg["practice"]["growth"]["strategy_ranking_enabled"] = True
+
+    out = apply_config_overrides(cfg)
+    assert out["quant"]["strategy_ranking_enabled"] is True
+    assert out["quant"]["require_top_ranked_setup"] is True
+    assert out["quant"]["ranking_flex_enabled"] is True
+
+
 def test_cell_loss_stats():
     trades = [{"pnl": -30}, {"pnl": -20}, {"pnl": 10}]
     stats = cell_loss_stats(trades)

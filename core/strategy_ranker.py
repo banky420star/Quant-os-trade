@@ -187,7 +187,18 @@ class StrategyRanker:
 
         if not require_top:
             if match and match.get("win_rate_pct", 0) >= min_win_rate:
-                return True, {"allowed": True, "rank": match["rank"], "rankings": rankings[:5]}
+                return True, {
+                    "allowed": True,
+                    "reason": "ranking_not_required",
+                    "rank": match["rank"],
+                    "rankings": rankings[:5],
+                }
+            if match is None:
+                return False, {
+                    "allowed": False,
+                    "reason": "setup_unranked",
+                    "rankings": rankings[:5],
+                }
             return False, {
                 "allowed": False,
                 "reason": f"win_rate_below_{min_win_rate}",

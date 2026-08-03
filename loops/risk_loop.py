@@ -12,7 +12,13 @@ if str(ROOT) not in sys.path:
 from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
 from core.equity_tracker import record_snapshot
 from core.risk_manager import RiskManager
-from core.utils import load_config, read_json_state, setup_logger, write_json_state
+from core.utils import (
+    load_config,
+    read_json_state,
+    setup_logger,
+    utc_now_iso,
+    write_json_state,
+)
 
 
 def run() -> dict:
@@ -35,6 +41,26 @@ def run() -> dict:
     if config.get("execution", {}).get("mode") == "mt5":
         baseline = read_json_state("mt5_baseline.json", default={})
         account = read_json_state("account.json", default={})
+        # Refresh account.json from the live terminal every cycle. data_loop
+        # only writes it once in startup(), so without this the equity graph
+        # and risk math read a frozen balance for the whole session.
+        try:
+            from core.mt5_connection_manager import MT5ConnectionManager
+
+            conn = MT5ConnectionManager(config, logger)
+            try:
+                conn.connect()
+                live = conn.account_snapshot()
+                if live.get("login") is not None and live.get("balance") is not None:
+                    account = {**account, **live}
+                    account["timestamp"] = utc_now_iso()
+                    write_json_state("account.json", account)
+            finally:
+                conn.disconnect()
+        except Exception as exc:
+            logger.warning(
+                "Live account refresh failed — using cached account.json: %s", exc,
+            )
         acct_login = account.get("login")
         if (
             acct_login is not None

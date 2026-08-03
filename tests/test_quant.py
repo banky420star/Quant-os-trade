@@ -227,18 +227,80 @@ def test_strategy_ranker_allow_setup(config):
     assert info["allowed"] is True
 
 
+def test_ranking_not_required_path_returns_reason(config):
+    # Explicitly exercise the opt-out branch so its response schema remains
+    # stable for callers that use a deliberately non-ranking profile.
+    # Lock its info schema: allowed -> reason "ranking_not_required"; an
+    # unranked setup -> "setup_unranked" (not a misleading win-rate label).
+    config["quant"]["strategy_ranking_enabled"] = True
+    config["quant"]["require_top_ranked_setup"] = False
+    config["quant"]["min_rank_win_rate"] = 35
+    config["quant"]["per_symbol"]["XAUUSDm"] = {}
+    config["signals"]["symbol_rules"] = {}
+
+    ranker = StrategyRanker(config)
+    rankings = [
+        {
+            "setup_type": "pullback",
+            "score": 47.1,
+            "win_rate_pct": 47.1,
+            "total": 68,
+            "rank": 1,
+            "insufficient_data": False,
+        },
+    ]
+    ranker.rank_for_symbol = lambda *args, **kwargs: rankings  # type: ignore[method-assign]
+    ctx = {"session": "London", "market_regime": {"primary": "expansion"}}
+
+    allowed, info = ranker.allow_setup("pullback", "XAUUSDm", ctx, {})
+    assert allowed is True
+    assert info["reason"] == "ranking_not_required"
+
+    allowed_unranked, info_unranked = ranker.allow_setup("mean_reversion", "XAUUSDm", ctx, {})
+    assert allowed_unranked is False
+    assert info_unranked["reason"] == "setup_unranked"
+
+
+def test_active_profile_enables_bounded_ranking_flex(config):
+    """The active profile must not silently disable the configured flex gate."""
+    quant = config["quant"]
+    assert quant["strategy_ranking_enabled"] is True
+    assert quant["require_top_ranked_setup"] is True
+    assert quant["ranking_flex_enabled"] is True
+    assert quant["ranking_flex_min_win_rate"] > 0
+    assert quant["ranking_flex_min_samples"] >= 1
+    assert quant["ranking_flex_top_n"] >= 2
+
+    ranker = StrategyRanker(config)
+    assert ranker._allowed_rank_depth(
+        [
+            {"win_rate_pct": 41, "total": 20},
+            {"win_rate_pct": 60, "total": 20},
+        ]
+    ) == quant["ranking_flex_top_n"]
+    assert ranker._allowed_rank_depth(
+        [
+            {"win_rate_pct": 70, "total": 20},
+            {"win_rate_pct": 60, "total": 20},
+        ]
+    ) == 1
+    for symbol, policy in (quant.get("per_symbol") or {}).items():
+        assert policy.get("require_top_ranked_setup") is True, symbol
+
+
 def test_ranking_flex_allows_second_when_leader_is_weak(config):
-    # sync_practice_gates forces strategy_ranking_enabled=False while the
-    # aggressive growth plan is enabled (config.yaml practice.growth.enabled:
-    # true -> practice_session.py overwrites quant.strategy_ranking_enabled).
-    # These tests exercise the flex/context-align branches, which only run when
-    # ranking is ENABLED, so re-enable it explicitly here.
+    # sync_practice_gates can force strategy_ranking_enabled=False while the
+    # aggressive growth plan is enabled. These tests exercise the flex/context-
+    # align branches directly, so re-enable ranking explicitly here.
     config["quant"]["strategy_ranking_enabled"] = True
     config["quant"]["require_top_ranked_setup"] = True
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_flex_min_win_rate"] = 55
     config["quant"]["ranking_flex_min_samples"] = 10
     config["quant"]["ranking_flex_top_n"] = 2
+    # Keep this unit test independent of any profile-specific symbol override
+    # so it drives the intended flex branch deterministically.
+    config["quant"]["per_symbol"]["BTCUSDm"] = {}
 
     ranker = StrategyRanker(config)
     rankings = [
@@ -281,6 +343,8 @@ def test_ranking_flex_strict_when_leader_is_strong(config):
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_flex_min_win_rate"] = 55
     config["quant"]["ranking_flex_min_samples"] = 10
+    # Keep the strict branch independent of profile-specific symbol overrides.
+    config["quant"]["per_symbol"]["XAUUSDm"] = {}
 
     ranker = StrategyRanker(config)
     rankings = [
@@ -321,6 +385,13 @@ def test_context_align_allows_pullback_in_pullback_market(config):
     config["quant"]["ranking_flex_enabled"] = True
     config["quant"]["ranking_context_align"] = True
     config["quant"]["ranking_flex_top_n"] = 2
+    # Keep this branch independent of profile-specific symbol overrides.
+    config["quant"]["per_symbol"]["XAUUSDm"] = {}
+    # XAUUSDm's live symbol rule restricts allowed_setups to
+    # [pullback, trend_continuation], which short-circuits mean_reversion with
+    # "symbol_setup_restricted" before the ranking gate ever runs. Neutralize
+    # the rules so the test drives the context-align rejection path.
+    config["signals"]["symbol_rules"] = {}
 
     ranker = StrategyRanker(config)
     rankings = [
@@ -459,6 +530,14 @@ def test_blue_guardian_caps_new_fx_symbols(growth_profile):
 def test_cell_memory_veto_prefers_cell_over_global(config):
     from core.consensus_gates import ConsensusGates
 
+    # config.yaml zeroes the memory-veto win-rate thresholds, which disables
+    # the veto entirely (wr < 0 is impossible). Set explicit thresholds so
+    # this test deterministically exercises the cell veto path.
+    config["intelligence"]["memory_veto_win_rate"] = 40
+    config["intelligence"]["memory_veto_cell_win_rate"] = 40
+    config["intelligence"]["memory_veto_min_trades"] = 5
+    config["intelligence"]["memory_veto_cell_min_trades"] = 4
+
     gates = ConsensusGates(config)
     signal = {
         "symbol": "XAUUSDm",
@@ -491,6 +570,13 @@ def test_cell_memory_veto_prefers_cell_over_global(config):
 
 def test_memory_veto_requires_full_min_trades_for_global_fallback(config):
     from core.consensus_gates import ConsensusGates
+
+    # Same explicit thresholds as test_cell_memory_veto_prefers_cell_over_global
+    # so this test is deterministic regardless of config.yaml drift.
+    config["intelligence"]["memory_veto_win_rate"] = 40
+    config["intelligence"]["memory_veto_cell_win_rate"] = 40
+    config["intelligence"]["memory_veto_min_trades"] = 5
+    config["intelligence"]["memory_veto_cell_min_trades"] = 4
 
     gates = ConsensusGates(config)
     signal = {

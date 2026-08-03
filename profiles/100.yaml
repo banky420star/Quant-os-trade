@@ -350,10 +350,12 @@ quant:
     enabled: true
     min_n: 3
     min_expectancy_net_r: 0.0
+  # Ranking is strict top-1 once the leader has evidence; until then the
+  # bounded top-N fallback keeps the universe from going completely dark.
   strategy_ranking_enabled: true
-  require_top_ranked_setup: false
+  require_top_ranked_setup: true
   ranking_flex_enabled: true
-  ranking_flex_min_win_rate: 0
+  ranking_flex_min_win_rate: 42
   ranking_flex_min_samples: 6
   ranking_flex_top_n: 2
   ranking_context_align: true
@@ -362,7 +364,7 @@ quant:
   cell_veto_demote: true
   per_symbol:
     XAUUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups:
@@ -375,25 +377,25 @@ quant:
       - new_york
       - tokyo
     USOILm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups: *id002
       preferred_sessions: *id004
     US30m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups: *id003
       preferred_sessions: *id005
     USDJPYm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups: *id001
       preferred_sessions: *id006
     GBPUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups:
@@ -404,7 +406,7 @@ quant:
       - overlap_london_ny
       - new_york
     EURUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups:
@@ -415,7 +417,7 @@ quant:
       - overlap_london_ny
       - new_york
     AUDUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups:
@@ -427,7 +429,7 @@ quant:
       - overlap_london_ny
       - new_york
     USDCHFm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups:

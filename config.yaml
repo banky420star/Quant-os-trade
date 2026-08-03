@@ -853,45 +853,49 @@ session_scoring:
       london_open: 1
 quant:
   use_adaptive_weights: true
+  # Require the ranker to select the leader or bounded top-N fallback.
+  # ranking_flex_enabled only has an effect when this gate is true.
   strategy_ranking_enabled: true
-  require_top_ranked_setup: false
+  require_top_ranked_setup: true
   ranking_flex_enabled: true
   ranking_flex_min_win_rate: 52
   ranking_flex_min_samples: 10
   ranking_flex_top_n: 2
+  # The second-ranked setup is a fallback only while the leader lacks evidence
+  # or falls below the configured win-rate threshold.
   ranking_context_align: true
   min_rank_sample_size: 3
   min_rank_win_rate: 45
   replay_ingest_edge_db: true
   per_symbol:
     XAUUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     USOILm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     BTCUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     EURUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     GBPUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     USDJPYm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     USDCHFm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     AUDUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     US500m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     US30m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     NAS100m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     UK100m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     FR40m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
     JP225m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
 practice:
   micro:
     enabled: false
@@ -1029,7 +1033,8 @@ practice:
   - JP225m
   min_trade_score: 18
   min_trade_score_aggressive: 20
-  require_top_ranked_setup: false
+  # Keep practice-mode ranking aligned with the bounded top-N policy.
+  require_top_ranked_setup: true
   min_confidence: 40
   min_risk_reward: 1.0
   relax_structure_checks: true

@@ -495,8 +495,9 @@ def apply_config_overrides(config: dict[str, Any]) -> dict[str, Any]:
         cap = round(equity * exposure_frac, 2)
         risk["max_symbol_exposure_usd"] = cap
         risk["max_total_exposure_usd"] = cap
+        # Growth may deliberately disable the ranking engine, but preserve the
+        # configured top-N policy when ranking remains enabled.
         quant["strategy_ranking_enabled"] = bool(growth.get("strategy_ranking_enabled", False))
-        quant["require_top_ranked_setup"] = False
         trading["aggressive_mode"] = bool(growth.get("aggressive_mode", True))
         trading["max_session_trades_per_symbol"] = int(
             growth.get("max_session_trades_per_symbol", 24)

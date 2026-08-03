@@ -55,6 +55,20 @@ def test_sync_practice_gates_applies_growth_risk(growth_config):
         assert cfg["risk"]["max_total_exposure_usd"] == pytest.approx(100.0 * exp_frac, rel=0.01)
 
 
+def test_sync_growth_preserves_configured_ranking_policy(growth_config):
+    """Growth gate relaxation must not silently disable top-N ranking policy."""
+    growth_config["practice"]["growth"]["strategy_ranking_enabled"] = True
+    growth_config["quant"]["require_top_ranked_setup"] = True
+    growth_config["quant"]["ranking_flex_enabled"] = True
+
+    from core.practice_session import sync_practice_gates
+
+    cfg = sync_practice_gates(growth_config)
+    assert cfg["quant"]["strategy_ranking_enabled"] is True
+    assert cfg["quant"]["require_top_ranked_setup"] is True
+    assert cfg["quant"]["ranking_flex_enabled"] is True
+
+
 def test_continuous_campaign_skips_daily_lock(growth_config, monkeypatch):
     growth_config["practice"]["growth"]["lock_profit_when_target_hit"] = False
     growth_config["practice"]["growth"]["continuous_through_campaign"] = True

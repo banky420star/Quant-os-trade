@@ -45,6 +45,8 @@ practice:
   min_risk_reward: 0.75
   min_trade_score: 20
   min_trade_score_aggressive: 20
+  # sync_practice_gates applies this practice-level value at runtime.
+  ranking_flex_min_win_rate: 48
   growth:
     enabled: false
   micro:
@@ -178,10 +180,11 @@ quant:
     enabled: true
     min_n: 6
     min_expectancy_net_r: 0.0
+  # Require the ranker to select the leader or bounded top-N fallback.
   strategy_ranking_enabled: true
-  require_top_ranked_setup: false
+  require_top_ranked_setup: true
   ranking_flex_enabled: true
-  ranking_flex_min_win_rate: 0
+  ranking_flex_min_win_rate: 48
   ranking_flex_min_samples: 6
   ranking_flex_top_n: 2
   ranking_context_align: true
@@ -190,7 +193,7 @@ quant:
   cell_veto_demote: true
   per_symbol:
     XAUUSDm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       min_rank_sample_size: 3
       preferred_setups:
@@ -203,7 +206,7 @@ quant:
       - new_york
       - tokyo
     USOILm:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       preferred_setups:
       - trend_continuation
@@ -214,7 +217,7 @@ quant:
       - overlap_london_ny
       - london_open
     UK100m:
-      require_top_ranked_setup: false
+      require_top_ranked_setup: true
       min_rank_win_rate: 0
       preferred_setups:
       - trend_continuation
