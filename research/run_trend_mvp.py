@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """D1/H4 Trend MVP — cost-aware baselines with double-cost stress survival.
 
-Resamples M15 data to D1 and H4, runs MA200, 3M momentum, and blended
-1/3/6/12-month models.  Deducts estimated spread, swap, and slippage
-per signal flip, then stress-tests at 1×, 2×, and 3× costs.
+Reads real D1/H4 Parquet files from MT5 (backfilled by history_loop).
+Falls back to M15 resampling if D1/H4 files are not yet available.
+Runs MA200, 3M momentum, and blended 1/3/6/12-month models.
+Deducts estimated spread, swap, and slippage per signal flip,
+then stress-tests at 1x, 2x, and 3x costs.
 """
 
 from __future__ import annotations
@@ -73,7 +75,28 @@ def daily_swap_bps(symbol: str) -> float:
 # ── resampling ───────────────────────────────────────────────────────────────
 
 
-def _resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+def _read_ohlc(sym: str, tf: str) -> pd.DataFrame:
+    """Read OHLC data for a symbol/timeframe.
+
+    Prefers real D1/H4 Parquet files from MT5.  Falls back to
+    M15 resampling if the direct file doesn't exist yet.
+    """
+    # Try direct D1/H4 file first (backfilled by history_loop)
+    direct = HISTORY_DIR / f"{sym}_{tf}.parquet"
+    if direct.exists():
+        df = pd.read_parquet(direct)
+        if "time" in df.columns:
+            df["time"] = pd.to_datetime(df["time"], utc=True)
+            df = df.set_index("time")
+        return df.sort_index()
+
+    # Fall back to M15 resampling
+    m15 = HISTORY_DIR / f"{sym}_M15.parquet"
+    if not m15.exists():
+        raise FileNotFoundError(f"No data for {sym} {tf} (neither {direct.name} nor {m15.name})")
+
+    df = pd.read_parquet(m15)
+    # Resample M15 to the target timeframe
     if "time" in df.columns:
         df = df.copy()
         df["time"] = pd.to_datetime(df["time"], utc=True)
@@ -81,9 +104,8 @@ def _resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     elif not isinstance(df.index, pd.DatetimeIndex):
         raise ValueError("DataFrame must have a DatetimeIndex or 'time' column")
 
-    agg_map: dict[str, str] = {
-        "open": "first", "high": "max", "low": "min", "close": "last",
-    }
+    rule = {"D1": "D", "H4": "4h"}[tf]
+    agg_map = {"open": "first", "high": "max", "low": "min", "close": "last"}
     for col in ["volume", "tick_volume", "real_volume"]:
         if col in df.columns:
             agg_map[col] = "sum"
@@ -160,13 +182,10 @@ def _signal_metrics_cost(
 
 
 def run_baselines(sym: str, tf: str) -> dict[str, Any]:
-    path = HISTORY_DIR / f"{sym}_M15.parquet"
-    if not path.exists():
-        return {"error": f"no M15 data for {sym}"}
-
-    df = pd.read_parquet(path)
-    rule = {"D1": "D", "H4": "4h"}[tf]
-    daily = _resample_ohlc(df, rule)
+    try:
+        daily = _read_ohlc(sym, tf)
+    except FileNotFoundError as e:
+        return {"error": str(e)}
     close = daily["close"]
 
     if len(close) < 252:
@@ -381,7 +400,7 @@ def main() -> int:
     # ── write report ─────────────────────────────────────────────────────
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_tf": "M15",
+        "source_tf": "D1_real",  # real D1 from MT5, M15 fallback if missing
         "target_tfs": ["D1"],
         "cost_model": {
             "slippage_bps": SLIPPAGE_BPS,

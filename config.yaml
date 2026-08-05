@@ -269,6 +269,7 @@ mt5:
   timeframes:
     entry: M5
     bias: M15
+    research: [D1, H4]
   candles: 300
   auto_launch_terminal: false
 features:

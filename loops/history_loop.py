@@ -42,13 +42,21 @@ def run(mode: str | None = None) -> dict:
         collector = DataCollector(config, connection, symbol_mgr, logger)
         history = HistoryManager(config, collector, logger)
 
+        research_tfs = config["mt5"]["timeframes"].get("research", [])
+
         if mode == "full":
             result = history.download_full(symbol_map, entry_tf)
+            for tf in research_tfs:
+                r = history.download_full(symbol_map, tf)
+                result["symbols"].update(r.get("symbols", {}))
         else:
             result = history.update_incremental(symbol_map, entry_tf)
             bias_tf = config["mt5"]["timeframes"]["bias"]
             inc2 = history.update_incremental(symbol_map, bias_tf)
             result["symbols"].update(inc2.get("symbols", {}))
+            for tf in research_tfs:
+                r = history.update_incremental(symbol_map, tf)
+                result["symbols"].update(r.get("symbols", {}))
 
         status = history.status(symbol_map)
         write_json_state("history_status.json", status)
