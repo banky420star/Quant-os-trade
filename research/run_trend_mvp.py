@@ -26,7 +26,9 @@ from research.strategies.trend_baseline import (
     time_series_momentum_signal,
 )
 
-HISTORY_DIR = Path("data/history")
+# Primary: clean exports from research/data/.  Fallback: raw MT5 history.
+DATA_DIR = Path("research/data")
+FALLBACK_DIR = Path("data/history")
 REPORT_PATH = Path("data/trend_mvp_cost_report.json")
 
 # ── cost model ───────────────────────────────────────────────────────────────
@@ -81,8 +83,10 @@ def _read_ohlc(sym: str, tf: str) -> pd.DataFrame:
     Prefers real D1/H4 Parquet files from MT5.  Falls back to
     M15 resampling if the direct file doesn't exist yet.
     """
-    # Try direct D1/H4 file first (backfilled by history_loop)
-    direct = HISTORY_DIR / f"{sym}_{tf}.parquet"
+    # Try clean export first, then raw history, then M15 fallback
+    direct = DATA_DIR / f"{sym}_{tf}.parquet"
+    if not direct.exists():
+        direct = FALLBACK_DIR / f"{sym}_{tf}.parquet"
     if direct.exists():
         df = pd.read_parquet(direct)
         if "time" in df.columns:
@@ -90,8 +94,8 @@ def _read_ohlc(sym: str, tf: str) -> pd.DataFrame:
             df = df.set_index("time")
         return df.sort_index()
 
-    # Fall back to M15 resampling
-    m15 = HISTORY_DIR / f"{sym}_M15.parquet"
+    # Fall back to M15 resampling from fallback dir
+    m15 = FALLBACK_DIR / f"{sym}_M15.parquet"
     if not m15.exists():
         raise FileNotFoundError(f"No data for {sym} {tf} (neither {direct.name} nor {m15.name})")
 

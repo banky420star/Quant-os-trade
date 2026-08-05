@@ -41,7 +41,9 @@ from research.strategies.trend_baseline import (
 )
 
 # -- paths --------------------------------------------------------------------
-HISTORY_DIR = Path("data/history")
+# Primary: clean exports from research/data/.  Fallback: raw MT5 history.
+DATA_DIR = Path("research/data")
+FALLBACK_DIR = Path("data/history")
 REPORT_PATH = Path("data/walk_forward_report.json")
 
 # -- cost model ---------------------------------------------------------------
@@ -102,7 +104,10 @@ def _symbol_cluster(symbol: str) -> str:
 
 
 def _read_close(sym: str) -> pd.Series:
-    direct = HISTORY_DIR / f"{sym}_D1.parquet"
+    """Read D1 close prices for a symbol."""
+    direct = DATA_DIR / f"{sym}_D1.parquet"
+    if not direct.exists():
+        direct = FALLBACK_DIR / f"{sym}_D1.parquet"
     if not direct.exists():
         raise FileNotFoundError(str(direct))
     df = pd.read_parquet(direct)
