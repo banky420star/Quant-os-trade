@@ -48,7 +48,7 @@ def test_sync_practice_gates_applies_growth_risk(growth_config):
         assert cfg["practice"]["growth"]["enabled"] is True
     else:
         assert cfg["signals"]["default_risk_percent"] == 0.50
-        assert cfg["quant"]["strategy_ranking_enabled"] is False
+        assert cfg["quant"]["strategy_ranking_enabled"] is True
         assert cfg["trading"]["aggressive_mode"] is True
         assert cfg["session_scoring"]["enabled"] is False
         exp_frac = float((cfg.get("practice") or {}).get("growth", {}).get("max_total_exposure_fraction", 0.92))
