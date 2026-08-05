@@ -29,7 +29,7 @@ practice:
     max_drawdown_pct: 20
     max_lot: 0.25
     risk_percent_per_trade: 2.5
-    strategy_ranking_enabled: false
+    strategy_ranking_enabled: true
     session_scoring_enabled: false
     continuous_through_campaign: true
     lock_profit_when_target_hit: false
@@ -51,6 +51,15 @@ risk:
   # Base risk section values apply. Daily profit halt kept per user request.
   # Reset happens automatically at UTC midnight.
   daily_profit_halt_usd: 400
+  # 2026-08-03 — per-trade USD risk cap. Setting this flips the exposure
+  # metric from NOTIONAL (price×lots — a 0.25-lot US30m = $13,301) to
+  # SL-risk USD (stop distance × tick value), the SAME metric the broker
+  # sizes by. Without it, core.exposure.requires_executable_sizing() was
+  # False and the verifier rejected EVERY candidate with
+  # exposure_limit_exceeded on this ~$1,000 account, so the bot could
+  # never trade the best opportunities on index CFDs. Cap = 4% of a
+  # ~$1,000 book; per-trade SL risk stays well under it.
+  max_loss_per_trade_usd: 40
 evaluation:
   min_policy_score: 8
   skip_below_score: 4

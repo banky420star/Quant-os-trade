@@ -206,6 +206,12 @@ def check_exposure_limits(
             config=config,
             symbol_spec=spec,
             open_positions=positions,
+            # 2026-08-03 — forward the FULL symbol-spec map so open positions
+            # on OTHER symbols are measured in SL-risk USD, not notional.
+            # Without this, a 0.25-lot US30m open counted ~$13,301 notional
+            # and every index-CFD candidate was rejected (exposure_limit
+            # _exceeded / exposure_cap_below_min_lot).
+            symbol_specs=symbol_specs,
         )
         ideal_size = float(exec_details.get("ideal_size", 0))
         capped_size = exec_vol

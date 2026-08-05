@@ -896,6 +896,121 @@ SETUP_LIBRARY: dict[str, SetupDefinition] = {
         entry_hints=["14:00-17:00 UTC US RTH", "bullish_ha_strong (green smoothed candle, no lower wick) → BUY / bearish_ha_strong → SELL", "Heikin-Ashi smoothed-trend continuation"],
         exit_hints=["SL beyond the HA candle", "TP at next swing / trailing", "Time-stop by 17:00 UTC"],
     ),
+    # --- 2026-08-04 arsenal expansion (iterations 44-49, TradingView/web research). ---
+    # 4 research setups flipped from shadow_only -> live + 2 new entry models.
+    # HONESTY: OHLCV space is CONCLUSIVELY falsified per VERDICT.md (iter33+iter43
+    # DECISIVE NEGATIVE). These add arsenal breadth for demo data collection,
+    # not deployable edge. Live on demo per user sign-off; risk rails bind.
+    "opening_range_breakout": SetupDefinition(
+        name="opening_range_breakout",
+        display_name="Opening Range Breakout",
+        allowed_regimes=("expansion", "compression", "strong_trend", "weak_trend", "transitional"),
+        blocked_regimes=("range",),
+        min_confidence=0.5,
+        description="Unified per-symbol opening-range breakout — first close beyond the session opening range, one fire per session (33rd entry model, SESSION-ANCHORED-RANGE family; covers every symbol incl. 24h + Asian 00:00 UTC anchor). OOS no-edge at retail 30bps; live on demo for forward scoring.",
+        entry_hints=["feat.orb_signal bullish/bearish_breakout", "one fire per session", "momentum + volume confirmation"],
+        exit_hints=["SL beyond opposite OR extreme", "TP at measured move / next swing"],
+    ),
+    "cvd_divergence_reversal": SetupDefinition(
+        name="cvd_divergence_reversal",
+        display_name="CVD Divergence Reversal",
+        allowed_regimes=("range", "weak_trend", "transitional", "volatility_spike"),
+        blocked_regimes=("strong_trend", "expansion"),
+        min_confidence=0.5,
+        description="Cumulative Volume Delta divergence reversal — price higher high on thinning aggressive buying (bearish -> SELL) / lower low on thinning selling (bullish -> BUY). Tick-rule delta proxy on Exness tick volume. Research setup, live on demo; no OOS edge at retail 30bps.",
+        entry_hints=["feat.cvd_divergence bearish/bullish_divergence", "tick-rule CVD proxy", "pivot L=5 divergence"],
+        exit_hints=["SL beyond the swept pivot", "TP at opposite swing"],
+    ),
+    "intermarket_divergence_zero_cross": SetupDefinition(
+        name="intermarket_divergence_zero_cross",
+        display_name="Intermarket Divergence Zero-Cross",
+        allowed_regimes=("range", "weak_trend", "transitional"),
+        blocked_regimes=("strong_trend", "expansion", "volatility_spike"),
+        min_confidence=0.5,
+        description="Intermarket pair divergence — target reverts when its z-spread vs anchor crosses zero (bullish_cross -> BUY / bearish_cross -> SELL). Cross-symbol feature; only present on target symbols. Research setup, live on demo; no OOS edge at retail 30bps.",
+        entry_hints=["feat.intermarket_zero_cross", "z-spread vs anchor pair", "zero-cross reversion"],
+        exit_hints=["SL beyond recent swing", "TP at z-spread reversion"],
+    ),
+    "session_volume_profile_poc_rejection": SetupDefinition(
+        name="session_volume_profile_poc_rejection",
+        display_name="Volume Profile POC Rejection",
+        allowed_regimes=("range", "weak_trend", "transitional"),
+        blocked_regimes=("strong_trend", "expansion"),
+        min_confidence=0.5,
+        description="Session volume profile POC-rejection — wick into the point of control, close back away (bullish -> BUY / bearish -> SELL). 8h rolling tick-volume profile. Research setup, live on demo; no OOS edge at retail 30bps.",
+        entry_hints=["feat.vp_poc_rejection bullish/bearish", "wick into POC, close away", "reversion at volume node"],
+        exit_hints=["SL beyond POC wick", "TP at value-area edge"],
+    ),
+    "session_volume_profile_va_breakout": SetupDefinition(
+        name="session_volume_profile_va_breakout",
+        display_name="Volume Profile VA Breakout",
+        allowed_regimes=("expansion", "compression", "strong_trend", "weak_trend"),
+        blocked_regimes=("range",),
+        min_confidence=0.5,
+        description="Session volume profile value-area breakout — close broke VAH/VAL with volume_ratio >= 1.2 confirmation (bullish -> BUY / bearish -> SELL). 8h rolling tick-volume profile, 70% value area. Research setup, live on demo; no OOS edge at retail 30bps.",
+        entry_hints=["feat.vp_va_breakout bullish/bearish", "close beyond VAH/VAL", "volume_ratio >= 1.2"],
+        exit_hints=["SL back inside value area", "TP at measured move"],
+    ),
+    "bb_squeeze_breakout_volume": SetupDefinition(
+        name="bb_squeeze_breakout_volume",
+        display_name="BB Squeeze Breakout + Volume",
+        allowed_regimes=("compression", "accumulation", "expansion"),
+        blocked_regimes=("strong_trend", "volatility_spike"),
+        min_confidence=0.55,
+        description="Session-AGNOSTIC Bollinger-squeeze breakout WITH volume confirmation — bb_squeeze_pct <= 0.20 (compression coil) + breakout/breakdown + volume_ratio >= 1.5 (48th entry model). Distinct from the session-gated london/ny_squeeze_breakout (no volume gate). Source: StratBase.ai / TradingView TTM-Squeeze — volume filter lifted breakout WR 51 -> 72%, PF 1.71 on crypto/indices. Full replay parity.",
+        entry_hints=["bb_squeeze_pct <= 0.20 (coil)", "breakout/breakdown state", "volume_ratio >= 1.5 confirmation"],
+        exit_hints=["SL beyond the squeeze band", "TP at measured move / trailing"],
+    ),
+    "macd_hist_divergence": SetupDefinition(
+        name="macd_hist_divergence",
+        display_name="MACD Histogram Divergence",
+        allowed_regimes=("range", "weak_trend", "transitional", "volatility_spike"),
+        blocked_regimes=("strong_trend", "expansion"),
+        min_confidence=0.5,
+        description="MACD-histogram divergence reversal — price higher high with MACD-hist lower high (bearish -> SELL) / lower low with higher low (bullish -> BUY). 49th entry model, REVERSAL shape. Distinct from london/ny_macd_cross (signal-line crosses). Source: StratBase.ai — divergence is the best MACD variant (54% WR, PF 1.71) vs crossover (41% WR, PF 1.22). Full replay parity via _vectorized_macd_divergence.",
+        entry_hints=["feat.macd_divergence bearish/bullish_divergence", "pivot L=5 price vs MACD-hist", "reversal at fading momentum"],
+        exit_hints=["SL beyond the divergent pivot", "TP at opposite swing"],
+    ),
+    "adx_di_rising_trend": SetupDefinition(
+        name="adx_di_rising_trend",
+        display_name="ADX/DMI Rising Trend",
+        allowed_regimes=("weak_trend", "transitional", "expansion"),
+        blocked_regimes=("range", "compression"),
+        min_confidence=0.55,
+        description="ADX/DMI DI-crossover continuation WITH a rising-ADX filter + lower threshold (20) — DI+ > DI- with ADX rising -> BUY / DI- > DI+ with ADX rising -> SELL (50th entry model, CONTINUATION shape). Distinct from the session-gated london/ny_adx_trend (ADX>=25, no rising gate, 07:00-10:00/14:00-17:00 only). Source: Quant Signals 4236-trade ADX sweep (DI-crossover > ADX-as-filter in 83% of tests; threshold 20 > 25/30) + PineScriptForge DMI/ADX (rising-ADX filter -> PF 1.54-2.31, Sharpe 1.93-2.50). Full replay parity via _vectorized_adx_trend_state.",
+        entry_hints=["feat.adx_trend bullish/bearish_trend", "ADX >= 20 AND rising (adx[-1] > adx[-2])", "DI-crossover direction"],
+        exit_hints=["Trail behind swing / ATR trail", "Exit when ADX rolls over (stops rising) or DI re-crosses"],
+    ),
+    "ict_ote": SetupDefinition(
+        name="ict_ote",
+        display_name="ICT Optimal Trade Entry",
+        allowed_regimes=("weak_trend", "transitional", "pullback"),
+        blocked_regimes=("range", "compression", "volatility_spike"),
+        min_confidence=0.55,
+        description="ICT OTE — 62-79% Fibonacci retracement of a confirmed displacement leg (sweet spot 70.5%). bullish_ote = price retraced 62-79% of an up leg (low->high) -> BUY pullback; bearish_ote = 62-79% of a down leg -> SELL rally (51st entry model, FIBONACCI-RETRACEMENT shape). Genuinely-new dimension — no prior setup uses a measured-move retracement. Source: PineScriptForge ICT OTE backtests (PF 2.30 gold / 2.22 RTY / 2.63 silver, Sharpe ~2.5) + ictkillzone.com (71% fill, 68% WR to T1 at 70.5%). Full replay parity via _vectorized_ote_state.",
+        entry_hints=["feat.ote_state bullish/bearish_ote", "62-79% fib of a confirmed leg (>=1.5 ATR)", "pivot L=5, leg age <= 80 bars"],
+        exit_hints=["SL beyond the 100% level (sweep wick / leg extreme)", "TP at -27% / -62% fib extension (min 3R)"],
+    ),
+    "ict_breaker_block": SetupDefinition(
+        name="ict_breaker_block",
+        display_name="ICT Breaker Block",
+        allowed_regimes=("transitional", "weak_trend", "expansion"),
+        blocked_regimes=("compression",),
+        min_confidence=0.55,
+        description="ICT Breaker Block — a FAILED swing level that flips polarity on retest. bullish_breaker = pivot high broken ABOVE, retested from above with bullish rejection -> BUY (resistance->support); bearish_breaker = pivot low broken BELOW, retested from below with bearish rejection -> SELL (support->resistance) (52nd entry model, LEVEL-FLIP shape). Genuinely-new ICT dimension — arsenal has order blocks but no breaker. Source: PineScriptForge ICT Breaker Block backtests (PF 1.54-1.82 across ES/NQ/CL/YM, 47-53% WR, Sharpe 1.76-2.50) + Backtrex (EUR/USD PF 1.62, NAS100 PF 1.74). Full replay parity via _vectorized_breaker_block_state.",
+        entry_hints=["feat.breaker_block bullish/bearish_breaker", "broken pivot retested within 0.35*ATR", "rejection candle (close in upper/lower half), pivot L=5, max age 40 bars"],
+        exit_hints=["SL beyond the breaker level + 0.5*ATR", "TP at the originating leg extreme / next liquidity pool (min 2.5R)"],
+    ),
+    "rsi_divergence": SetupDefinition(
+        name="rsi_divergence",
+        display_name="RSI Divergence",
+        allowed_regimes=("transitional", "pullback", "weak_trend"),
+        blocked_regimes=("expansion",),
+        min_confidence=0.55,
+        description="RSI divergence reversal — price new swing extreme vs Wilder RSI(14) opposing swing. bearish_divergence = price higher high + RSI lower high -> SELL; bullish_divergence = price lower low + RSI higher low -> BUY (53rd entry model, REVERSAL shape). A third, mathematically-distinct oscillator divergence (RSI momentum-ratio vs MACD-hist EMA-spread vs CVD signed-volume). Distinct from london/ny_rsi_reversion (fade RSI extremes). Source: StocksToTrade/Investopedia RSI divergence (most-cited RSI variant). Full replay parity via _vectorized_rsi_divergence.",
+        entry_hints=["feat.rsi_divergence bullish/bearish_divergence", "pivot L=5 on price + Wilder RSI(14)", "fires at the pivot confirmation bar (lookahead-free)"],
+        exit_hints=["SL beyond the divergent swing extreme", "TP at the prior swing level / structure (min 2R)"],
+    ),
 }
 
 
@@ -947,6 +1062,47 @@ def list_setups() -> list[dict[str, Any]]:
             "allowed_regimes": list(d.allowed_regimes),
             "blocked_regimes": list(d.blocked_regimes),
             "min_confidence": d.min_confidence,
+        }
+        for d in SETUP_LIBRARY.values()
+    ]
+
+
+# Session prefixes used by the specialized setup naming convention
+# (london_bb_reversion, ny_rsi_reversion, tokyo_open_orb, ...). Stripping
+# them yields the setup FAMILY for dashboard grouping.
+_SESSION_PREFIXES = (
+    "london_", "ny_", "tokyo_", "sydney_", "eu_", "us_", "asia_",
+)
+
+
+def setup_family(name: str) -> str:
+    """Return the family of a setup name by stripping any session prefix.
+
+    e.g. ``london_bb_reversion`` -> ``bb_reversion``; ``pullback`` -> ``pullback``.
+    """
+    n = str(name or "")
+    for p in _SESSION_PREFIXES:
+        if n.startswith(p):
+            return n[len(p):] or n
+    return n
+
+
+def list_setups_full() -> list[dict[str, Any]]:
+    """Rich catalog rows for the dashboard Strategies tab — includes the
+    description + entry/exit hints + min_rr that ``list_setups`` omits.
+    """
+    return [
+        {
+            "name": d.name,
+            "display_name": d.display_name,
+            "description": d.description,
+            "family": setup_family(d.name),
+            "allowed_regimes": list(d.allowed_regimes),
+            "blocked_regimes": list(d.blocked_regimes),
+            "min_confidence": d.min_confidence,
+            "min_rr": d.min_rr,
+            "entry_hints": list(d.entry_hints),
+            "exit_hints": list(d.exit_hints),
         }
         for d in SETUP_LIBRARY.values()
     ]

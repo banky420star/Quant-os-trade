@@ -198,6 +198,7 @@ class PaperBroker:
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
             "adaptive_symbol_proposal_id": signal.get("adaptive_symbol_proposal_id"),
+            "experiment_arm": signal.get("experiment_arm"),
             "symbol": signal["symbol"],
             "side": signal["side"],
             "type": order_type,
@@ -217,6 +218,7 @@ class PaperBroker:
         return {
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
+            "experiment_arm": signal.get("experiment_arm"),
             "symbol": signal["symbol"],
             "side": signal["side"],
             "type": "market",
@@ -248,6 +250,7 @@ class PaperBroker:
             "order_id": order["order_id"],
             "signal_id": order["signal_id"],
             "adaptive_symbol_proposal_id": order.get("adaptive_symbol_proposal_id"),
+            "experiment_arm": order.get("experiment_arm"),
             "symbol": order["symbol"],
             "side": order["side"],
             "entry": fill_price,
@@ -287,11 +290,19 @@ class PaperBroker:
         return total
 
     def _be_cfg(self, symbol: str) -> dict[str, Any]:
+        if bool(self.config.get("execution", {}).get("fixed_exit_only", False)) or bool(
+            self.config.get("trading", {}).get("fixed_exit_only", False)
+        ):
+            return {"enabled": False, "parent": {}, "sym": {}}
         be = self.config.get("trading", {}).get("break_even", {}) or {}
         psym = (be.get("per_symbol") or {}).get(symbol, {}) or {}
         return {"enabled": bool(be.get("enabled", False)), "parent": be, "sym": psym}
 
     def _trail_cfg(self, symbol: str) -> dict[str, Any]:
+        if bool(self.config.get("execution", {}).get("fixed_exit_only", False)) or bool(
+            self.config.get("trading", {}).get("fixed_exit_only", False)
+        ):
+            return {"enabled": False, "parent": {}, "sym": {}}
         tr = self.config.get("trading", {}).get("trailing", {}) or {}
         psym = (tr.get("per_symbol") or {}).get(symbol, {}) or {}
         return {"enabled": bool(tr.get("enabled", False)), "parent": tr, "sym": psym}
@@ -477,6 +488,7 @@ class PaperBroker:
                                 "position_id": pos["position_id"],
                                 "signal_id": pos.get("signal_id"),
                                 "adaptive_symbol_proposal_id": pos.get("adaptive_symbol_proposal_id"),
+                                "experiment_arm": pos.get("experiment_arm"),
                                 "symbol": symbol,
                                 "side": side,
                                 "entry": entry,
@@ -604,6 +616,7 @@ class PaperBroker:
                         "position_id": pos["position_id"],
                         "signal_id": pos["signal_id"],
                         "adaptive_symbol_proposal_id": pos.get("adaptive_symbol_proposal_id"),
+                        "experiment_arm": pos.get("experiment_arm"),
                         "symbol": pos["symbol"],
                         "side": pos["side"],
                         "entry": pos["entry"],

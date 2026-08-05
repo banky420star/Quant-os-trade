@@ -15,9 +15,9 @@ from core.strategy_policy import culturing_cell_key
 from core.utils import read_json_state
 
 
-# Absolute safety ceiling: no adaptive/Kelly/conviction multiplier may risk
-# more than 5% of equity on a single trade. The config can choose a lower cap,
-# but cannot raise this hard ceiling.
+# The normal profiles retain a 5% hard ceiling. A deliberately selected demo
+# experiment may opt into the existing full-Kelly engine with
+# ``risk.allow_full_kelly: true``; this is never enabled by the base config.
 HARD_MAX_RISK_PERCENT = 5.0
 
 
@@ -36,7 +36,8 @@ def clamp_risk_percent(value: float, config: dict[str, Any] | None = None) -> fl
         configured_cap = HARD_MAX_RISK_PERCENT
     if not math.isfinite(configured_cap) or configured_cap <= 0:
         configured_cap = HARD_MAX_RISK_PERCENT
-    cap = min(HARD_MAX_RISK_PERCENT, configured_cap)
+    allow_full = bool(risk_cfg.get("allow_full_kelly", False))
+    cap = configured_cap if allow_full else min(HARD_MAX_RISK_PERCENT, configured_cap)
     return round(max(0.0, min(requested, cap)), 4)
 
 
@@ -88,8 +89,11 @@ def kelly_fraction(cell_stats: dict[str, Any], cfg: dict[str, Any]) -> dict[str,
     """
     min_n = int(cfg.get("min_n", 8))
     frac = float(cfg.get("kelly_fraction", 0.25) or 0.25)
-    max_fraction = min(float(cfg.get("max_fraction", 5.0) or 5.0), HARD_MAX_RISK_PERCENT)
-    default_frac = min(float(cfg.get("fallback_fraction", 2.5) or 2.5), HARD_MAX_RISK_PERCENT)
+    allow_full = bool(cfg.get("allow_full_kelly_risk", False))
+    max_fraction_raw = float(cfg.get("max_fraction", 5.0) or 5.0)
+    default_fraction_raw = float(cfg.get("fallback_fraction", 2.5) or 2.5)
+    max_fraction = max_fraction_raw if allow_full else min(max_fraction_raw, HARD_MAX_RISK_PERCENT)
+    default_frac = default_fraction_raw if allow_full else min(default_fraction_raw, HARD_MAX_RISK_PERCENT)
     criteria_mode = bool(cfg.get("criteria_mode", False))
 
     n = int(cell_stats.get("n", 0) or 0)
@@ -260,8 +264,10 @@ def resolve_risk_percent(
         except (TypeError, ValueError):
             pass
     fraction = clamp_risk_percent(fraction, config)
-    kelly = {**kelly, "fraction": fraction, "risk_cap_percent": min(
-        HARD_MAX_RISK_PERCENT,
-        float((config.get("risk") or {}).get("max_risk_per_trade_pct", HARD_MAX_RISK_PERCENT) or HARD_MAX_RISK_PERCENT),
-    )}
+    risk_cfg = config.get("risk") or {}
+    configured_cap = float(risk_cfg.get("max_risk_per_trade_pct", HARD_MAX_RISK_PERCENT) or HARD_MAX_RISK_PERCENT)
+    risk_cap = configured_cap if bool(risk_cfg.get("allow_full_kelly", False)) else min(
+        HARD_MAX_RISK_PERCENT, configured_cap,
+    )
+    kelly = {**kelly, "fraction": fraction, "risk_cap_percent": risk_cap}
     return fraction, kelly

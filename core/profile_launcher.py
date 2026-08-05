@@ -73,13 +73,30 @@ def set_active_profile(name: str) -> dict[str, Any]:
 def profile_summary(name: str) -> dict[str, Any]:
     overlay = load_profile_overlay(name)
     micro = (overlay.get("practice") or {}).get("micro") or {}
+    execution = overlay.get("execution") or {}
+    mt5 = overlay.get("mt5") or {}
+    # Profile files commonly inherit the universe from config.yaml. Expose the
+    # effective declared symbols, not only the micro overlay, so the dashboard
+    # description stays accurate for growth/data-lab/live profiles too.
+    symbols = (
+        micro.get("symbols")
+        or (overlay.get("practice") or {}).get("symbols")
+        or mt5.get("symbols")
+    )
+    if not symbols:
+        try:
+            base = _load_base_config()
+            symbols = (base.get("mt5") or {}).get("symbols") or []
+        except Exception:  # noqa: BLE001
+            symbols = []
     return {
         "name": name,
         "label": overlay.get("label", name),
         "description": overlay.get("description", ""),
         "account_size_usd": micro.get("account_size_usd"),
         "micro_enabled": micro.get("enabled"),
-        "symbols": micro.get("symbols") or overlay.get("practice", {}).get("symbols"),
+        "execution_mode": execution.get("mode") or overlay.get("mode"),
+        "symbols": list(symbols or []),
     }
 
 

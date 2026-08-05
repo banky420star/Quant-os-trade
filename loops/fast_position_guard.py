@@ -18,6 +18,19 @@ from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, 
 
 _LOGGER = None
 
+# Throttled live-state sync so the dashboard reflects real MT5 activity within
+# seconds instead of waiting for the slow 45s pipeline cycle. The fast scalper
+# runs every ~1s and holds a live MT5 connection, so it is the ideal place to
+# keep account/positions/trades state fresh between pipeline cycles.
+import time as _time
+import threading as _threading
+_LIVE_SYNC_LAST = {"account": 0.0, "trades": 0.0}
+_LIVE_SYNC_LOCK = _threading.Lock()
+_LIVE_SYNC_ACCOUNT_EVERY = 4.0
+# The closed-deals sync is heavier (history_deals_get + orders join), so run it
+# less often to avoid adding latency to the 1s BE/trail guard tick.
+_LIVE_SYNC_TRADES_EVERY = 30.0
+
 
 def _logger():
     global _LOGGER
@@ -61,6 +74,16 @@ def _guard_management_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg = fast_mode_settings(config)
     out = dict(config)
     trading = dict(out.get("trading") or {})
+    fixed_exit_only = bool(
+        (config.get("execution") or {}).get("fixed_exit_only", False)
+        or (config.get("trading") or {}).get("fixed_exit_only", False)
+    )
+    if fixed_exit_only:
+        # Never let this auxiliary guard mutate fixed-exit experiment positions.
+        trading["break_even"] = {**(trading.get("break_even") or {}), "enabled": False}
+        trading["trailing"] = {**(trading.get("trailing") or {}), "enabled": False}
+        out["trading"] = trading
+        return out
     be = dict(trading.get("break_even") or {})
     trail = dict(trading.get("trailing") or {})
     if (cfg.get("break_even_fast") or {}).get("enabled") is False:
@@ -95,6 +118,12 @@ def _guard_actions(
 ) -> list[dict[str, Any]]:
     cfg = fast_mode_settings(config)
     actions: list[dict[str, Any]] = []
+    fixed_exit_only = bool(
+        (config.get("execution") or {}).get("fixed_exit_only", False)
+        or (config.get("trading") or {}).get("fixed_exit_only", False)
+    )
+    if fixed_exit_only:
+        return actions
     symbol = position.get("symbol", "")
     ticket = position.get("ticket") or position.get("position_id")
     r_mult = _risk_r(position, feat)
@@ -140,61 +169,167 @@ def _guard_actions(
     return actions
 
 
+def _sync_live_state(config: dict, connection, logger, positions: list | None = None) -> None:
+    """Refresh account/positions/trades/equity-history state files so the
+    dashboard and the new performance chart see live MT5 activity within a few
+    seconds, even when the slow pipeline cycle is idle. Throttled; never raises.
+
+    ``positions`` may be the positions already fetched by the caller this tick
+    (avoids a duplicate positions_get call). The guard runs from the fast_mode
+    service thread; _LIVE_SYNC_LOCK serializes the read-modify-write of the
+    trades ledger against other writers."""
+    now = _time.time()
+    with _LIVE_SYNC_LOCK:
+        try:
+            if now - _LIVE_SYNC_LAST["account"] >= _LIVE_SYNC_ACCOUNT_EVERY:
+                _LIVE_SYNC_LAST["account"] = now
+                try:
+                    snap = connection.account_snapshot()
+                    if snap and snap.get("balance") is not None:
+                        write_json_state("account.json", {
+                            "timestamp": utc_now_iso(),
+                            **snap,
+                        })
+                except Exception as exc:
+                    logger.debug("live account sync skipped: %s", exc)
+                try:
+                    # Reuse the caller's positions when provided; fall back to a
+                    # fresh fetch so the dashboard position tile stays live even
+                    # when the guard path has no enriched positions.
+                    if positions is None:
+                        from core.position_sync import fetch_mt5_agent_positions
+                        positions = fetch_mt5_agent_positions(config, logger)
+                    write_json_state("mt5_positions.json", {
+                        "timestamp": utc_now_iso(),
+                        "mode": "mt5",
+                        "positions": list(positions or []),
+                    })
+                except Exception as exc:
+                    logger.debug("live positions sync skipped: %s", exc)
+                try:
+                    # Record an equity snapshot so the server-built equity_curve
+                    # (the chart's baseline on the heavy poll) is also fresh —
+                    # otherwise the fast /api/live appends get clobbered by stale
+                    # setData() every heavy poll.
+                    from core.equity_tracker import record_snapshot
+                    eq = float(snap.get("equity") or 0) if snap else 0.0
+                    bal = float(snap.get("balance") or 0) if snap else 0.0
+                    if eq > 0:
+                        record_snapshot(eq, bal, source="fast_guard")
+                except Exception as exc:
+                    logger.debug("live equity-history sync skipped: %s", exc)
+            if now - _LIVE_SYNC_LAST["trades"] >= _LIVE_SYNC_TRADES_EVERY:
+                _LIVE_SYNC_LAST["trades"] = now
+                try:
+                    from core.trade_tracker import TradeTracker
+                    existing = read_json_state("mt5_trades.json", default={"trades": []})
+                    magic = int(config.get("execution", {}).get("magic_number", 20250625))
+                    merged, _added = TradeTracker(logger).sync_mt5_closed_deals(
+                        list(existing.get("trades") or []), magic, days=7,
+                    )
+                    write_json_state("mt5_trades.json", {
+                        "timestamp": utc_now_iso(),
+                        "mode": "mt5",
+                        "trades": merged,
+                    })
+                except Exception as exc:
+                    logger.debug("live trades sync skipped: %s", exc)
+        except Exception as exc:
+            logger.debug("live state sync failed: %s", exc)
+
+
+# Cached shared MT5 connection for the live guard path. The guard runs on
+# every ~1s fast tick; creating + disconnecting an MT5ConnectionManager per
+# tick was the 2026-08-04 ownership bug — its disconnect() called
+# mt5.shutdown() (process-global) and unplugged the persistent session that
+# fast_tick_loop was holding. The guard now reuses ONE cached connection via
+# the shared MT5Owner and NEVER disconnects it.
+_GUARD_CONN = None
+_GUARD_CONN_LOCK = _threading.Lock()
+
+
+def _get_guard_connection(config: dict, logger) -> Any:
+    """Return the cached live-guard MT5 connection, reconnecting if dead.
+
+    Mirrors fast_tick_loop's persistent-connection pattern so the guard no
+    longer opens/closes an MT5 session every tick."""
+    global _GUARD_CONN
+    from core.mt5_connection_manager import MT5ConnectionManager
+
+    with _GUARD_CONN_LOCK:
+        if _GUARD_CONN is not None and _GUARD_CONN.connected:
+            try:
+                ping = _GUARD_CONN.ping()
+                if ping.get("alive") and ping.get("logged_in"):
+                    return _GUARD_CONN
+            except Exception:
+                pass
+            # Session died — the OWNER re-establishes it (owner-owned shutdown,
+            # not a per-worker disconnect).
+            try:
+                if _GUARD_CONN.reconnect():
+                    return _GUARD_CONN
+            except Exception:
+                pass
+            _GUARD_CONN = None
+        if _GUARD_CONN is None:
+            conn = MT5ConnectionManager(config, logger)
+            conn.connect()
+            _GUARD_CONN = conn
+        return _GUARD_CONN
+
+
 def _run_live_guard(config: dict, logger) -> dict | None:
     """Apply fast BE/trail on MT5 positions via position_manager."""
     if config.get("execution", {}).get("mode") != "mt5":
         return None
-    from core.mt5_connection_manager import MT5ConnectionManager
     from core.position_manager import manage_mt5_positions
     from core.position_sync import fetch_mt5_agent_positions
 
     allowed = set(fast_mode_symbols(config))
     cache_syms = read_cache(config).get("symbols") or {}
     features_doc = read_json_state("features.json", default={"symbols": {}})
-    connection = MT5ConnectionManager(config, logger)
-    try:
-        connection.connect()
-        positions = fetch_mt5_agent_positions(config, logger)
-        enriched: list[dict[str, Any]] = []
-        for pos in positions:
-            sym = pos.get("symbol", "")
-            if allowed and sym not in allowed:
-                continue
-            row = dict(pos)
-            mgmt = (cache_syms.get(sym) or {}).get("management_profile")
-            if not mgmt:
-                cfg = fast_mode_settings(config)
-                mgmt = {
-                    "break_even_trigger_r": float((cfg.get("break_even_fast") or {}).get("trigger_r") or 0.25),
-                    "trail_start_r": float((cfg.get("trail_fast") or {}).get("start_r") or 0.45),
-                    "trail_atr_mult": float((cfg.get("trail_fast") or {}).get("atr_mult") or 0.35),
-                }
-            row["management_profile"] = mgmt
-            enriched.append(row)
-        if not enriched:
-            return {
-                "timestamp": utc_now_iso(),
-                "mode": "live",
-                "position_count": 0,
-                "actions": [],
+    connection = _get_guard_connection(config, logger)
+    positions = fetch_mt5_agent_positions(config, logger)
+    # Fast-path live-state sync: dashboard trades tracker + chart stay fresh
+    # without waiting for the slow pipeline cycle. Reuse the positions we
+    # already fetched this tick.
+    _sync_live_state(config, connection, logger, positions=positions)
+    enriched: list[dict[str, Any]] = []
+    for pos in positions:
+        sym = pos.get("symbol", "")
+        if allowed and sym not in allowed:
+            continue
+        row = dict(pos)
+        mgmt = (cache_syms.get(sym) or {}).get("management_profile")
+        if not mgmt:
+            cfg = fast_mode_settings(config)
+            mgmt = {
+                "break_even_trigger_r": float((cfg.get("break_even_fast") or {}).get("trigger_r") or 0.25),
+                "trail_start_r": float((cfg.get("trail_fast") or {}).get("start_r") or 0.45),
+                "trail_atr_mult": float((cfg.get("trail_fast") or {}).get("atr_mult") or 0.35),
             }
-        guard_config = _guard_management_config(config)
-        summary = manage_mt5_positions(guard_config, enriched, features_doc, logger)
-        actions = [_format_live_guard_action(a) for a in list(summary.get("actions") or [])]
-        for act in actions:
-            append_event("fast_mode.guard", symbol=act.get("symbol"), details=act)
+        row["management_profile"] = mgmt
+        enriched.append(row)
+    if not enriched:
         return {
-            "timestamp": summary.get("timestamp") or utc_now_iso(),
+            "timestamp": utc_now_iso(),
             "mode": "live",
-            "position_count": len(enriched),
-            "actions": actions,
-            "updated": summary.get("updated", 0),
+            "position_count": 0,
+            "actions": [],
         }
-    finally:
-        try:
-            connection.disconnect()
-        except Exception:
-            pass
+    guard_config = _guard_management_config(config)
+    summary = manage_mt5_positions(guard_config, enriched, features_doc, logger)
+    actions = [_format_live_guard_action(a) for a in list(summary.get("actions") or [])]
+    for act in actions:
+        append_event("fast_mode.guard", symbol=act.get("symbol"), details=act)
+    return {
+        "timestamp": summary.get("timestamp") or utc_now_iso(),
+        "mode": "live",
+        "position_count": len(enriched),
+        "actions": actions,
+        "updated": summary.get("updated", 0),
+    }
 
 
 def run(config: dict | None = None) -> dict | None:

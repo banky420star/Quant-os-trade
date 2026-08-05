@@ -302,6 +302,7 @@ class TradeTracker:
                 "position_id": pid,
                 "signal_id": pos.get("signal_id"),
                 "adaptive_symbol_proposal_id": pos.get("adaptive_symbol_proposal_id"),
+                "experiment_arm": pos.get("experiment_arm"),
                 "symbol": pos["symbol"],
                 "side": pos["side"],
                 "entry": pos["entry"],
@@ -360,6 +361,19 @@ class TradeTracker:
         from datetime import datetime, timedelta, timezone
 
         since = datetime.now(timezone.utc) - timedelta(days=days)
+        # A fresh data-lab experiment must not immediately repopulate its new
+        # ledger with historical MT5 deals from before the reset. The reset
+        # marker is written only by the explicit reset tool.
+        reset_doc = read_json_state("experiment_reset.json", default={}) or {}
+        reset_at = reset_doc.get("reset_at") if isinstance(reset_doc, dict) else None
+        if reset_at:
+            try:
+                reset_dt = datetime.fromisoformat(str(reset_at).replace("Z", "+00:00"))
+                if reset_dt.tzinfo is None:
+                    reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+                since = max(since, reset_dt)
+            except (TypeError, ValueError):
+                pass
         deals = mt5.history_deals_get(since, datetime.now(timezone.utc))
         if not deals:
             return existing_trades, []
@@ -386,10 +400,13 @@ class TradeTracker:
         # market_context/signal_id were dropped at close time — so the ranker's
         # by_context aggregates and the win-template gate (keyed on setup|regime|
         # bias) were starved of live data and could only learn from paper/replay.
-        # The opening order for any closing position lives in paper_orders.json
-        # (written when the position was placed), keyed by mt5_ticket == the MT5
-        # position ticket == deal.position_id for both legs of the position.
-        orders_state = read_json_state("paper_orders.json", default={})
+        # The opening order must come from the active mode ledger: live MT5
+        # orders are in mt5_orders.json, while paper orders remain in paper_orders.json.
+        from core.trade_history import trade_orders_filename
+        from core.utils import load_config
+        orders_state = read_json_state(
+            trade_orders_filename(load_config()), default={}
+        )
         ticket_index: dict[str, dict[str, Any]] = {}
         for o in (orders_state.get("orders") or []):
             tkt = o.get("mt5_ticket")

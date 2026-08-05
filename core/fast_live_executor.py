@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.audit_log import append_event
@@ -16,6 +17,15 @@ from core.state_store import (
     sync_store_from_doc,
 )
 from core.utils import read_json_state, utc_now_iso, write_json_state
+
+
+def _parse_iso_ts(ts: Any) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _require_verifier_approval(config: dict[str, Any]) -> bool:
@@ -59,12 +69,18 @@ def _prepare_signal(
     signal: dict[str, Any],
     cache_entry: dict[str, Any],
     decision: dict[str, Any],
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Merge cache anchor + management profile into the evaluated signal."""
+    config = config or {}
     out = dict(signal)
-    entry_type = str(decision.get("entry_type") or cache_entry.get("entry_type") or "limit")
+    market_only = bool(
+        (config.get("execution") or {}).get("strategy_entries_market_only", False)
+        or (config.get("trading") or {}).get("strategy_entries_market_only", False)
+    )
+    entry_type = "market" if market_only else str(decision.get("entry_type") or cache_entry.get("entry_type") or "limit")
     action = str(decision.get("action") or "")
-    if action == "enter_market" or (entry_type == "market" and action != "enter_limit"):
+    if market_only or action == "enter_market" or (entry_type == "market" and action != "enter_limit"):
         out["entry_mode"] = "market"
     else:
         out["entry_mode"] = "limit"
@@ -112,7 +128,7 @@ def execute_fast_entry(
     decision: dict[str, Any],
     cache_entry: dict[str, Any],
     *,
-    config: dict[str, Any],
+    config: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
@@ -156,7 +172,7 @@ def execute_fast_entry(
     if not signal:
         return {"blocked": True, "reason": "evaluated_signal_missing"}
 
-    signal = _prepare_signal(signal, cache_entry, decision)
+    signal = _prepare_signal(signal, cache_entry, decision, config)
     orders = list(read_json_state("mt5_orders.json", default={"orders": []}).get("orders") or [])
     positions = list(read_json_state("mt5_positions.json", default={"positions": []}).get("positions") or [])
     trades = list(read_json_state("mt5_trades.json", default={"trades": []}).get("trades") or [])
@@ -201,6 +217,20 @@ def execute_fast_entry(
             return {"success": True, "placed": placed, "errors": errors}
 
         err_msg = errors[0].get("error") if errors else "order_failed"
+        # 2026-08-05 — stamp an exposure backoff so the 1Hz tick loop stops
+        # re-attempting this signal every second (evaluate_entry now returns
+        # "wait/exposure_backoff" while the window is active).
+        if "exposure" in str(err_msg):
+            backoff = dict(state.get("exposure_backoff") or {})
+            backoff[signal_id] = utc_now_iso()
+            # Prune stale entries (older than 2x the window) so the persisted
+            # dict doesn't grow unbounded across cache refreshes.
+            _bo_win = int((config.get("fast_mode") or {}).get("exposure_backoff_seconds") or 60)
+            _bo_cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(120, _bo_win * 2))
+            backoff = {k: v for k, v in backoff.items()
+                       if not _parse_iso_ts(v) or _parse_iso_ts(v) > _bo_cutoff}
+            state["exposure_backoff"] = backoff
+            write_fast_state(state)
         append_event(
             "fast_mode.order_error",
             symbol=symbol,

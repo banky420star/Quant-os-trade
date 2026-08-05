@@ -158,6 +158,8 @@ def read_fast_state() -> dict[str, Any]:
         "consecutive_losses": {},
         "last_loss_at": {},
         "pending_actions": {},
+        "executed_signals": [],
+        "exposure_backoff": {},
     })
 
 

@@ -293,33 +293,44 @@ def run_all(once: bool = False) -> dict[str, str]:
     cycle = 0
     last_results: dict[str, str] = {}
 
-    while not _shutdown:
-        cycle += 1
-        logger.info("=== Cycle %d starting ===", cycle)
-        t0 = time.monotonic()
+    try:
+        while not _shutdown:
+            cycle += 1
+            logger.info("=== Cycle %d starting ===", cycle)
+            t0 = time.monotonic()
 
-        last_results = run_cycle(
-            config,
-            logger,
-            cycle,
-            include_history=(cycle == 1 or cycle % history_every == 0),
-            include_research=(cycle > 1 and cycle % research_every == 0),
-        )
-        update_state_md(last_results, cycle, dashboard_url)
-        elapsed = time.monotonic() - t0
-        logger.info("=== Cycle %d complete (%.1fs) ===", cycle, elapsed)
-        logger.info("Results: %s", last_results)
+            last_results = run_cycle(
+                config,
+                logger,
+                cycle,
+                include_history=(cycle == 1 or cycle % history_every == 0),
+                include_research=(cycle > 1 and cycle % research_every == 0),
+            )
+            update_state_md(last_results, cycle, dashboard_url)
+            elapsed = time.monotonic() - t0
+            logger.info("=== Cycle %d complete (%.1fs) ===", cycle, elapsed)
+            logger.info("Results: %s", last_results)
 
-        if once:
-            break
+            if once:
+                break
 
-        sleep_for = max(1.0, interval - elapsed)
-        logger.info("Sleeping %.0fs until next cycle (Ctrl+C to stop)", sleep_for)
-        end = time.monotonic() + sleep_for
-        while time.monotonic() < end and not _shutdown:
-            time.sleep(0.5)
+            sleep_for = max(1.0, interval - elapsed)
+            logger.info("Sleeping %.0fs until next cycle (Ctrl+C to stop)", sleep_for)
+            end = time.monotonic() + sleep_for
+            while time.monotonic() < end and not _shutdown:
+                time.sleep(0.5)
+    finally:
+        # Single-owner contract (2026-08-04): the ONLY mt5.shutdown() in the
+        # process, at app exit, after all loops have stopped. Runs in a finally
+        # so an unhandled exception mid-run cannot leak the connection.
+        logger.info("=== Orchestrator stopped ===")
+        try:
+            from core.mt5_owner import MT5Owner
 
-    logger.info("=== Orchestrator stopped ===")
+            MT5Owner.instance().shutdown()
+            logger.info("MT5Owner shut down (session released)")
+        except Exception as exc:
+            logger.debug("MT5Owner shutdown skipped: %s", exc)
     return last_results
 
 

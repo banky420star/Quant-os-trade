@@ -561,7 +561,13 @@ def test_clamp_sl_usoil_zero_stops_level_uses_spread():
     assert sl >= 68.407
 
 
-def test_btc_trail_needs_three_dollars(config):
+def test_btc_trail_needs_three_dollars(config, monkeypatch):
+    # Isolate from any data-driven live override in state/symbol_be_trail_live.json
+    # (calibrate_be_trail.py ships TRUSTED per-symbol BE/trail params that _merge_live
+    # applies inside compute_managed_sl; this test asserts the SEED config's $3
+    # activation threshold, not the live override, so neutralize it).
+    import core.position_manager as pm
+    monkeypatch.setattr(pm, "_load_live_mgmt", lambda: {})
     config["trading"]["break_even"]["per_symbol"]["BTCUSDm"]["trigger_profit_usd"] = 3
     config["trading"]["trailing"]["per_symbol"]["BTCUSDm"]["activation_profit_usd"] = 3
     config["trading"]["trailing"]["per_symbol"]["BTCUSDm"]["activation_atr_mult"] = 99

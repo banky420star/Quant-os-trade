@@ -58,6 +58,7 @@ from core.mt5_connection_manager import MT5ConnectionManager  # noqa: E402
 from core.position_sync import _setup_type_from_comment  # noqa: E402
 from core.session_scorer import resolve_trading_session  # noqa: E402
 from core.symbol_manager import broker_symbol, logical_symbol  # noqa: E402
+from core.trade_history import trade_history_filename  # noqa: E402
 from core.trade_journal import (  # noqa: E402
     build_organized_index,
     build_symbol_journal_payload,
@@ -266,17 +267,53 @@ def _r_metrics(side: str, entry: float, sl: float | None, exit_price: float | No
             "r_multiple": (round(r, 3) if r is not None else None)}
 
 
+def _excursion_key(t: dict[str, Any]) -> str:
+    """Stable key for a trade's excursion record (position id is unique on MT5)."""
+    pos = t.get("mt5_position")
+    if pos is not None:
+        return f"pos:{pos}"
+    deal = t.get("mt5_deal")
+    if deal is not None:
+        return f"deal:{deal}"
+    return f"tid:{t.get('trade_id') or t.get('signal_id') or ''}"
+
+
 def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
     """Join paper_trades + paper_orders + MT5 deals/candles -> trade log."""
     magic = int(config.get("execution", {}).get("magic_number", 20250625))
 
-    trades_state = read_json_state("paper_trades.json", default={"trades": []})
+    # Read the ACTIVE execution mode's ledger (mt5_trades.json in MT5 mode,
+    # paper_trades.json in paper mode) so trade_log.json reflects real closed
+    # trades whichever mode the bot is in. Previously hardcoded paper_trades,
+    # which left trade_log.json empty in MT5 mode and starved calibrate_sltp
+    # + payoff_paradox_meter. See core/trade_history.py.
+    ledger_file = trade_history_filename(config)
+    trades_state = read_json_state(ledger_file, default={"trades": []})
     trades = trades_state.get("trades", []) if isinstance(trades_state, dict) else []
-    log.info("paper_trades: %d closed records", len(trades))
+    log.info("%s: %d closed records", ledger_file, len(trades))
 
-    orders_state = read_json_state("paper_orders.json", default={})
+    # Orders ledger must match the ACTIVE execution mode (mt5_orders.json in
+    # MT5 mode). paper_orders.json stays empty in MT5 mode, so joining against
+    # it silently dropped every live trade's signal_meta -> opened_at/session/
+    # utc_hour were never recovered and per-session evaluation was empty.
+    from core.trade_history import trade_orders_filename
+    orders_file = trade_orders_filename(config)
+    orders_state = read_json_state(orders_file, default={})
     ticket_index = _build_ticket_index(orders_state)
-    log.info("paper_orders index: %d orders by mt5_ticket", len(ticket_index))
+    log.info("%s index: %d orders by mt5_ticket", orders_file, len(ticket_index))
+
+    # Persistent excursion sidecar: maps a stable trade key -> {mae_R, mfe_R,
+    # mae_price, mfe_price, bars}. Stops the >30-day deal-window bleed: trades
+    # whose copy_rates_range fetch now fails keep the excursion computed in an
+    # earlier rebuild instead of dropping out of the calibration sample (which
+    # made the sample non-monotonic and flickered trusted overrides run-to-run).
+    # mt5_trades.json is NEVER mutated by this — the sidecar is a separate file
+    # owned by build_log, so there is no race with the bot's close-handler.
+    exc_cache = read_json_state("mt5_excursion_cache.json", default={}) or {}
+    if not isinstance(exc_cache, dict):
+        exc_cache = {}
+    exc_cache_new: dict[str, Any] = {}
+    log.info("excursion cache: %d entries loaded", len(exc_cache))
 
     pos_deals: dict[int, dict[str, Any]] = {}
     deal_by_ticket: dict[int, Any] = {}
@@ -394,9 +431,26 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
             setup = _setup_type_from_comment(out_deal.comment)
 
         # Drawdown / MAE / MFE from M5 bars over the trade window.
-        dd = {"mae_price": None, "mfe_price": None, "mae_R": None, "mfe_R": None, "bars": 0}
+        # Seed priority: (1) the record's own mae_R/mfe_R (computed at close time
+        # — ground truth), (2) the persistent excursion sidecar cache (restores
+        # >30d trades whose copy_rates_range fetch now fails), (3) a fresh
+        # copy_rates_range fetch. Whatever resolves is written back to the
+        # sidecar so a future rebuild can't lose it to the 30-day deal window.
+        exc_key = _excursion_key(t)
+        cached = exc_cache.get(exc_key)
+        cached = cached if isinstance(cached, dict) else {}
+        t_mae_R = t.get("mae_R")
+        t_mfe_R = t.get("mfe_R")
+        dd = {
+            "mae_price": cached.get("mae_price"),
+            "mfe_price": cached.get("mfe_price"),
+            "mae_R": t_mae_R if t_mae_R is not None else cached.get("mae_R"),
+            "mfe_R": t_mfe_R if t_mfe_R is not None else cached.get("mfe_R"),
+            "bars": int(cached.get("bars") or 0),
+        }
         broker_sym = broker_symbol(sym)
-        if mt5 is not None and broker_sym and opened_at and closed_at and entry is not None:
+        need_excursion = dd["mae_R"] is None or dd["mfe_R"] is None
+        if mt5 is not None and broker_sym and opened_at and closed_at and entry is not None and need_excursion:
             try:
                 o_dt = datetime.fromisoformat(opened_at)
                 c_dt = datetime.fromisoformat(closed_at)
@@ -415,6 +469,16 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
                     n_dd += 1
             except Exception as exc:  # noqa: BLE001
                 log.debug("rates range failed for %s pos=%s: %s", sym, pos, exc)
+        # Persist the best-known excursion for this trade so future rebuilds
+        # can't drop it when it crosses the 30-day deal window.
+        if dd["mae_R"] is not None or dd["mfe_R"] is not None or dd["mae_price"] is not None:
+            exc_cache_new[exc_key] = {
+                "mae_price": dd["mae_price"], "mfe_price": dd["mfe_price"],
+                "mae_R": dd["mae_R"], "mfe_R": dd["mfe_R"], "bars": dd["bars"],
+            }
+            # Count record/cache-seeded drawdown (the fetch block counts its own).
+            if not need_excursion and dd["mae_R"] is not None:
+                n_dd += 1
 
         mc = t.get("market_context") if isinstance(t.get("market_context"), dict) else {}
         mr = mc.get("market_regime") if isinstance(mc.get("market_regime"), dict) else {}
@@ -534,6 +598,14 @@ def build_log(config: dict[str, Any], days: int, log) -> dict[str, Any]:
         journal_symbols,
         journal_written,
     )
+
+    # Persist the excursion sidecar (bounded to the current ledger — only keys
+    # we resolved this run are kept, so the cache stays ~ledger-sized).
+    try:
+        write_json_state("mt5_excursion_cache.json", exc_cache_new)
+        log.info("excursion cache: wrote %d entries (was %d)", len(exc_cache_new), len(exc_cache))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("excursion cache write failed: %s", exc)
 
     return {
         "updated_at": utc_now_iso(),

@@ -186,7 +186,9 @@ def run(config: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Recompute the news-sentiment snapshot. No-op when disabled."""
     from core.utils import load_config
 
-    cfg = config or load_config()
+    # An explicitly supplied empty config is a valid disabled configuration;
+    # only an omitted config should load the live repository configuration.
+    cfg = load_config() if config is None else config
     ncfg = news_config(cfg)
     if not ncfg["enabled"]:
         return None

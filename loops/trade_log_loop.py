@@ -31,18 +31,30 @@ from core.utils import load_config, read_json_state, setup_logger, write_json_st
 from scripts.build_trade_log import build_log  # noqa: E402
 
 _STATE = Path(__file__).resolve().parent.parent / "state"
-_PAPER_TRADES = _STATE / "paper_trades.json"
-_PAPER_ORDERS = _STATE / "paper_orders.json"
 
 
-def _source_mtime() -> tuple[float, float]:
+def _active_ledger_path(config: dict) -> Path:
+    """Closed-trade ledger for the configured execution mode (mt5_trades.json
+    in MT5 mode, paper_trades.json in paper mode). See core/trade_history.py."""
+    from core.trade_history import trade_history_filename
+    return _STATE / trade_history_filename(config)
+
+
+def _active_orders_path(config: dict) -> Path:
+    """Order ledger for the configured execution mode (mt5_orders.json in MT5
+    mode, paper_orders.json in paper mode). See core/trade_history.py."""
+    from core.trade_history import trade_orders_filename
+    return _STATE / trade_orders_filename(config)
+
+
+def _source_mtime(config: dict) -> tuple[float, float]:
     trades_m = orders_m = 0.0
     try:
-        trades_m = os.path.getmtime(_PAPER_TRADES)
+        trades_m = os.path.getmtime(_active_ledger_path(config))
     except OSError:
         pass
     try:
-        orders_m = os.path.getmtime(_PAPER_ORDERS)
+        orders_m = os.path.getmtime(_active_orders_path(config))
     except OSError:
         pass
     return trades_m, orders_m
@@ -52,13 +64,20 @@ def run() -> dict:
     config = load_config()
     logger = setup_logger("trade_log_loop", "trade_log_loop.log")
 
-    trades_m, orders_m = _source_mtime()
+    trades_m, orders_m = _source_mtime(config)
     # Mtimes live in a separate state/trade_log_meta.json (always DICT).
     # trade_log.json itself is now a root-level LIST written by build_log,
     # so we cannot rely on prev's _paper_*_mtime keys (they're absent).
     prev_meta = read_json_state("trade_log_meta.json", default={}) or {}
-    last_trades_m = float(prev_meta.get("paper_trades_mtime", 0.0) or 0.0)
-    last_orders_m = float(prev_meta.get("paper_orders_mtime", 0.0) or 0.0)
+    # ledger_mtime holds the active ledger's mtime (mt5_trades or paper_trades).
+    # Fall back to the legacy paper_trades_mtime key for continuity.
+    last_trades_m = float(
+        prev_meta.get("ledger_mtime", prev_meta.get("paper_trades_mtime", 0.0)) or 0.0
+    )
+    # Key is "orders_mtime" (holds whichever mode's orders file — mt5_orders or
+    # paper_orders). Fall back to the legacy paper_orders_mtime key for
+    # continuity with meta files written before the mode-aware switch.
+    last_orders_m = float(prev_meta.get("orders_mtime", prev_meta.get("paper_orders_mtime", 0.0)) or 0.0)
 
     # Rebuild when a trade closed OR a new order filled (richer signal_meta).
     if trades_m <= last_trades_m and orders_m <= last_orders_m:
@@ -72,8 +91,8 @@ def run() -> dict:
         # Side-car: mtimes persisted in a separate DICT file so the LIST
         # shape of trade_log.json doesn't collapse the rebuild-skip check.
         write_json_state("trade_log_meta.json", {
-            "paper_trades_mtime": trades_m,
-            "paper_orders_mtime": orders_m,
+            "ledger_mtime": trades_m,
+            "orders_mtime": orders_m,
             # datetime.now(timezone.utc) is the modern replacement for the
             # deprecated utcnow(). The trailing .replace("+00:00", "Z")
             # normalises to the same "Z"-suffixed UTC string the rest of
@@ -82,7 +101,7 @@ def run() -> dict:
         })
         n = len(payload) if isinstance(payload, list) else payload.get("total", 0)
         logger.info(
-            "Trade log rebuilt: %d trades (paper_trades mtime %.0f, orders mtime %.0f).",
+            "Trade log rebuilt: %d trades (ledger mtime %.0f, orders mtime %.0f).",
             n,
             trades_m,
             orders_m,

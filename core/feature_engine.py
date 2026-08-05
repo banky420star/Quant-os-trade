@@ -65,6 +65,22 @@ FEATURE_SCHEMA_FIELDS = (
     "ha_trend",
 )
 
+# 2026-08-04 — Opening Range Breakout (ORB) session-open anchors, UTC (hour,
+# minute) of each symbol's PRIMARY cash session. Used by _orb to define the
+# opening range. Equities use their real cash open; 24h markets (FX/metals/oil/
+# crypto) + Asian indices anchor at 00:00 UTC so they get a deterministic daily
+# ORB (and fill the Asian-session 21:00-07:00 UTC coverage gap that the
+# london_/ny_ killzone setups leave empty).
+OR_SESSION_OPEN_UTC: dict[str, tuple[int, int]] = {
+    "US30m": (13, 30), "US500m": (13, 30), "NAS100m": (13, 30),  # US RTH 13:30 UTC
+    "UK100m": (8, 0), "FR40m": (8, 0),                            # London 08:00 UTC
+    "JP225m": (0, 0),                                             # Tokyo 00:00 UTC
+    "XAUUSDm": (0, 0), "USOILm": (0, 0), "BTCUSDm": (0, 0),
+    "EURUSDm": (0, 0), "GBPUSDm": (0, 0), "AUDUSDm": (0, 0),
+    "USDJPYm": (0, 0), "USDCHFm": (0, 0),                         # 24h -> 00:00 anchor
+}
+OR_BARS_DEFAULT = 12  # 12 M5 bars = 1-hour opening range
+
 
 class FeatureEngine:
     """Convert OHLCV candles into trading features."""
@@ -91,6 +107,7 @@ class FeatureEngine:
             "source": candles_data.get("source", "unknown"),
             "symbols": {},
         }
+        prepared_m5: dict[str, list] = {}
 
         for symbol, tf_data in symbols_data.items():
             m5 = self._prepare_timeframe_candles(symbol, tf_data.get("M5", []), "M5")
@@ -106,7 +123,13 @@ class FeatureEngine:
                 )
                 continue
 
+            prepared_m5[symbol] = m5
             features["symbols"][symbol] = self._compute_symbol_features(symbol, m5, m15)
+
+        # 2026-08-04 — cross-symbol intermarket pass (research setup #2).
+        # Needs BOTH symbols' aligned M5 closes, so it runs here in compute_all
+        # (all symbols' candles are in scope) instead of the per-symbol path.
+        self._inject_intermarket(features.get("symbols", {}), prepared_m5)
 
         return features
 
@@ -179,8 +202,16 @@ class FeatureEngine:
         close_streak = self._close_streak(df_m5)
         order_block = self._order_block(df_m5, atr)
         ha_trend = self._ha_trend(df_m5)
+        orb = self._orb(df_m5, symbol)
+        cvd_div = self._cvd_divergence(df_m5)
+        macd_div = self._macd_divergence(df_m5)
+        vp = self._session_volume_profile_state(df_m5, atr)
+        adx_trend = self._adx_trend_state(df_m5)
+        ote = self._ote_state(df_m5, atr)
+        rsi_div = self._rsi_divergence(df_m5)
+        breaker = self._breaker_block_state(df_m5, atr)
 
-        return {
+        feat = {
             "symbol": symbol,
             "price": round(price, 5),
             "m5_trend": m5_trend,
@@ -224,6 +255,17 @@ class FeatureEngine:
             "close_streak": close_streak,
             "order_block": order_block,
             "ha_trend": ha_trend,
+            "orb_signal": orb["orb_signal"],
+            "or_high": orb["or_high"],
+            "or_low": orb["or_low"],
+            "cvd_divergence": cvd_div,
+            "vp_poc_rejection": vp["poc_rejection"],
+            "vp_va_breakout": vp["va_breakout"],
+            "macd_divergence": macd_div,
+            "adx_trend": adx_trend,
+            "ote_state": ote,
+            "rsi_divergence": rsi_div,
+            "breaker_block": breaker,
             "stoch_k": round(stoch["k"], 2),
             "stoch_d": round(stoch["d"], 2),
             "stoch_cross": stoch["cross"],
@@ -238,6 +280,593 @@ class FeatureEngine:
             "timeframe_alignment": alignment,
             "volatility_regime": volatility_regime,
         }
+        return feat
+
+    # --- 2026-08-04 research-setup state features (shadow-only trials) -----
+    # These power the 4 registry setups that were research-only in scripts/
+    # (cvd_divergence_reversal, intermarket_divergence_zero_cross,
+    # session_volume_profile_poc_rejection, session_volume_profile_va_breakout).
+    # Like ORB, the FeatureEngine precomputes a per-bar STATE from full history
+    # and the detect callables in core/specialized_setups.py read it — the
+    # detectors get one bar's feat dict, not raw candles. The shadow ledger
+    # (shadow=true) logs fires without placing orders; these are shadow trials.
+
+    def _cvd_divergence(self, df: pd.DataFrame, pivot_l: int = 5) -> str | None:
+        """CVD divergence reversal state at the CURRENT bar (research setup #1).
+
+        Tick-rule delta = sign(close-open) * tick_volume (Lee-Ready proxy on
+        Exness CFD tick volume), cumulative with a daily UTC anchor reset.
+        Confirmed pivots (L=5) on price; fires on divergence:
+        price higher high + CVD lower high -> SELL (bearish_divergence);
+        price lower low + CVD higher low -> BUY (bullish_divergence).
+        Lookahead-free: a pivot at bar i is only confirmed at bar i+L, and the
+        divergence is only emitted at the confirmation bar — same as the OOS
+        scorer in scripts/score_cvd_divergence.py.
+        """
+        n = len(df)
+        if n < 2 * pivot_l + 30:
+            return None
+        opens = df["open"].to_numpy(dtype=float)
+        closes = df["close"].to_numpy(dtype=float)
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+        vols = df["volume"].to_numpy(dtype=float)
+        times = pd.to_datetime(df["time"], utc=True)
+        days = times.dt.strftime("%Y-%m-%d")
+
+        delta = np.sign(closes - opens) * vols
+        cvd = np.zeros(n)
+        running = 0.0
+        prev_day: str | None = None
+        for i in range(n):
+            day = days[i]
+            if prev_day is not None and day != prev_day:
+                running = 0.0
+            running += float(delta[i])
+            cvd[i] = running
+            prev_day = day
+
+        # Track the last confirmed pivot of each kind; fire only at the
+        # confirmation bar (i+L == n-1) when price and CVD diverge.
+        last_pivot_high: tuple[float, float] | None = None  # (price, cvd)
+        last_pivot_low: tuple[float, float] | None = None
+        for i in range(pivot_l, n - pivot_l):
+            confirm = i + pivot_l
+            left_h = highs[i - pivot_l:i]
+            right_h = highs[i + 1:i + pivot_l + 1]
+            left_l = lows[i - pivot_l:i]
+            right_l = lows[i + 1:i + pivot_l + 1]
+            is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+            is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+            if is_ph:
+                if (
+                    confirm == n - 1
+                    and last_pivot_high is not None
+                    and highs[i] > last_pivot_high[0]
+                    and cvd[i] < last_pivot_high[1]
+                ):
+                    return "bearish_divergence"
+                last_pivot_high = (float(highs[i]), float(cvd[i]))
+            if is_pl:
+                if (
+                    confirm == n - 1
+                    and last_pivot_low is not None
+                    and lows[i] < last_pivot_low[0]
+                    and cvd[i] > last_pivot_low[1]
+                ):
+                    return "bullish_divergence"
+                last_pivot_low = (float(lows[i]), float(cvd[i]))
+        return None
+
+    def _macd_divergence(self, df: pd.DataFrame, pivot_l: int = 5,
+                        fast: int = 12, slow: int = 26, signal: int = 9) -> str | None:
+        """MACD-histogram divergence reversal state at the CURRENT bar (arsenal
+        expansion iter-49, ``macd_hist_divergence`` setup).
+
+        Standard MACD(12,26,9) histogram series; confirmed pivots (L=5) on price;
+        fires on divergence at the confirmation bar (i+L == n-1):
+          price higher high + hist lower high -> SELL (bearish_divergence);
+          price lower low + hist higher low -> BUY (bullish_divergence).
+        Lookahead-free (a pivot at bar i is only confirmed at i+L, divergence
+        emitted only at the confirmation bar) — parity-identical to the
+        vectorized replay pass in ``specialized_replay_labeler._vectorized_features``
+        and structured like ``_cvd_divergence`` (CVD swapped for MACD-hist).
+        Source: StratBase.ai MACD backtest — divergence is the best MACD variant
+        (54% WR, PF 1.71) vs crossover (41% WR, PF 1.22).
+        """
+        n = len(df)
+        if n < 2 * pivot_l + slow + signal:
+            return None
+        close = df["close"]
+        ema_fast = close.ewm(span=fast, adjust=False).mean()
+        ema_slow = close.ewm(span=slow, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        sig = macd_line.ewm(span=signal, adjust=False).mean()
+        hist = (macd_line - sig).to_numpy(dtype=float)
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+
+        last_ph: tuple[float, float] | None = None  # (price_high, hist_at_pivot)
+        last_pl: tuple[float, float] | None = None
+        for i in range(pivot_l, n - pivot_l):
+            confirm = i + pivot_l
+            left_h = highs[i - pivot_l:i]
+            right_h = highs[i + 1:i + pivot_l + 1]
+            left_l = lows[i - pivot_l:i]
+            right_l = lows[i + 1:i + pivot_l + 1]
+            is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+            is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+            if is_ph:
+                if (
+                    confirm == n - 1
+                    and last_ph is not None
+                    and highs[i] > last_ph[0]
+                    and hist[i] < last_ph[1]
+                ):
+                    return "bearish_divergence"
+                last_ph = (float(highs[i]), float(hist[i]))
+            if is_pl:
+                if (
+                    confirm == n - 1
+                    and last_pl is not None
+                    and lows[i] < last_pl[0]
+                    and hist[i] > last_pl[1]
+                ):
+                    return "bullish_divergence"
+                last_pl = (float(lows[i]), float(hist[i]))
+        return None
+
+    def _rsi_divergence(self, df: pd.DataFrame, pivot_l: int = 5,
+                       period: int = 14) -> str | None:
+        """RSI divergence reversal state at the CURRENT bar (arsenal expansion
+        iter-54, ``rsi_divergence`` setup).
+
+        Wilder RSI(14) series; confirmed pivots (L=5) on price; fires on
+        divergence at the confirmation bar (i+L == n-1):
+          price higher high + RSI lower high -> SELL (bearish_divergence);
+          price lower low + RSI higher low -> BUY (bullish_divergence).
+        Structured IDENTICALLY to ``_macd_divergence`` (and ``_cvd_divergence``)
+        with RSI swapped for MACD-hist / CVD — a third, mathematically-distinct
+        oscillator divergence (RSI is a smoothed momentum-ratio; MACD-hist is an
+        EMA-spread derivative; CVD is a cumulative signed-volume line). Pure
+        divergence (no overbought/oversold extreme filter) matches the MACD-hist
+        variant's structure. Lookahead-free (a pivot at bar i confirms at i+L,
+        divergence emitted only at the confirmation bar) — parity-identical to
+        the vectorized replay pass ``_vectorized_rsi_divergence``. Distinct from
+        the session-gated ``london_rsi_reversion``/``ny_rsi_reversion`` (those
+        fade RSI EXTREMES, momentum-continuation; this keys off RSI DIVERGENCE
+        vs price, a reversal model). Source: RSI divergence is a staple
+        TradingView reversal setup (StocksToTrade / Investopedia) and the most
+        cited RSI variant; complements the MACD-hist + CVD divergence family.
+        """
+        n = len(df)
+        if n < 2 * pivot_l + period + 10:
+            return None
+        close = df["close"]
+        delta = close.diff()
+        gain = delta.clip(lower=0.0)
+        loss = (-delta).clip(lower=0.0)
+        avg_gain = gain.ewm(alpha=1.0 / period, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1.0 / period, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = (100.0 - 100.0 / (1.0 + rs)).to_numpy(dtype=float)
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+
+        last_ph: tuple[float, float] | None = None  # (price_high, rsi_at_pivot)
+        last_pl: tuple[float, float] | None = None
+        for i in range(pivot_l, n - pivot_l):
+            confirm = i + pivot_l
+            left_h = highs[i - pivot_l:i]
+            right_h = highs[i + 1:i + pivot_l + 1]
+            left_l = lows[i - pivot_l:i]
+            right_l = lows[i + 1:i + pivot_l + 1]
+            is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+            is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+            if is_ph:
+                if (
+                    confirm == n - 1
+                    and last_ph is not None
+                    and highs[i] > last_ph[0]
+                    and rsi[i] < last_ph[1]
+                ):
+                    return "bearish_divergence"
+                last_ph = (float(highs[i]), float(rsi[i]))
+            if is_pl:
+                if (
+                    confirm == n - 1
+                    and last_pl is not None
+                    and lows[i] < last_pl[0]
+                    and rsi[i] > last_pl[1]
+                ):
+                    return "bullish_divergence"
+                last_pl = (float(lows[i]), float(rsi[i]))
+        return None
+
+    def _breaker_block_state(self, df: pd.DataFrame, atr: float,
+                             pivot_l: int = 5, max_age: int = 40,
+                             zone_atr: float = 0.35) -> str | None:
+        """ICT Breaker Block state at the CURRENT bar (arsenal expansion iter-53,
+        ``ict_breaker_block`` setup).
+
+        A breaker is a FAILED swing level that FLIPS polarity on retest:
+          bullish_breaker: a confirmed pivot high H was BROKEN ABOVE (a close > H
+            between the pivot and now), price retraced BACK DOWN to the H zone
+            (low within zone_atr*ATR of H), and the current bar is a bullish
+            rejection (close>open, close in the upper half of the bar's range) ->
+            BUY (former resistance becomes support);
+          bearish_breaker: a confirmed pivot low L was BROKEN BELOW (close < L),
+            price retraced UP to the L zone (high within zone_atr*ATR of L), and
+            the current bar is a bearish rejection (close<open, close in the lower
+            half) -> SELL (former support becomes resistance).
+        Searches confirmed pivots (L=5) within max_age (40 M5 = ~3.3h) of the
+        current bar, most-recent first, and returns the first that satisfies
+        break-then-retest-then-rejection. Lookahead-free (only confirmed pivots
+        i+L <= k, and bars through the current bar). Mirrors the vectorized replay
+        pass ``_vectorized_breaker_block_state`` so live/replay labels agree at
+        every bar. Distinct from ``_order_block`` (the last opposite-color candle
+        before a displacement, polarity-by-construction) and from
+        ``london_order_block``/``ny_order_block``: this keys off a level that
+        FAILED and flipped — a genuinely-new ICT dimension (the arsenal has order
+        blocks but no breaker). Source: PineScriptForge ICT Breaker Block
+        backtests (PF 1.54-1.82 across ES/NQ/CL/YM, 47-53% WR, Sharpe 1.76-2.50)
+        + Backtrex (EUR/USD PF 1.62, NAS100 PF 1.74 with FVG confluence).
+        HONESTY: OHLCV falsified per VERDICT.md — breadth, not deployable edge.
+        """
+        n = len(df)
+        if n < 2 * pivot_l + 30 or not atr or atr <= 0:
+            return None
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+        closes = df["close"].to_numpy(dtype=float)
+        opens = df["open"].to_numpy(dtype=float)
+        k = n - 1
+        zone = zone_atr * float(atr)
+        latest_confirmable = k - pivot_l
+        for i in range(latest_confirmable, pivot_l - 1, -1):
+            if k - i > max_age:
+                break
+            left_h = highs[i - pivot_l:i]; right_h = highs[i + 1:i + pivot_l + 1]
+            left_l = lows[i - pivot_l:i]; right_l = lows[i + 1:i + pivot_l + 1]
+            is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+            is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+            if is_ph:
+                H = float(highs[i])
+                # broke above H strictly before the retest bar k
+                broke = any(closes[b] > H for b in range(i + 1, k))
+                if broke and (H - zone <= lows[k] <= H + zone):
+                    rng = highs[k] - lows[k]
+                    if closes[k] > opens[k] and rng > 0 and (closes[k] - lows[k]) >= 0.5 * rng:
+                        return "bullish_breaker"
+            if is_pl:
+                L = float(lows[i])
+                broke = any(closes[b] < L for b in range(i + 1, k))
+                if broke and (L - zone <= highs[k] <= L + zone):
+                    rng = highs[k] - lows[k]
+                    if closes[k] < opens[k] and rng > 0 and (highs[k] - closes[k]) >= 0.5 * rng:
+                        return "bearish_breaker"
+        return None
+
+    def _adx_trend_state(self, df: pd.DataFrame, period: int = 14,
+                        min_adx: float = 20.0) -> str | None:
+        """ADX/DMI rising-trend-continuation state at the CURRENT bar (arsenal
+        expansion iter-50, ``adx_di_rising_trend`` setup).
+
+        Wilder DMI(14) DI-crossover DIRECTION gated by trend-STRENGTH + a
+        RISING-ADX filter. Fires at the current bar when all hold:
+          ADX >= min_adx (default 20 — the lower threshold beat 25/30 across 2025
+          backtests; waiting for "strong" trends misses the early, most profitable
+          leg) AND ADX is RISING (adx[-1] > adx[-2] — the rising-slope filter was
+          the key differentiator in PineScriptForge's NQ/DAX/ES sweep, PF 1.54-
+          2.31, avoiding exhausted trends) AND DI direction agrees:
+            DI+ > DI- -> "bullish_trend" (BUY continuation)
+            DI- > DI+ -> "bearish_trend" (SELL continuation)
+        Lookahead-free (uses only bars through the current bar). Wilder smoothing
+        ewm(alpha=1/period, adjust=False) = RMA, identical to ``_adx`` and to the
+        vectorized replay pass ``_vectorized_adx_trend_state`` so live/replay
+        labels agree at every bar (the iter-13 parity lesson). Distinct from the
+        session-gated ``london_adx_trend``/``ny_adx_trend`` (ADX>=25, no rising
+        filter, 07:00-10:00/14:00-17:00 only): this is 24h-eligible, lower
+        threshold, and adds the rising-slope gate.
+        Source: Quant Signals 4236-trade ADX sweep (DI-crossover entries >
+        ADX-as-filter in 83% of tests; threshold 20 > 25/30) + PineScriptForge
+        DMI/ADX system (rising-ADX filter -> PF 1.54-2.31).
+        """
+        n = len(df)
+        if n < period * 3:
+            return None
+        high = df["high"]; low = df["low"]; close = df["close"]
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+        minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+        prev_close = close.shift(1)
+        tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+        atr_w = tr.ewm(alpha=1.0 / period, adjust=False).mean()
+        plus_di = 100.0 * plus_dm.ewm(alpha=1.0 / period, adjust=False).mean() / atr_w.replace(0, np.nan)
+        minus_di = 100.0 * minus_dm.ewm(alpha=1.0 / period, adjust=False).mean() / atr_w.replace(0, np.nan)
+        dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        adx_series = dx.ewm(alpha=1.0 / period, adjust=False).mean()
+        a_cur = adx_series.iloc[-1]
+        a_prev = adx_series.iloc[-2]
+        if pd.isna(a_cur) or pd.isna(a_prev):
+            return None
+        if float(a_cur) < min_adx or float(a_cur) <= float(a_prev):
+            return None  # trend too weak, or ADX not rising (exhausted/flat)
+        dp = plus_di.iloc[-1]; dm = minus_di.iloc[-1]
+        if pd.isna(dp) or pd.isna(dm):
+            return None
+        if float(dp) > float(dm):
+            return "bullish_trend"
+        if float(dm) > float(dp):
+            return "bearish_trend"
+        return None
+
+    def _ote_state(self, df: pd.DataFrame, atr: float, pivot_l: int = 5,
+                   max_leg_bars: int = 80, min_leg_atr: float = 1.5) -> str | None:
+        """ICT Optimal Trade Entry state at the CURRENT bar (arsenal expansion
+        iter-52, ``ict_ote`` setup).
+
+        Identifies the most recent CONFIRMED displacement leg (a swing low -> swing
+        high = up leg, or swing high -> swing low = down leg; pivots confirmed at
+        i+L, L=5) and fires when the current close retraces into the 62-79% OTE
+        Fibonacci zone of that leg (sweet spot 70.5%):
+          up leg (low->high, high most recent): close in [H-0.79*(H-L), H-0.62*(H-L)]
+            -> "bullish_ote" (buy the pullback in an uptrend);
+          down leg (high->low, low most recent): close in [L+0.62*(H-L), L+0.79*(H-L)]
+            -> "bearish_ote" (sell the rally in a downtrend).
+        Guards: leg >= min_leg_atr*ATR (default 1.5 ATR — a real displacement, not
+        noise) and the leg end pivot is within max_leg_bars (80 M5 = ~6.7h) of the
+        current bar (stale legs don't qualify). Lookahead-free (only confirmed
+        pivots + the current close). Mirrors the vectorized replay pass
+        ``_vectorized_ote_state`` so live/replay labels agree at every bar.
+        Distinct from every prior setup: NO existing model uses Fibonacci
+        retracement-of-an-impulse — the 50+ entry models use direction / reversion
+        / volume / trend-strength, none measure a measured-move retracement.
+        Source: PineScriptForge ICT OTE backtests (PF 2.30 gold, 2.22 RTY, 2.63
+        silver, Sharpe ~2.5) + ictkillzone.com (71% fill rate, 68% WR to T1 at the
+        70.5% level on 160 NQ entries). HONESTY: OHLCV falsified per VERDICT.md —
+        breadth, not deployable edge.
+        """
+        n = len(df)
+        if n < 2 * pivot_l + 30 or not atr or atr <= 0:
+            return None
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+        closes = df["close"].to_numpy(dtype=float)
+        min_leg = min_leg_atr * float(atr)
+        last_ph: tuple[int, float] | None = None  # (idx, price)
+        last_pl: tuple[int, float] | None = None
+        for i in range(pivot_l, n - pivot_l):
+            left_h = highs[i - pivot_l:i]; right_h = highs[i + 1:i + pivot_l + 1]
+            left_l = lows[i - pivot_l:i]; right_l = lows[i + 1:i + pivot_l + 1]
+            if highs[i] > left_h.max() and highs[i] >= right_h.max():
+                last_ph = (i, float(highs[i]))
+            if lows[i] < left_l.min() and lows[i] <= right_l.min():
+                last_pl = (i, float(lows[i]))
+        if last_ph is None or last_pl is None:
+            return None
+        cur = float(closes[-1])
+        if last_ph[0] > last_pl[0]:
+            # up leg: low (start) -> high (end, most recent); retracement DOWN
+            low = last_pl[1]; high = last_ph[1]; end_idx = last_ph[0]
+            if high - low < min_leg:
+                return None
+            if (n - 1) - end_idx > max_leg_bars:
+                return None
+            zone_lo = high - 0.79 * (high - low); zone_hi = high - 0.62 * (high - low)
+            if zone_lo <= cur <= zone_hi:
+                return "bullish_ote"
+            return None
+        # down leg: high (start) -> low (end, most recent); retracement UP
+        high = last_ph[1]; low = last_pl[1]; end_idx = last_pl[0]
+        if high - low < min_leg:
+            return None
+        if (n - 1) - end_idx > max_leg_bars:
+            return None
+        zone_lo = low + 0.62 * (high - low); zone_hi = low + 0.79 * (high - low)
+        if zone_lo <= cur <= zone_hi:
+            return "bearish_ote"
+        return None
+
+    def _session_volume_profile_state(
+        self, df: pd.DataFrame, atr: float, profile_bars: int = 96, n_bins: int = 50,
+    ) -> dict[str, str | None]:
+        """Session volume profile POC-rejection + VA-breakout state (setups #3/#4).
+
+        Builds a rolling tick-volume profile over the prior ``profile_bars``
+        (96 x M5 = 8h session). POC = price bin with max tick volume; VAH/VAL =
+        70%% value area around POC. Returns two states for the current bar:
+          * poc_rejection: wick touched POC within 0.5*ATR and closed back on
+            the away side -> "bullish" (close > POC) / "bearish" (close < POC)
+          * va_breakout: close broke VAH with volume_ratio >= 1.2 -> "bullish";
+            close broke VAL with volume_ratio >= 1.2 -> "bearish"
+        Lookahead-free (window ends at the current bar). Mirrors
+        scripts/score_volume_profile_setup.py + score_volume_profile_vabreakout.py.
+        """
+        n = len(df)
+        if n < 30 or atr is None or atr <= 0:
+            return {"poc_rejection": None, "va_breakout": None}
+        lo = max(0, n - profile_bars)
+        window = df.iloc[lo:n]
+        if len(window) < 20:
+            return {"poc_rejection": None, "va_breakout": None}
+        price_min = float(window["low"].min())
+        price_max = float(window["high"].max())
+        if price_max <= price_min:
+            return {"poc_rejection": None, "va_breakout": None}
+        bin_w = (price_max - price_min) / n_bins
+        vol = np.zeros(n_bins)
+        tp = (window["high"] + window["low"] + window["close"]) / 3.0
+        idx = ((tp - price_min) / bin_w).astype(int)
+        idx = np.clip(idx, 0, n_bins - 1)
+        np.add.at(vol, idx, window["volume"].to_numpy(dtype=float))
+        total = vol.sum()
+        if total <= 0:
+            return {"poc_rejection": None, "va_breakout": None}
+        poc_idx = int(np.argmax(vol))
+        poc = price_min + (poc_idx + 0.5) * bin_w
+        target = 0.70 * total
+        cum = vol[poc_idx]
+        lo_i, hi_i = poc_idx, poc_idx
+        while cum < target and (lo_i > 0 or hi_i < n_bins - 1):
+            if hi_i + 1 < n_bins and (lo_i == 0 or vol[hi_i + 1] >= vol[lo_i - 1]):
+                hi_i += 1
+            elif lo_i > 0:
+                lo_i -= 1
+            cum = vol[lo_i:hi_i + 1].sum()
+        vah = price_min + (hi_i + 1) * bin_w
+        val = price_min + lo_i * bin_w
+
+        cur = window.iloc[-1]
+        o = float(cur["open"]); h = float(cur["high"]); l = float(cur["low"]); c = float(cur["close"])
+        rng = max(h - l, 1e-9)
+        body = c - o
+        tol = 0.5 * atr
+        poc_rejection: str | None = None
+        wick_touched = (l <= poc + tol) and (h >= poc - tol)
+        if wick_touched:
+            if c > poc and body > 0 and (c - l) / rng > 0.5:
+                poc_rejection = "bullish"
+            elif c < poc and body < 0 and (h - c) / rng > 0.5:
+                poc_rejection = "bearish"
+
+        va_breakout: str | None = None
+        vol_avg = float(df["volume"].tail(20).mean())
+        vr = float(df["volume"].iloc[-1] / vol_avg) if vol_avg > 0 else 1.0
+        if vr >= 1.2:
+            if c > vah:
+                va_breakout = "bullish"
+            elif c < val:
+                va_breakout = "bearish"
+        return {"poc_rejection": poc_rejection, "va_breakout": va_breakout}
+
+    # --- Intermarket (cross-symbol) state -----------------------------------
+
+    INTERMARKET_PAIRS: tuple[tuple[str, str], ...] = (
+        ("US30m", "NAS100m"), ("NAS100m", "US30m"),
+        ("US500m", "US30m"), ("EURUSDm", "GBPUSDm"), ("GBPUSDm", "EURUSDm"),
+        ("UK100m", "FR40m"), ("FR40m", "UK100m"),
+        ("USOILm", "XAUUSDm"), ("BTCUSDm", "NAS100m"),
+    )
+
+    def _inject_intermarket(
+        self, feature_symbols: dict[str, dict[str, Any]], prepared_m5: dict[str, list],
+    ) -> None:
+        """Cross-symbol intermarket zero-cross state (research setup #2).
+
+        For each positively-correlated (target, anchor) pair, EMA-smooth both
+        closes, z-score each over a 50-bar window, spread d = zA - zB; stamp
+        ``intermarket_zero_cross`` (bullish_cross -> BUY target / bearish_cross
+        -> SELL target) onto the TARGET's feature dict when d crossed zero at
+        the current bar. Fault-isolated: any pair failure leaves the feature
+        unset (no fire). Mirrors scripts/score_intermarket_divergence.py.
+        """
+        ema_p, win = 20, 50
+        # Build each symbol's {5-min-bucket: close} map ONCE (each symbol
+        # participates in up to 3 pairs) instead of re-bucketing per pair.
+        bucket_maps: dict[str, dict[int, float]] = {}
+        for sym, bars in prepared_m5.items():
+            m: dict[int, float] = {}
+            try:
+                times = pd.Series(pd.to_datetime(
+                    [b.get("time") for b in bars], utc=True,
+                ))
+                closes = np.array([float(b["close"]) for b in bars])
+                buckets = (
+                    times.dt.tz_convert("UTC").dt.tz_localize(None)
+                    .astype("datetime64[ns]").to_numpy().view("int64")
+                    // (300 * 10**9)
+                )
+                # Last bar wins for a bucket (keep newest close per 5-min slot).
+                for k in range(len(buckets)):
+                    m[int(buckets[k])] = float(closes[k])
+            except Exception:  # noqa: BLE001 — never break the feature pipeline
+                m = {}
+            bucket_maps[sym] = m
+        for target, anchor in self.INTERMARKET_PAIRS:
+            if target not in feature_symbols or anchor not in bucket_maps:
+                continue
+            try:
+                state = self._intermarket_zero_cross(
+                    prepared_m5[target], bucket_maps[anchor], ema_p, win,
+                )
+            except Exception:  # noqa: BLE001 — never break the feature pipeline
+                state = None
+            if state:
+                feature_symbols[target]["intermarket_zero_cross"] = state
+                feature_symbols[target]["intermarket_anchor"] = anchor
+
+    @staticmethod
+    def _intermarket_zero_cross(
+        t_bars: list[dict[str, Any]], anchor_buckets: dict[int, float] | list[dict[str, Any]],
+        ema_p: int = 20, win: int = 50,
+    ) -> str | None:
+        """Zero-crossing spread state at the current bar for a (target, anchor) pair.
+
+        ``anchor_buckets`` is the pre-built {5-min-bucket: close} map from
+        ``_inject_intermarket`` (callers may also pass raw bars for tests —
+        bucketed here in that case).
+        """
+        sec: dict[int, float]
+        if isinstance(anchor_buckets, dict):
+            sec = anchor_buckets
+        else:
+            sec = {}
+            for b in anchor_buckets:
+                t = pd.to_datetime(b.get("time"), utc=True)
+                sec[int(t.timestamp() // 300)] = float(b["close"])
+        times_p = pd.Series(pd.to_datetime([b.get("time") for b in t_bars], utc=True))
+        # Normalize to nanoseconds FIRST: a list-built Series is datetime64[us],
+        # and .view("int64") on that dtype would misread microseconds as
+        # nanoseconds -> buckets off by 1000x -> every mask fails. astype to ns
+        # guarantees a uniform epoch-ns base regardless of input precision.
+        buckets = (
+            times_p.dt.tz_convert("UTC").dt.tz_localize(None)
+            .astype("datetime64[ns]").to_numpy().view("int64") // (300 * 10**9)
+        )
+        closes_all = np.array([float(b["close"]) for b in t_bars])
+        mask = np.array([int(bk) in sec for bk in buckets])
+        if mask.sum() < win + ema_p + 4:
+            return None
+        # Stale-anchor guard: the CURRENT target bar must have an aligned anchor
+        # close. If the anchor lags the target by even one 5-min bucket, the
+        # masked tail drops real bars and d_now would describe an OLDER bar — a
+        # one-bar-stale zero-cross. Refuse rather than fire stale.
+        if not mask[-1]:
+            return None
+        t_p = closes_all[mask]
+        a_p = np.array([sec[int(bk)] for bk in buckets[mask]], dtype=float)
+
+        def _ema(x: np.ndarray, p: int) -> np.ndarray:
+            if len(x) < p:
+                return np.full(len(x), np.nan)
+            s = pd.Series(x)
+            return s.ewm(span=p, adjust=False).mean().to_numpy()
+
+        def _zscore(x: np.ndarray, w: int) -> np.ndarray:
+            s = pd.Series(x)
+            mean = s.rolling(w).mean()
+            sd = s.rolling(w).std(ddof=0)
+            out = ((s - mean) / sd.replace(0, np.nan)).to_numpy()
+            # Any NaN z becomes 0.0 (flat). Two sources: warmup (bars < w, no
+            # window yet) and zero-std stretches mid-series (a genuinely flat
+            # segment where mean == value -> z of 0 is correct there too).
+            return np.where(np.isnan(out), 0.0, out)
+
+        t_ema = _ema(t_p, ema_p)
+        a_ema = _ema(a_p, ema_p)
+        t_z = _zscore(t_ema, win)
+        a_z = _zscore(a_ema, win)
+        d_now = t_z[-1] - a_z[-1]
+        d_prev = t_z[-2] - a_z[-2]
+        if np.isnan(d_now) or np.isnan(d_prev):
+            return None
+        if d_prev < 0.0 <= d_now:
+            return "bullish_cross"
+        if d_prev > 0.0 >= d_now:
+            return "bearish_cross"
+        return None
 
     @staticmethod
     def validate_symbol_features(features: dict[str, Any]) -> list[str]:
@@ -1236,6 +1865,84 @@ class FeatureEngine:
         if gc < go and h[i] <= go:
             return "bearish_ha_strong"
         return "none"
+
+    def _orb(self, df: pd.DataFrame, symbol: str, or_bars: int = OR_BARS_DEFAULT) -> dict:
+        """Opening Range Breakout state for the CURRENT bar — iteration 43.
+
+        A SESSION-ANCHORED RANGE dimension: the high/low of the first `or_bars`
+        M5 bars after the symbol's primary cash-session open defines the opening
+        range; the FIRST close beyond that range after the OR forms is the
+        breakout. No prior setup keys off a session-anchored range — killzone
+        setups (london_/ny_) gate a candle-pattern detect by UTC hour but read
+        bar structure, not a defined intraday range. ORB is the canonical
+        TradingView "opening range breakout" and a distinct entry model. Each
+        symbol lands in its own culturing cell (symbol, "opening_range_breakout")
+        because the session anchor differs per symbol.
+
+        Lookahead-free + live/research parity: at the current bar i=n-1, find
+        TODAY's first bar at/after the session open (open_idx), form the OR over
+        [open_idx, open_idx+or_bars-1], then scan bars (or_end, i) — if any
+        already closed beyond the OR, the breakout already happened (no re-fire);
+        only if bar i is the FIRST close beyond the OR do we emit. This depends
+        only on past + current bars, so the last-bar label computed here matches
+        the vectorized replay's label at the same bar exactly. Computed on the
+        same `df_m5` the other features use (history-augmented latest bars).
+
+        HONESTY: OOS score on this exact feature (scripts/score_opening_range_
+        breakout.py) = pooled +0.0051R raw / +0.0209R with a 1.5x volume filter,
+        0/14 cells clearing the per-cell gate — NO EDGE at retail 30bps pre-cost.
+        Per-cell CI lo>0 is selection-biased; DSR/SPA across full K remains the
+        bar. Wired in live on demo per explicit user sign-off ("turn it on right
+        now ... if they don't [do well] who cares"); demo losses are the accepted
+        cost of live forward scoring.
+        """
+        n = len(df)
+        if n < or_bars + 2:
+            return {"orb_signal": None, "or_high": 0.0, "or_low": 0.0}
+        try:
+            ts = pd.to_datetime(df["time"], utc=True)
+        except Exception:  # noqa: BLE001 — never break the feature pipeline
+            return {"orb_signal": None, "or_high": 0.0, "or_low": 0.0}
+        open_h, open_m = OR_SESSION_OPEN_UTC.get(symbol, (0, 0))
+        open_mod = open_h * 60 + open_m
+        minute_of_day = ts.dt.hour * 60 + ts.dt.minute
+        day_key = ts.dt.strftime("%Y-%m-%d")
+        cur_day = str(day_key.iloc[-1])
+        today_mask = (day_key == cur_day).to_numpy()
+        if int(today_mask.sum()) < or_bars + 2:
+            return {"orb_signal": None, "or_high": 0.0, "or_low": 0.0}
+        idx_today = np.where(today_mask)[0]
+        mod_today = minute_of_day.to_numpy()[idx_today]
+        after = idx_today[mod_today >= open_mod]
+        if len(after) < or_bars + 2:
+            return {"orb_signal": None, "or_high": 0.0, "or_low": 0.0}
+        open_idx = int(after[0])
+        or_end = open_idx + or_bars - 1
+        cur = n - 1
+        if cur <= or_end:
+            return {"orb_signal": None, "or_high": 0.0, "or_low": 0.0}
+        highs = df["high"].to_numpy()
+        lows = df["low"].to_numpy()
+        closes = df["close"].to_numpy()
+        or_high = float(highs[open_idx:or_end + 1].max())
+        or_low = float(lows[open_idx:or_end + 1].min())
+        if or_high <= or_low:
+            return {"orb_signal": None, "or_high": 0.0, "or_low": 0.0}
+        # First-breakout check: if any bar between OR end and the current bar
+        # already closed beyond the OR, the day's breakout already fired -> None.
+        for k in range(or_end + 1, cur):
+            if closes[k] > or_high or closes[k] < or_low:
+                return {"orb_signal": None, "or_high": round(or_high, 5),
+                        "or_low": round(or_low, 5)}
+        c = float(closes[cur])
+        if c > or_high:
+            return {"orb_signal": "bullish_breakout", "or_high": round(or_high, 5),
+                    "or_low": round(or_low, 5)}
+        if c < or_low:
+            return {"orb_signal": "bearish_breakout", "or_high": round(or_high, 5),
+                    "or_low": round(or_low, 5)}
+        return {"orb_signal": None, "or_high": round(or_high, 5),
+                "or_low": round(or_low, 5)}
 
     def _support_resistance(self, df: pd.DataFrame, lookback: int = 50) -> tuple[float, float]:
         window = df.tail(lookback)

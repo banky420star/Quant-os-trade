@@ -1,6 +1,6 @@
 # $30 micro account — Culturing Evolution (best-of-n winner) + aggressive edge sessions
 label: "$30 Micro"
-description: "Aggressive edge sessions on XAUUSDm/USOILm/UK100m, 0.01 lot, $10 max loss, positive-evolution"
+description: "Aggressive edge sessions on XAUUSDm/USOILm/UK100m, 0.01 lot, $10 max loss/trade, positive-evolution"
 mode: growth
 trading:
   aggressive_mode: true
@@ -45,7 +45,7 @@ practice:
     enabled: true
     aggressive_mode: true
     account_size_usd: 30
-    symbols: [XAUUSDm, EURUSDm, USDCHFm, GBPUSDm]
+    symbols: [XAUUSDm, USOILm, UK100m]
     max_open_per_symbol: 1
     max_open_per_setup: 1
     allow_pyramiding: false
@@ -122,20 +122,17 @@ adaptation:
   rebuild_trade_log: true
   refresh_positive_evolution: true
   auto_evolve_cells: true
-  evolve_symbols: [XAUUSDm, EURUSDm, USDCHFm, GBPUSDm]
+  evolve_symbols: [XAUUSDm, USOILm, UK100m]
   seed_edge_cells:
     - symbol: XAUUSDm
       setup: pullback
       sessions: [rollover, tokyo, london_open]
-    - symbol: EURUSDm
+    - symbol: USOILm
       setup: pullback
-      sessions: [london_open, new_york]
-    - symbol: USDCHFm
+      sessions: [tokyo]
+    - symbol: UK100m
       setup: pullback
-      sessions: [london_open, new_york]
-    - symbol: GBPUSDm
-      setup: pullback
-      sessions: [london_open, new_york]
+      sessions: [london_open]
 quant:
   positive_evolution_enabled: true
   positive_evolution:
@@ -159,21 +156,16 @@ quant:
       min_rank_sample_size: 3
       preferred_setups: [pullback]
       preferred_sessions: [rollover, tokyo]
-    EURUSDm:
+    USOILm:
       require_top_ranked_setup: true
       min_rank_win_rate: 45
       preferred_setups: [pullback]
-      preferred_sessions: [london_open, new_york]
-    USDCHFm:
+      preferred_sessions: [tokyo]
+    UK100m:
       require_top_ranked_setup: true
       min_rank_win_rate: 45
       preferred_setups: [pullback]
-      preferred_sessions: [london_open, new_york]
-    GBPUSDm:
-      require_top_ranked_setup: true
-      min_rank_win_rate: 45
-      preferred_setups: [pullback]
-      preferred_sessions: [london_open, new_york]
+      preferred_sessions: [london_open]
 session_scoring:
   enabled: true
   min_trade_score: 50
@@ -215,18 +207,29 @@ signals:
       preferred_setups: [pullback]
       preferred_sessions: [rollover, tokyo]
       strict_sessions: false
-    EURUSDm:
+    USOILm:
       allowed_setups: [pullback]
       preferred_setups: [pullback]
-      preferred_sessions: [london_open, new_york]
+      preferred_sessions: [tokyo]
       strict_sessions: false
-    USDCHFm:
+    UK100m:
       allowed_setups: [pullback]
       preferred_setups: [pullback]
-      preferred_sessions: [london_open, new_york]
+      preferred_sessions: [london_open]
       strict_sessions: false
-    GBPUSDm:
-      allowed_setups: [pullback]
-      preferred_setups: [pullback]
-      preferred_sessions: [london_open, new_york]
-      strict_sessions: false
+    # Opt-in FX pairs — add back to practice.micro.symbols to re-enable:
+    # EURUSDm:
+    #   allowed_setups: [pullback]
+    #   preferred_setups: [pullback]
+    #   preferred_sessions: [london_open, new_york]
+    #   strict_sessions: false
+    # USDCHFm:
+    #   allowed_setups: [pullback]
+    #   preferred_setups: [pullback]
+    #   preferred_sessions: [london_open, new_york]
+    #   strict_sessions: false
+    # GBPUSDm:
+    #   allowed_setups: [pullback]
+    #   preferred_setups: [pullback]
+    #   preferred_sessions: [london_open, new_york]
+    #   strict_sessions: false

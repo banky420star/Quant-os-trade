@@ -9,6 +9,11 @@ from core.micro_profile import micro_profile_enabled, micro_settings
 
 
 def fast_mode_settings(config: dict[str, Any]) -> dict[str, Any]:
+    # Data-lab's fixed-exit experiment has a single order producer. Do not let
+    # fast_mode_runtime.json or a global fast-mode preset re-enable the
+    # secondary live entry/SL-management service for this profile.
+    if bool(config.get("execution", {}).get("fast_mode_enabled", True)) is False:
+        return {"enabled": False, "live_enabled": False, "symbols": []}
     return merge_fast_mode(config.get("fast_mode") or {})
 
 

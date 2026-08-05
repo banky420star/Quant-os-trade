@@ -336,24 +336,35 @@ def test_broker_wraps_close_position_with_lock(monkeypatch):
 # 6. execution_loop._drain_intents_phase drains the queue correctly
 # ---------------------------------------------------------------------------
 def test_drain_intents_phase_drains_and_calls_broker(monkeypatch):
-    """If the queue has 2 opens, _drain_intents_phase calls
-    process_approved_signals with those 2 signs."""
+    """If the queue has 2 opens, _drain_intents_phase hydrates each intent's
+    signal from evaluated_signals (via signal_id) and calls
+    process_approved_signals with those 2 signals."""
     from loops import execution_loop
     from core.mt5_terminal_manager import MT5TerminalManager
     import queue as _q
     MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
 
+    evals = {"evaluated": [
+        {"signal_id": "sig-1", "symbol": "XAUUSDm", "side": "BUY",
+         "entry": 4000.0, "sl": 3990.0, "tp1": 4020.0},
+        {"signal_id": "sig-2", "symbol": "EURUSDm", "side": "SELL",
+         "entry": 1.10, "sl": 1.105, "tp1": 1.095},
+    ]}
+    monkeypatch.setattr(execution_loop, "read_evaluated_signals", lambda cfg: evals)
+
     MT5TerminalManager._shared_intent_queue.put_nowait({
         "action": "open", "symbol": "XAUUSDm", "side": "BUY",
+        "signal_id": "sig-1",
     })
     MT5TerminalManager._shared_intent_queue.put_nowait({
         "action": "open", "symbol": "EURUSDm", "side": "SELL",
+        "signal_id": "sig-2",
     })
 
     captured: list = []
     class _FakeBroker:
         def __init__(self, *a, **kw): pass
-        def process_approved_signals(self, approved):
+        def process_approved_signals(self, approved, **kw):
             captured.append(approved)
             return {"placed": [{"x": 1}] * len(approved)}
         def close_position(self, *a, **kw):
@@ -370,8 +381,50 @@ def test_drain_intents_phase_drains_and_calls_broker(monkeypatch):
     assert out["broker_invoked"] is True
     assert len(captured) == 1
     assert len(captured[0]) == 2
-    # Each approved row is wrapped as {"signal": <intent>}, so symbol lives nested.
+    # Each approved row is wrapped as {"signal": <hydrated signal>}.
     assert {a["signal"]["symbol"] for a in captured[0]} == {"XAUUSDm", "EURUSDm"}
+    # Hydrated signals carry entry/sl/tp from the evaluated doc, NOT the raw
+    # slim intent (regression guard for the pre-2026-08-03 KeyError('entry')).
+    assert all(float(a["signal"]["entry"]) > 0 for a in captured[0])
+    assert all(float(a["signal"]["sl"]) > 0 for a in captured[0])
+
+
+def test_drain_intents_phase_skips_unresolvable_open(monkeypatch):
+    """Open intents whose signal_id can't be resolved are skipped instead of
+    crashing the drain (regression guard for the pre-fix KeyError('entry'))."""
+    from loops import execution_loop
+    from core.mt5_terminal_manager import MT5TerminalManager
+    import queue as _q
+    MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
+
+    monkeypatch.setattr(execution_loop, "read_evaluated_signals", lambda cfg: {"evaluated": []})
+    MT5TerminalManager._shared_intent_queue.put_nowait({
+        "action": "open", "symbol": "XAUUSDm", "side": "BUY",
+        "signal_id": "does-not-exist",
+    })
+    MT5TerminalManager._shared_intent_queue.put_nowait({
+        "action": "close", "ticket": 999, "symbol": "XAUUSDm",
+        "side": "BUY", "volume": 0.05, "reason": "signal_reversal",
+    })
+
+    closes_called: list = []
+    class _FakeBroker:
+        def __init__(self, *a, **kw): pass
+        def process_approved_signals(self, approved, **kw):
+            raise AssertionError("broker should not be called with 0 opens")
+        def close_position(self, ticket, symbol, side, volume, reason):
+            closes_called.append(ticket)
+            return {"success": True}
+
+    monkeypatch.setattr(execution_loop, "MT5Broker", _FakeBroker)
+    cfg = {"execution": {"mode": "mt5"}}
+    log = _log_silent()
+    out = execution_loop._drain_intents_phase(cfg, "mt5", log)
+
+    assert out["drained"] == 2
+    assert out["placed"] == 1  # only the close succeeds
+    assert out["broker_invoked"] is True
+    assert closes_called == [999]
 
 
 def test_drain_intents_phase_handles_close_intent(monkeypatch):
@@ -387,7 +440,7 @@ def test_drain_intents_phase_handles_close_intent(monkeypatch):
     closes_called: list = []
     class _FakeBroker:
         def __init__(self, *a, **kw): pass
-        def process_approved_signals(self, approved):
+        def process_approved_signals(self, approved, **kw):
             return {"placed": []}
         def close_position(self, ticket, symbol, side, volume, reason):
             closes_called.append({
@@ -443,13 +496,177 @@ def test_drain_intents_phase_paper_returns_no_broker(monkeypatch):
     )
 
 
+def test_drain_intents_phase_requeues_on_broker_failure(monkeypatch):
+    """A broker exception must requeue the drained intents for the next cycle
+    instead of silently dropping them (regression for the -10004 "No IPC
+    connection" incident where 14 queued fast entries were drained and lost
+    with MT5 audit open=0 pending=0 afterwards)."""
+    from loops import execution_loop
+    from core.mt5_terminal_manager import MT5TerminalManager
+    import queue as _q
+    MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
+
+    evals = {"evaluated": [
+        {"signal_id": "sig-1", "symbol": "XAUUSDm", "side": "BUY",
+         "entry": 4000.0, "sl": 3990.0, "tp1": 4020.0},
+    ]}
+    monkeypatch.setattr(execution_loop, "read_evaluated_signals", lambda cfg: evals)
+    MT5TerminalManager._shared_intent_queue.put_nowait({
+        "action": "open", "symbol": "XAUUSDm", "side": "BUY",
+        "signal_id": "sig-1",
+    })
+
+    class _FailingBroker:
+        def __init__(self, *a, **kw): pass
+        def process_approved_signals(self, approved, **kw):
+            raise RuntimeError("Not logged in to MT5: (-10004, 'No IPC connection')")
+
+    monkeypatch.setattr(execution_loop, "MT5Broker", _FailingBroker)
+    out = execution_loop._drain_intents_phase(
+        {"execution": {"mode": "mt5"}}, "mt5", _log_silent(),
+    )
+    assert out["drained"] == 1
+    assert out["placed"] == 0
+    assert out["requeued"] == 1
+    # The intent is back in the queue, ready for the next drain cycle.
+    assert MT5TerminalManager._shared_intent_queue.qsize() == 1
+    assert MT5TerminalManager._shared_intent_queue.get()["signal_id"] == "sig-1"
+
+
+def test_drain_intents_phase_refusal_not_requeued(monkeypatch):
+    """A permanent TradingRefusedError (e.g. the live-profile-on-demo-account
+    guard) must NOT be requeued — that would livelock (drain -> refuse ->
+    requeue forever). The refusal drops the intents and surfaces cleanly."""
+    from loops import execution_loop
+    from core.mt5_terminal_manager import MT5TerminalManager
+    import queue as _q
+    MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
+
+    evals = {"evaluated": [
+        {"signal_id": "sig-1", "symbol": "XAUUSDm", "side": "BUY",
+         "entry": 4000.0, "sl": 3990.0, "tp1": 4020.0},
+    ]}
+    monkeypatch.setattr(execution_loop, "read_evaluated_signals", lambda cfg: evals)
+    MT5TerminalManager._shared_intent_queue.put_nowait({
+        "action": "open", "symbol": "XAUUSDm", "side": "BUY",
+        "signal_id": "sig-1",
+    })
+
+    class _RefusingBroker:
+        def __init__(self, *a, **kw): pass
+        def process_approved_signals(self, approved, **kw):
+            raise execution_loop.TradingRefusedError(
+                "Config mt5.account_mode='real' but the connected MT5 account "
+                "is DEMO — refusing to trade."
+            )
+
+    monkeypatch.setattr(execution_loop, "MT5Broker", _RefusingBroker)
+    out = execution_loop._drain_intents_phase(
+        {"execution": {"mode": "mt5"}}, "mt5", _log_silent(),
+    )
+    assert out["drained"] == 1
+    assert out["placed"] == 0
+    assert out["requeued"] == 0
+    assert out["refused"] == 1
+    # Queue must be EMPTY — no livelock, clean refusal.
+    assert MT5TerminalManager._shared_intent_queue.qsize() == 0
+
+
+def test_drain_intents_phase_drops_after_retry_cap(monkeypatch):
+    """Transient failures are requeued but capped: after 3 failed retries the
+    intent is dropped (bounded queue) and the fingerprint is released so a
+    fresh identical push is allowed again."""
+    from loops import execution_loop
+    from core.mt5_terminal_manager import MT5TerminalManager
+    import queue as _q
+    MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
+    MT5TerminalManager._shared_pending_open.clear()
+
+    evals = {"evaluated": [
+        {"signal_id": "sig-1", "symbol": "XAUUSDm", "side": "BUY",
+         "entry": 4000.0, "sl": 3990.0, "tp1": 4020.0},
+    ]}
+    monkeypatch.setattr(execution_loop, "read_evaluated_signals", lambda cfg: evals)
+
+    class _FailingBroker:
+        def __init__(self, *a, **kw): pass
+        def process_approved_signals(self, approved, **kw):
+            raise RuntimeError("Not logged in to MT5: (-10004, 'No IPC connection')")
+
+    monkeypatch.setattr(execution_loop, "MT5Broker", _FailingBroker)
+
+    MT5TerminalManager._shared_intent_queue.put_nowait({
+        "action": "open", "symbol": "XAUUSDm", "side": "BUY",
+        "signal_id": "sig-1",
+    })
+    requeued_after = []
+    for _ in range(4):
+        out = execution_loop._drain_intents_phase(
+            {"execution": {"mode": "mt5"}}, "mt5", _log_silent(),
+        )
+        assert out["drained"] == 1
+        requeued_after.append(out["requeued"])
+    # retry_count climbs 1,2,3 then the intent is dropped on the 4th drain.
+    assert requeued_after == [1, 1, 1, 0]
+    assert MT5TerminalManager._shared_intent_queue.qsize() == 0
+    # Fingerprint was released on the drop: a fresh identical push is allowed.
+    mgr = MT5TerminalManager(_cfg_stub(), _log_silent())
+    mgr.push_intent({
+        "action": "open", "symbol": "XAUUSDm", "side": "BUY",
+        "signal_id": "sig-1",
+    })
+    assert mgr.intent_queue.qsize() == 1
+    assert mgr.intent_queue.get()["signal_id"] == "sig-1"
+
+
+def test_push_intent_dedupes_identical_opens():
+    """Identical (symbol, side, signal_id) open intents are queued only once
+    while the first copy is still pending — the 1Hz fast_tick_loop re-emits
+    the same limit entry every cycle, which previously accumulated 2x7
+    identical intents."""
+    from core.mt5_terminal_manager import MT5TerminalManager
+    import queue as _q
+    MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
+    MT5TerminalManager._shared_pending_open.clear()
+
+    mgr = MT5TerminalManager(_cfg_stub(), _log_silent())
+    intent = {"action": "open", "symbol": "BTCUSDm", "side": "SELL",
+              "signal_id": "sig-1"}
+    mgr.push_intent(intent)
+    mgr.push_intent(dict(intent))  # identical copy — must be deduped
+    assert mgr.intent_queue.qsize() == 1
+    assert len(mgr.drain_intents(max_items=10)) == 1
+    # After the drain the fingerprint is released: a new identical open is allowed.
+    mgr.push_intent(dict(intent))
+    assert mgr.intent_queue.qsize() == 1
+    assert mgr.drain_intents(max_items=10)[0]["signal_id"] == "sig-1"
+
+
+def test_push_intent_dedupes_only_identical_opens():
+    """Closes and distinct opens are never deduplicated."""
+    from core.mt5_terminal_manager import MT5TerminalManager
+    import queue as _q
+    MT5TerminalManager._shared_intent_queue = _q.Queue(maxsize=100)
+    MT5TerminalManager._shared_pending_open.clear()
+
+    mgr = MT5TerminalManager(_cfg_stub(), _log_silent())
+    mgr.push_intent({"action": "close", "ticket": 1, "symbol": "X"})
+    mgr.push_intent({"action": "close", "ticket": 1, "symbol": "X"})
+    mgr.push_intent({"action": "open", "symbol": "X", "side": "BUY", "signal_id": "a"})
+    mgr.push_intent({"action": "open", "symbol": "X", "side": "SELL", "signal_id": "a"})
+    mgr.push_intent({"action": "open", "symbol": "X", "side": "BUY", "signal_id": "b"})
+    assert mgr.intent_queue.qsize() == 5
+
+
 # ---------------------------------------------------------------------------
-# 7. fast_tick_loop pushes intents when an entry fires
+# 7. fast_tick_loop executes directly (single producer) on enter
 # ---------------------------------------------------------------------------
-def test_fast_tick_loop_pushes_intent_for_enter_decision(monkeypatch):
-    """When evaluate_entry returns action=enter, fast_tick_loop must
-    push an intent onto MT5TerminalManager.intent_queue BEFORE calling
-    execute_fast_entry."""
+def test_fast_tick_loop_executes_directly_without_intent(monkeypatch):
+    """When evaluate_entry returns action=enter, fast_tick_loop must call
+    execute_fast_entry directly and NOT push an open intent onto
+    MT5TerminalManager.intent_queue — the direct path is the single
+    authoritative producer (2026-08-05). Queuing a duplicate intent let
+    execution_loop's drain phase open the same signal a second time."""
     import loops.fast_tick_loop as ftl
     from core.mt5_terminal_manager import MT5TerminalManager
     import queue as _q
@@ -490,9 +707,10 @@ def test_fast_tick_loop_pushes_intent_for_enter_decision(monkeypatch):
 
     ftl.run({})
     pushed = list(MT5TerminalManager._shared_intent_queue.queue)
-    assert any(it.get("action") == "open" and it["symbol"] == "XAUUSDm"
-               for it in pushed), (
-        f"fast_tick_loop did not push an open intent; queue={pushed}"
+    assert not any(it.get("action") == "open" and it["symbol"] == "XAUUSDm"
+                   for it in pushed), (
+        f"fast_tick_loop must NOT push an open intent (single producer); "
+        f"queue={pushed}"
     )
     assert executed == [{"symbol": "XAUUSDm"}]
 

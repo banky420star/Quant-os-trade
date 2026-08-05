@@ -26,8 +26,10 @@ def _parse_iso(ts: str | None) -> datetime | None:
         return None
 
 
-def _open_positions_for_symbol(symbol: str) -> int:
-    pos_doc = read_json_state("paper_positions.json", default={"positions": []})
+def _open_positions_for_symbol(symbol: str, config: dict[str, Any]) -> int:
+    mode = str((config.get("execution") or {}).get("mode") or "paper").lower()
+    filename = "mt5_positions.json" if mode == "mt5" else "paper_positions.json"
+    pos_doc = read_json_state(filename, default={"positions": []})
     return sum(1 for p in pos_doc.get("positions", []) if p.get("symbol") == symbol)
 
 
@@ -113,6 +115,29 @@ def evaluate_entry(
         "reasons": [],
     }
 
+    # 2026-08-05 — dedupe FIRST (before the kill-switch / health / positions /
+    # rate-limit gates which all do file reads every tick). The same cached
+    # signal is re-evaluated every second, so once it is executed (or recently
+    # refused for exposure) the loop must stop re-emitting "FAST LIVE entry"
+    # and re-attempting the order — including all the wasted gate reads.
+    # ``fast_tick_loop`` merges the mt5_orders.json ledger into
+    # ``state.executed_signals`` once per tick, so slow-path-executed signals
+    # are covered here too without a per-symbol file read.
+    signal_id = str(cache_entry.get("signal_id") or "")
+    if signal_id:
+        if signal_id in set(state.get("executed_signals") or []):
+            decision["action"] = "wait"
+            decision["reasons"].append("already_executed")
+            return decision
+        _backoff_ts = (state.get("exposure_backoff") or {}).get(signal_id)
+        _backoff_dt = _parse_iso(_backoff_ts)
+        if _backoff_dt:
+            _window = int(cfg.get("exposure_backoff_seconds") or 60)
+            if datetime.now(timezone.utc) - _backoff_dt < timedelta(seconds=_window):
+                decision["action"] = "wait"
+                decision["reasons"].append("exposure_backoff")
+                return decision
+
     kill = read_json_state("kill_switch.json", default={})
     if kill.get("kill_switch"):
         decision["action"] = "blocked"
@@ -126,7 +151,7 @@ def evaluate_entry(
         return decision
 
     max_open = int(cfg.get("max_open_positions") or 1)
-    if _open_positions_for_symbol(symbol) >= max_open:
+    if _open_positions_for_symbol(symbol, config) >= max_open:
         decision["action"] = "blocked"
         decision["reasons"].append("max_open_positions")
         return decision
@@ -162,15 +187,26 @@ def evaluate_entry(
         return decision
 
     in_zone = price_in_zone(mid, anchor, atr, zone_atr=zone_atr)
-    entry_type = str(cache_entry.get("entry_type") or "limit")
+    market_only = bool(
+        (config.get("execution") or {}).get("strategy_entries_market_only", False)
+        or (config.get("trading") or {}).get("strategy_entries_market_only", False)
+    )
+    entry_type = "market" if market_only else str(cache_entry.get("entry_type") or "limit")
     market_dist = float(cfg.get("market_if_distance_atr_below") or 0.05)
 
     would_market = (
-        cfg.get("allow_market_entries")
+        (market_only or cfg.get("allow_market_entries"))
         and dist_atr <= market_dist
         and (cfg.get("market_only_if_spread_ok", True) and sp_ok)
     )
-    would_limit = cfg.get("allow_limit_entries", True) and in_zone
+    # Fixed data-lab runs have one authoritative market-order producer. Even if
+    # a stale fast-mode preset says limit entries are allowed, never emit a
+    # limit decision under the profile's market-only contract.
+    would_limit = (
+        not market_only
+        and cfg.get("allow_limit_entries", True)
+        and in_zone
+    )
 
     if would_market:
         decision["action"] = "would_enter_market"

@@ -193,8 +193,10 @@ def evaluate_candidate(
     except Exception:
         regime_eff = {}
 
-    skip_below = float(cfg.get("skip_below_score") or 25)
-    min_score = float(cfg.get("min_policy_score") or 35)
+    # Explicit zero is meaningful for the data-lab all-strategy experiment;
+    # avoid ``or`` defaults turning min_policy_score=0 back into a hidden gate.
+    skip_below = float(cfg.get("skip_below_score", 25) or 0)
+    min_score = float(cfg.get("min_policy_score", 35) or 0)
     action = "execute"
     if score < skip_below:
         action = "skip"
@@ -225,8 +227,8 @@ def evaluate_candidate(
     # (2) Recent cold-streak circuit breaker: a symbol that lost its last N
     #     closes (win_rate < cold_wr) is skipped regardless of entry quality.
     #     Uses the last 20 closed trades already computed as `recent`.
-    cold_wr = float(cfg.get("recent_cold_skip_win_rate") or 20.0)
-    cold_n = int(cfg.get("recent_cold_skip_min_n") or 8)
+    cold_wr = float(cfg.get("recent_cold_skip_win_rate", 20.0) or 0)
+    cold_n = int(cfg.get("recent_cold_skip_min_n", 8) or 0)
     if int(recent.get("n", 0)) >= cold_n and float(recent.get("win_rate_pct", 50.0)) < cold_wr:
         action = "skip"
         reason_parts.append(
@@ -241,13 +243,17 @@ def evaluate_candidate(
         if edge:
             g_n = int(edge.get("total", 0))
             g_wr = float(edge.get("win_rate_pct", 50.0))
-            g_min_n = int(cfg.get("global_edge_cold_min_n") or 6)
-            g_wr_thresh = float(cfg.get("global_edge_cold_win_rate") or 20.0)
+            g_min_n = int(cfg.get("global_edge_cold_min_n", 6) or 0)
+            g_wr_thresh = float(cfg.get("global_edge_cold_win_rate", 20.0) or 0)
             if g_n >= g_min_n and g_wr < g_wr_thresh:
                 action = "skip"
                 reason_parts.append(f"global_edge_cold_{setup}_{g_wr:.0f}%/{g_n}")
 
     entry_type = _pick_entry_type(signal, feat, session_bias, score)
+    if bool(config.get("execution", {}).get("strategy_entries_market_only", False)) or bool(
+        config.get("trading", {}).get("strategy_entries_market_only", False)
+    ):
+        entry_type = "market"
     if action != "skip" and entry_type == "limit" and signal.get("within_reach") is False:
         action = "skip"
         reason_parts.append("limit_unreachable")
@@ -263,7 +269,6 @@ def evaluate_candidate(
                 r.startswith("symbol_blocklist:")
                 or r.startswith("setup_blocklist:")
                 or r.startswith("recent_cold_symbol_")
-                or r.startswith("global_edge_cold_")
                 for r in reason_parts
             )
             if not structural:
@@ -313,7 +318,27 @@ def evaluate_candidate(
         "tp1_r": mgmt.get("tp1_r"),
         "tp2_r": mgmt.get("tp2_r"),
     }
-    out["management_profile"] = mgmt
+    # Fixed-exit experiments deliberately ignore learned management recipes.
+    # Keep the recipe in the record for evaluation, but make the execution
+    # contract explicit so position management cannot arm BE/trailing on a
+    # fresh data-lab run.
+    if bool(config.get("execution", {}).get("fixed_exit_only", False)) or bool(
+        config.get("trading", {}).get("fixed_exit_only", False)
+    ):
+        mgmt = dict(mgmt)
+        mgmt.update({
+            "entry_type": "market",
+            "break_even_enabled": False,
+            "trailing_enabled": False,
+            "partial_tp_enabled": False,
+            "time_based_sl_enabled": False,
+            "experiment_exit_policy": "fixed_initial_sl_tp",
+        })
+        out["management_profile"] = mgmt
+        out["execution_policy"]["entry_type"] = "market"
+        out["execution_policy"]["fixed_exit_only"] = True
+    else:
+        out["management_profile"] = mgmt
     # Logged for trade_manager ghost experiments / later promotion.
     out["indicator_params"] = indicator_params
     if action == "skip":

@@ -782,7 +782,10 @@ def run_trade_manager_cycle(
 
     trades = closed_trades
     if trades is None:
-        pt = read_json_state("paper_trades.json", default={}) or {}
+        # Fallback: read the ACTIVE closed-trade ledger (mt5_trades.json in MT5
+        # mode), not a hardcoded paper_trades.json which is empty in MT5 mode.
+        from core.trade_history import trade_history_filename
+        pt = read_json_state(trade_history_filename(config), default={}) or {}
         trades = list(pt.get("trades") or []) if isinstance(pt, dict) else []
     # Score only recent tail for speed
     recent = list(trades)[-80:]

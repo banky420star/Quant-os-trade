@@ -15,6 +15,8 @@ try:
 except ImportError:
     mt5 = None  # type: ignore
 
+from core.mt5_owner import MT5Owner
+
 _COMMENT_SETUP_RE = re.compile(r"^qagent_(.+)$")
 
 
@@ -44,7 +46,7 @@ def fetch_mt5_agent_positions(
         raise RuntimeError("MetaTrader5 package not installed")
 
     magic = int(config.get("execution", {}).get("magic_number", 20250625))
-    positions = mt5.positions_get()
+    positions = MT5Owner.instance().positions_get()
     if not positions:
         return []
 

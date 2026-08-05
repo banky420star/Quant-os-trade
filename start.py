@@ -497,6 +497,17 @@ def start(once: bool = False, profile: str | None = None) -> None:
     finally:
         logger.info("Shutting down MT5 Quant OS…")
         supervisor.stop_all()
+        # Single-owner contract (2026-08-04): MT5Owner.shutdown() is the ONLY
+        # mt5.shutdown() in the process. Runs exactly once here, at app exit,
+        # after every service has stopped — so no worker is left holding a
+        # torn-down session.
+        try:
+            from core.mt5_owner import MT5Owner
+
+            MT5Owner.instance().shutdown()
+            logger.info("MT5Owner shut down (session released)")
+        except Exception as exc:
+            logger.debug("MT5Owner shutdown skipped: %s", exc)
         print("\n  MT5 Quant OS stopped.\n")
 
 

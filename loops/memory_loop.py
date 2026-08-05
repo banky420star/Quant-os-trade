@@ -14,6 +14,7 @@ from core.learning_health import assess_trade_learning
 from core.memory_engine import MemoryEngine
 from core.strategy_arena import arena_enabled, record_outcomes
 from core.trade_enrichment import enrich_trades
+from core.trade_history import trade_history_filename
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state
 
 
@@ -45,8 +46,8 @@ def _backfill_context(
     return out
 
 
-def _persist_enriched_trades(all_trades: list[dict], enriched_new: list[dict]) -> None:
-    """Write enriched context back onto paper_trades so culturing reads full cells."""
+def _persist_enriched_trades(all_trades: list[dict], enriched_new: list[dict], ledger: str = "paper_trades.json") -> None:
+    """Write enriched context back onto the active ledger so culturing reads full cells."""
     if not enriched_new:
         return
     by_id = {t.get("trade_id"): t for t in enriched_new if t.get("trade_id")}
@@ -54,7 +55,7 @@ def _persist_enriched_trades(all_trades: list[dict], enriched_new: list[dict]) -
     for t in all_trades:
         tid = t.get("trade_id")
         merged.append(by_id.get(tid, t) if tid in by_id else t)
-    write_json_state("paper_trades.json", {
+    write_json_state(ledger, {
         "timestamp": utc_now_iso(),
         "trades": merged,
         "last_enrichment": utc_now_iso(),
@@ -67,12 +68,20 @@ def run() -> dict:
     logger = setup_logger("memory_loop", "memory_loop.log")
     logger.info("Starting memory loop")
 
-    trades_data = read_json_state("paper_trades.json", default={"trades": []})
+    # 2026-08-04 — read the ACTIVE closed-trade ledger, not a hardcoded
+    # paper_trades.json. In MT5 mode (execution.mode=mt5, the growth/demo
+    # profile) closed trades live in mt5_trades.json and paper_trades.json
+    # is empty/stale, so the Memory tab (edge_scores.setup_stats.global)
+    # and the Research section (edge_database aggregates) never populated.
+    # Same plumbing gap that broke the daily tracker + calibration.
+    ledger = trade_history_filename(config)
+    orders_data = read_json_state("paper_orders.json", default={"orders": []})
+
+    trades_data = read_json_state(ledger, default={"trades": []})
     features = read_json_state("features.json", default={"symbols": {}})
     memory = read_json_state("memory.json", default={"records": [], "adjustments": []})
     edge_scores = read_json_state("edge_scores.json", default={"setups": {}})
     approved_data = read_json_state("approved_signals.json", default={"approved": []})
-    orders_data = read_json_state("paper_orders.json", default={"orders": []})
 
     trades = list(trades_data.get("trades", []))
     orders = orders_data.get("orders", [])
@@ -83,7 +92,7 @@ def run() -> dict:
         logger=logger,
     )
     if trades != trades_data.get("trades", []):
-        write_json_state("paper_trades.json", {
+        write_json_state(ledger, {
             "timestamp": utc_now_iso(),
             "trades": trades,
             "last_backfill": utc_now_iso(),
@@ -104,7 +113,7 @@ def run() -> dict:
     ) if raw_new else []
 
     if enriched_new:
-        _persist_enriched_trades(trades, enriched_new)
+        _persist_enriched_trades(trades, enriched_new, ledger=ledger)
         by_id = {t["trade_id"]: t for t in enriched_new}
         trades = [by_id.get(t.get("trade_id"), t) for t in trades]
 

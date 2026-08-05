@@ -83,6 +83,17 @@ def _json_safe_kelly(kelly: dict[str, Any] | None) -> dict[str, Any] | None:
     return safe
 
 
+class TradingRefusedError(RuntimeError):
+    """Permanent trading refusal (config/account/terminal state mismatch).
+
+    Distinguished from transient connection failures (e.g. -10004 "No IPC
+    connection") so consumers can decide whether retrying is meaningful: a
+    refusal will not clear by retrying — it requires an operator/config/
+    account change. execution_loop must NOT requeue intents on this error
+    (that would livelock: drain -> refuse -> requeue forever).
+    """
+
+
 class MT5Broker:
     """Execute approved signals via mt5.order_send(). Requires verifier approval."""
 
@@ -138,7 +149,7 @@ class MT5Broker:
         so the lock guarantees a single mutator at a time.
         """
         if mt5 is None:
-            raise RuntimeError("MetaTrader5 package not installed")
+            raise TradingRefusedError("MetaTrader5 package not installed")
         if MT5TerminalManager is None:
             return self._process_approved_signals_unsafe(
                 approved, existing_orders, existing_trades,
@@ -384,25 +395,49 @@ class MT5Broker:
         is_demo = trade_mode == 0
 
         if not self.exec_cfg.get("mt5_trading_enabled", False):
-            raise RuntimeError("MT5 trading disabled — set execution.mt5_trading_enabled: true")
+            raise TradingRefusedError("MT5 trading disabled — set execution.mt5_trading_enabled: true")
 
         if expected == "demo" and not is_demo:
             if not self.exec_cfg.get("allow_live_account", False):
-                raise RuntimeError(
+                raise TradingRefusedError(
                     "Refusing to trade on non-demo account. "
                     "Set execution.allow_live_account: true to override (real money risk)."
                 )
             self.logger.warning("Trading on LIVE account — real money at risk")
 
+        # 2026-08-04 — the reverse guard: config says real/live but the attached
+        # MT5 account is a demo trial. Previously this combination silently
+        # proceeded and the "LIVE on real" banner was a lie while orders went to
+        # a demo account. Refuse unless the operator explicitly opts into demo
+        # orders under a live profile (execution.allow_demo_when_live_config).
+        if expected in ("real", "live") and is_demo:
+            if not self.exec_cfg.get("allow_demo_when_live_config", False):
+                raise TradingRefusedError(
+                    "Config mt5.account_mode=%r but the connected MT5 account "
+                    "is DEMO (login=%s server=%s). Refusing to trade — the live "
+                    "profile is attached to a demo account. Log the real account "
+                    "into the terminal, set mt5.account_mode: demo, or set "
+                    "execution.allow_demo_when_live_config: true to trade demo "
+                    "orders under this profile." % (
+                        expected, getattr(account, "login", "?"),
+                        getattr(account, "server", "?"),
+                    )
+                )
+            self.logger.warning(
+                "account_mode=%r but connected account is DEMO — trading demo "
+                "orders under execution.allow_demo_when_live_config override",
+                expected,
+            )
+
         terminal = mt5.terminal_info()
         if terminal and not terminal.trade_allowed:
-            raise RuntimeError(
+            raise TradingRefusedError(
                 "MT5 Algo Trading is OFF — enable the 'Algo Trading' button in the toolbar "
                 "and uncheck 'Disable algorithmic trading via external Python API' in "
                 "Tools -> Options -> Expert Advisors"
             )
         if not account.trade_allowed:
-            raise RuntimeError("MT5 account trade_allowed=False — check broker/account permissions")
+            raise TradingRefusedError("MT5 account trade_allowed=False — check broker/account permissions")
 
     def _place_order(
         self,
@@ -410,6 +445,10 @@ class MT5Broker:
         account: Any,
         open_positions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Never let downstream evaluation recipes re-enable pending entries in
+        # the fixed-exit data-lab experiment. Work on a copy so the evaluated
+        # signal ledger remains an honest record of the original candidate.
+        signal = dict(signal)
         logical_sym = signal["symbol"]
         symbol = broker_symbol(logical_sym)
         side = signal["side"]
@@ -422,20 +461,38 @@ class MT5Broker:
         if info is None or tick is None:
             return {"success": False, "error": f"no symbol info: {mt5.last_error()}"}
 
+        market_only = bool(
+            self.exec_cfg.get("strategy_entries_market_only", False)
+            or (self.config.get("trading") or {}).get("strategy_entries_market_only", False)
+        )
+        fixed_exit_only = bool(
+            self.exec_cfg.get("fixed_exit_only", False)
+            or (self.config.get("trading") or {}).get("fixed_exit_only", False)
+        )
+        if market_only:
+            signal["entry_mode"] = "market"
+            signal["order_type"] = "market"
+
+        sl = float(signal["sl"])
+        if fixed_exit_only:
+            # A fixed experiment has one broker TP, not a hidden TP2 runner.
+            signal["tp2"] = signal.get("tp1")
         volume = self._calc_volume(signal, account, info, open_positions or [])
         if volume <= 0:
             return {"success": False, "error": "exposure_limit_exceeded"}
 
-        sl = float(signal["sl"])
         # 2026-07-21 partial-TP fix: broker pre-empts the bot's
         # partial TP at TP1 if we send TP1 as limit here. Send TP2
         # so the bot can partial-close 50% at TP1, then the broker
         # fires the remaining 50% at TP2 — exactly the partial-TP
         # semantics. Falls back to TP1 if signal lacks tp2.
-        tp = float(signal.get("tp2") or signal.get("tp1") or 0)
+        tp = float(
+            signal.get("tp1") if fixed_exit_only
+            else (signal.get("tp2") or signal.get("tp1") or 0)
+        )
         filling = self._filling_mode(info)
         strategy_entry = float(signal.get("entry", 0))
-        use_strategy = strategy_entries_enabled(self.config)
+        use_strategy = strategy_entries_enabled(self.config) and not market_only
         entry_mode = signal.get("entry_mode", "market")
         bid = float(tick.bid)
         ask = float(tick.ask)
@@ -496,6 +553,31 @@ class MT5Broker:
                 "type_filling": filling,
             }
 
+        # MT5 rejects SL/TP levels inside the symbol's stops/freeze distance
+        # with retcode 10016. Normalize them before order_check/order_send so
+        # the fixed-exit experiment produces broker-valid TP/SL orders instead
+        # of silently losing candidate executions.
+        normalized = self._normalize_order_levels(
+            request,
+            side=side,
+            info=info,
+            bid=bid,
+            ask=ask,
+            pending=is_pending,
+        )
+        signal["sl"] = normalized["sl"]
+        signal["tp1"] = normalized["tp"]
+        signal["tp2"] = normalized["tp"] if fixed_exit_only else signal.get("tp2")
+        request["sl"] = normalized["sl"]
+        request["tp"] = normalized["tp"]
+        # Re-size against the broker-valid stop distance. Widening an invalid
+        # stop after sizing would otherwise make the actual loss exceed Kelly's
+        # requested budget.
+        volume = self._calc_volume(signal, account, info, open_positions or [])
+        if volume <= 0:
+            return {"success": False, "error": "exposure_limit_exceeded", "sl": normalized["sl"], "tp": normalized["tp"]}
+        request["volume"] = volume
+
         # ----- None-safe margin pre-check (2026-07-29) -----
         # mt5.order_calc_margin returns None on error (not zero). When it
         # returns 0.0, that is NOT automatically a failure — unusual leverage,
@@ -551,6 +633,8 @@ class MT5Broker:
                 "order_kind": order_kind,
                 "pending": is_pending,
                 "requested_price": requested_price,
+                "sl": normalized["sl"],
+                "tp": normalized["tp"],
             }
 
         return {
@@ -564,7 +648,31 @@ class MT5Broker:
             "order_kind": order_kind,
             "pending": is_pending,
             "requested_price": requested_price,
+            "sl": normalized["sl"],
+            "tp": normalized["tp"],
         }
+
+    def _symbol_specs_for_positions(
+        self, open_positions: list[dict[str, Any]]
+    ) -> dict[str, dict[str, float]]:
+        """Build {logical_symbol: spec} for every symbol with an open position.
+
+        2026-08-03 — mirrors the verifier's fix: without the full spec map,
+        open positions on OTHER symbols fall back to price×lot notional
+        (a 0.25-lot US30m open counts ~$13,301) inside the exposure cap,
+        so every new index-CFD candidate is rejected with
+        exposure_limit_exceeded / exposure_cap_below_min_lot. Forwarding
+        real MT5 specs lets exposure measure SL-risk USD account-wide.
+        """
+        specs: dict[str, dict[str, float]] = {}
+        for pos in open_positions or []:
+            sym = pos.get("symbol")
+            if not sym or sym in specs:
+                continue
+            info = mt5.symbol_info(broker_symbol(sym))
+            if info is not None:
+                specs[sym] = symbol_spec_from_mt5(info)
+        return specs
 
     def _calc_volume(
         self,
@@ -580,6 +688,7 @@ class MT5Broker:
             config=self.config,
             symbol_spec=symbol_spec_from_mt5(info),
             open_positions=open_positions,
+            symbol_specs=self._symbol_specs_for_positions(open_positions),
             stamp_kelly=True,
         )
         if vol <= 0 and details.get("reject_reason") == "min_lot_stop_risk_exceeds_cap":
@@ -590,6 +699,56 @@ class MT5Broker:
                 float(details.get("risk_cap_usd", 0)),
             )
         return vol
+
+    def _normalize_order_levels(
+        self,
+        request: dict[str, Any],
+        *,
+        side: str,
+        info: Any,
+        bid: float,
+        ask: float,
+        pending: bool,
+    ) -> dict[str, float]:
+        """Return broker-valid SL/TP levels for a market or pending request.
+
+        Exness symbols sometimes report a zero stops level, so use the larger
+        of stops_level, freeze_level, spread, and a small 2-point fallback.
+        Levels are moved farther from market/entry, never closer. This preserves
+        the fixed TP/SL experiment while preventing avoidable MT5 10016 rejects.
+        """
+        point = float(getattr(info, "point", 0) or 0)
+        if point <= 0:
+            return {"sl": float(request.get("sl") or 0), "tp": float(request.get("tp") or 0)}
+        stops = int(getattr(info, "trade_stops_level", 0) or 0)
+        freeze = int(getattr(info, "trade_freeze_level", 0) or 0)
+        spread = max(0, int(round(abs(ask - bid) / point)))
+        min_dist = max(point * 2.0, stops * point, freeze * point, spread * point)
+        digits = int(getattr(info, "digits", 5) or 5)
+        ref = float(request.get("price") or (ask if side == "BUY" else bid))
+        sl = float(request.get("sl") or 0)
+        tp = float(request.get("tp") or 0)
+
+        # For pending orders, both levels are measured from the requested entry;
+        # for market orders MT5 applies bid/ask side-specific validation.
+        if pending:
+            sl_ref = tp_ref = ref
+        elif side == "BUY":
+            sl_ref, tp_ref = bid, ask
+        else:
+            sl_ref, tp_ref = ask, bid
+
+        if side == "BUY":
+            if sl > 0:
+                sl = min(sl, sl_ref - min_dist)
+            if tp > 0:
+                tp = max(tp, tp_ref + min_dist)
+        else:
+            if sl > 0:
+                sl = max(sl, sl_ref + min_dist)
+            if tp > 0:
+                tp = min(tp, tp_ref - min_dist)
+        return {"sl": round(sl, digits), "tp": round(tp, digits)}
 
     def _normalize_volume(self, volume: float, info: Any) -> float:
         step = float(info.volume_step or 0.01)
@@ -731,6 +890,12 @@ class MT5Broker:
         order_type = str(result.get("order_kind") or signal.get("entry_mode") or "market")
         is_pending = bool(result.get("pending"))
         status = "pending" if result.get("success") and is_pending else ("filled" if result.get("success") else "failed")
+        effective_signal = dict(signal)
+        if result.get("sl") is not None:
+            effective_signal["sl"] = result["sl"]
+        if result.get("tp") is not None:
+            effective_signal["tp1"] = result["tp"]
+            effective_signal["tp2"] = result["tp"] if self.exec_cfg.get("fixed_exit_only") else signal.get("tp2")
         return {
             "order_id": str(uuid.uuid4()),
             "signal_id": signal["signal_id"],
@@ -738,13 +903,13 @@ class MT5Broker:
             "side": signal["side"],
             "type": order_type,
             "entry": signal["entry"],
-            "sl": signal["sl"],
-            "tp1": signal["tp1"],
-            "tp2": signal.get("tp2"),
+            "sl": effective_signal["sl"],
+            "tp1": effective_signal["tp1"],
+            "tp2": effective_signal.get("tp2"),
             "setup_type": signal.get("setup_type"),
             "reason": signal.get("reason"),
             "signal_meta": snapshot_signal_meta(
-                signal,
+                effective_signal,
                 features_at_entry=features_at_entry,
                 kelly=_json_safe_kelly(signal.get("kelly")),
             ),

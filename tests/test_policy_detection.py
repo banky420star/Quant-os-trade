@@ -221,6 +221,8 @@ def test_policy_scores_sqlite_roundtrip(tmp_path: Path) -> None:
 
 def test_policy_detection_loop_writes_json(tmp_path: Path, monkeypatch, growth_profile):
     from core import utils
+    from core.trade_history import trade_history_filename
+    from core.utils import load_config
     from loops import policy_detection_loop
 
     state_dir = tmp_path / "state"
@@ -231,7 +233,7 @@ def test_policy_detection_loop_writes_json(tmp_path: Path, monkeypatch, growth_p
         json.dumps({"symbols": {"XAUUSDm": {"atr": 4.0, "volume_ratio": 1.0}}}),
         encoding="utf-8",
     )
-    (state_dir / "paper_trades.json").write_text(
+    (state_dir / trade_history_filename(load_config())).write_text(
         json.dumps({"trades": [_sample_trade()]}),
         encoding="utf-8",
     )

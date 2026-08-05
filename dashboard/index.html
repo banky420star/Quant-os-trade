@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -153,6 +153,17 @@
       font-size: 11px; color: var(--orange); margin-top: 4px;
       min-height: 18px; text-align: center;
     }
+    .profile-manager-card { border-color: rgba(41,151,255,.18); }
+    .profile-manager-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 12px; }
+    .profile-option { display: flex; flex-direction: column; gap: 8px; padding: 13px; border: 1px solid var(--border); border-radius: 11px; background: rgba(255,255,255,.025); transition: border-color .15s, background .15s, transform .15s; }
+    .profile-option:hover { border-color: rgba(41,151,255,.45); background: rgba(41,151,255,.06); transform: translateY(-1px); }
+    .profile-option.active { border-color: rgba(50,215,75,.5); background: rgba(50,215,75,.07); box-shadow: 0 0 0 1px rgba(50,215,75,.08); }
+    .profile-option-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .profile-option-name { font-size: 14px; font-weight: 700; }
+    .profile-option-description { color: var(--muted); line-height: 1.45; min-height: 34px; }
+    .profile-option-meta { color: var(--muted2); font-size: 10px; line-height: 1.4; }
+    .profile-option .btn { align-self: flex-start; padding: 7px 11px; font-size: 11px; }
+    @media (max-width: 640px) { .profile-manager-grid { grid-template-columns: 1fr; } }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes pulse-core { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
     @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
@@ -192,6 +203,18 @@
       white-space: nowrap;
     }
     .topbar-link:hover { color: var(--text); border-color: var(--accent); }
+    .kill-switch-btn {
+      border: 1px solid rgba(255,69,58,.45); border-radius: 7px; padding: 7px 11px;
+      background: rgba(255,69,58,.12); color: #ffb4af; cursor: pointer;
+      font: 700 11px/1 inherit; letter-spacing: .04em; white-space: nowrap;
+      transition: background .15s, border-color .15s, color .15s, transform .1s;
+    }
+    .kill-switch-btn:hover { background: rgba(255,69,58,.22); border-color: var(--red); color: #fff; }
+    .kill-switch-btn:active { transform: scale(.97); }
+    .kill-switch-btn.on { background: rgba(255,69,58,.28); border-color: var(--red); color: #fff; }
+    .kill-switch-btn.off { border-color: rgba(50,215,75,.45); background: rgba(50,215,75,.16); color: #8ae99a; box-shadow: 0 0 0 1px rgba(50,215,75,.08), 0 0 14px rgba(50,215,75,.12); }
+    .kill-switch-btn:disabled { opacity: .5; cursor: wait; }
+    .kill-switch-status { font-size: 10px; color: var(--muted2); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .status-pill {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;
@@ -1111,6 +1134,129 @@
       .ae-red { color: var(--red); }
       .ae-warn { color: var(--orange); font-weight: 600; }
     }
+
+    /* ===================== TradingPerformanceChart panel ===================== */
+    .performance-panel {
+      display: grid;
+      gap: 18px;
+      width: 100%;
+      color: var(--text-main, #f5f5f7);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .performance-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+    .performance-header h2, .trade-history-header h3 { margin: 4px 0 0; font-size: 22px; font-weight: 650; letter-spacing: -0.03em; color: var(--text, #f5f5f7); }
+    .performance-eyebrow { color: var(--muted2, #98989d); font-size: 11px; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; }
+    .performance-header-actions { display: flex; align-items: center; gap: 12px; }
+    .chart-status {
+      display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px;
+      border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 999px;
+      background: var(--surface2, #17181d); color: var(--muted2, #98989d); font-size: 12px; font-weight: 600;
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #41d98d; box-shadow: 0 0 0 5px rgba(65,217,141,0.1); }
+    .chart-status.degraded .status-dot { background: #ffbb55; box-shadow: 0 0 0 5px rgba(255,187,85,0.1); }
+    .chart-status.halted .status-dot { background: #ff6174; box-shadow: 0 0 0 5px rgba(255,97,116,0.1); }
+    .range-selector { display: flex; padding: 3px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 10px; background: var(--surface2, #17181d); }
+    .range-selector button {
+      min-width: 42px; height: 29px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent;
+      color: var(--muted2, #98989d); cursor: pointer; font: inherit; font-size: 11px; font-weight: 700;
+      transition: background 140ms ease, color 140ms ease;
+    }
+    .range-selector button:hover { color: var(--text, #f5f5f7); }
+    .range-selector button.active { background: rgba(94,161,255,0.14); color: #85baff; }
+    .performance-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .stat-card, .chart-card, .trade-history-card {
+      border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0)), var(--surface, #111216);
+      box-shadow: 0 18px 50px rgba(0,0,0,0.28);
+    }
+    .stat-card { display: flex; min-height: 112px; flex-direction: column; justify-content: center; padding: 16px; }
+    .stat-label { color: var(--muted2, #98989d); font-size: 12px; font-weight: 600; }
+    .stat-value { margin-top: 7px; color: var(--text, #f5f5f7); font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 680; letter-spacing: -0.035em; }
+    .stat-value.positive { color: #41d98d; }
+    .stat-value.negative { color: #ff6174; }
+    .stat-subtext { margin-top: 5px; color: var(--muted2, #696b73); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .chart-card { padding: 16px; }
+    .chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+    .performance-panel .chart-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: var(--muted2, #98989d); font-size: 12px; margin-top: 0; }
+    .performance-panel .chart-legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-line { display: inline-block; width: 18px; height: 2px; border-radius: 99px; }
+    .legend-balance { background: #8b8f99; }
+    .legend-equity { background: #5ea1ff; }
+    .legend-marker { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+    .legend-win { background: #41d98d; }
+    .legend-loss { background: #ff6174; }
+    .chart-live-badge, .trade-count-badge {
+      flex: 0 0 auto; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 999px;
+      background: var(--surface2, #17181d); color: var(--muted2, #98989d); font-size: 11px; font-weight: 600;
+    }
+    .chart-live-badge { padding: 7px 10px; }
+    .performance-panel .chart-wrap {
+      position: relative; width: 100%; height: 460px; overflow: hidden;
+      border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 13px;
+      background: radial-gradient(circle at 50% 0%, rgba(94,161,255,0.04), transparent 44%), #0f1014;
+    }
+    .performance-panel .chart-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+    .performance-panel .chart-overlay { z-index: 2; cursor: crosshair; touch-action: none; pointer-events: auto; }
+    /* The legacy ID rules (#equityChart { height: 460px }, mobile 200px,
+       #equityChartFull { height: calc(100vh - 220px) }) target the same
+       canvases; override them so the new panels control sizing. */
+    #equityChart, #equityChartOverlay, #equityChartFull, #equityChartOverlayFull { height: 100% !important; min-height: 0 !important; }
+    /* Full-screen equity view variant — taller chart so it fills the viewport. */
+    .performance-panel-full .chart-wrap { height: calc(100vh - 380px); min-height: 460px; }
+    @media (max-width: 720px) {
+      .performance-panel-full .chart-wrap { height: 320px; min-height: 0; }
+      .performance-panel-full .drawdown-wrap { height: 110px; }
+    }
+    .performance-panel .chart-live-badge { position: static; right: auto; top: auto; }
+    .performance-panel .chart-tooltip {
+      position: absolute; z-index: 4; width: 220px; pointer-events: none; padding: 12px;
+      border: 1px solid rgba(255,255,255,0.11); border-radius: 11px; background: rgba(20,21,26,0.97);
+      box-shadow: 0 16px 38px rgba(0,0,0,0.42); color: var(--text, #f5f5f7); font-size: 12px; line-height: 1.55;
+      backdrop-filter: blur(12px);
+    }
+    .tooltip-time { margin-bottom: 7px; color: var(--text, #f5f5f7); font-size: 12px; font-weight: 700; }
+    .tooltip-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .tooltip-row span:first-child { color: var(--muted2, #98989d); }
+    .tooltip-divider { height: 1px; margin: 8px 0; background: var(--border, rgba(255,255,255,0.08)); }
+    .tooltip-positive { color: #41d98d; }
+    .tooltip-negative { color: #ff6174; }
+    .chart-empty-state { position: absolute; z-index: 1; inset: 0; display: none; place-items: center; color: var(--muted2, #98989d); font-size: 13px; }
+    .drawdown-heading { display: flex; align-items: center; justify-content: space-between; margin: 15px 4px 8px; color: var(--muted2, #98989d); font-size: 11px; font-weight: 600; }
+    .drawdown-wrap { width: 100%; height: 145px; overflow: hidden; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 12px; background: #0f1014; }
+    .drawdown-wrap canvas { display: block; width: 100%; height: 100%; }
+    .trade-history-card { overflow: hidden; }
+    .trade-history-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
+    .trade-history-header h3 { font-size: 18px; }
+    .trade-count-badge { padding: 7px 11px; }
+    .trade-table-wrap { overflow-x: auto; }
+    .trade-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .trade-table th, .trade-table td { padding: 13px 16px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); text-align: left; white-space: nowrap; }
+    .trade-table th { color: var(--muted2, #98989d); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .trade-table td { color: #d8d8dc; }
+    .trade-table tbody tr:last-child td { border-bottom: 0; }
+    .trade-table tbody tr:hover { background: rgba(255,255,255,0.018); }
+    .trade-result-win { color: #41d98d !important; font-weight: 700; }
+    .trade-result-loss { color: #ff6174 !important; font-weight: 700; }
+    .trade-side { display: inline-flex; min-width: 43px; justify-content: center; padding: 4px 7px; border-radius: 6px; background: rgba(255,255,255,0.05); color: var(--muted2, #98989d); font-size: 10px; font-weight: 700; }
+    .table-empty { height: 90px; color: var(--muted2, #98989d) !important; text-align: center !important; }
+    @media (max-width: 1100px) {
+      .performance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .performance-header, .performance-header-actions, .chart-toolbar { align-items: flex-start; flex-direction: column; }
+      .performance-header-actions { width: 100%; }
+      .range-selector { width: 100%; }
+      .range-selector button { flex: 1; }
+      .performance-stats { grid-template-columns: 1fr 1fr; }
+      .performance-panel .chart-wrap { height: 360px; }
+      .performance-panel .chart-legend { gap: 10px; }
+    }
+    @media (max-width: 480px) {
+      .performance-stats { grid-template-columns: 1fr; }
+      .chart-card { padding: 10px; }
+      .performance-panel .chart-wrap { height: 320px; }
+      .stat-card { min-height: 94px; }
+    }
   </style>
 </head>
 <body>
@@ -1318,6 +1464,9 @@
       <span class="status-pill" id="osStatus"><span class="dot"></span> Listening</span>
     </div>
     <div class="topbar-stats" id="topStats"></div>
+    <div class="topbar-stats" id="liveTradesStrip" style="gap:14px;font-size:12px;min-width:0;flex:1;overflow:hidden;white-space:nowrap"></div>
+    <span class="kill-switch-status" id="killSwitchStatus" aria-live="polite"></span>
+    <button type="button" class="kill-switch-btn" id="killSwitchBtn" title="Stop new trading immediately">STOP TRADING</button>
     <a href="#" class="topbar-link" id="resetSessionLink" title="Clear kill switch, daily baselines, and learned memory">Reset state</a>
   </header>
 
@@ -1330,6 +1479,7 @@
       <button class="nav-item" data-view="equity">📈 Equity</button>
       <button class="nav-item" data-view="research">⚗ Research</button>
       <button class="nav-item" data-view="memory">🧠 Memory</button>
+      <button class="nav-item" data-view="strategies">🧩 Strategies</button>
       <button class="nav-item" data-view="replay">▶ Replay</button>
       <button class="nav-item" data-view="trades">🗒 Trade Log</button>
       <button class="nav-item" data-view="logs">≡ Logs</button>
@@ -1349,40 +1499,121 @@
           <div class="mobile-summary" id="mobileSummary"></div>
           <div class="mobile-symbols" id="mobileSymbols"></div>
           <div class="trade-alert" id="tradeAlert"></div>
-          <div class="card equity-hero mobile-hide" id="equityHeroCard">
-            <div class="equity-hero-head">
+          <section class="performance-panel mobile-hide" id="equityHeroCard" aria-label="Account performance">
+            <header class="performance-header">
               <div>
-                <div class="card-title">Equity Curve</div>
-                <div class="equity-hero-sub" id="equityRangeLabel">Live account equity · select timeframe</div>
+                <div class="performance-eyebrow">ACCOUNT PERFORMANCE</div>
+                <h2>Equity, balance and drawdown</h2>
               </div>
-              <div class="equity-headline-kpis" id="equityHeadlineKpis"></div>
-              <div class="chart-range-bar" id="chartRangeBar">
-                <button type="button" class="chart-range-btn" data-range="1m">1m</button>
-                <button type="button" class="chart-range-btn" data-range="15m">15m</button>
-                <button type="button" class="chart-range-btn" data-range="1h">1h</button>
-                <button type="button" class="chart-range-btn" data-range="4h">4h</button>
-                <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
-                <button type="button" class="chart-range-btn" data-range="7d">7d</button>
-                <button type="button" class="chart-range-btn" data-range="30d">30d</button>
-                <button type="button" class="chart-range-btn" data-range="all">All</button>
+              <div class="performance-header-actions">
+                <div class="chart-status" id="performanceStatus">
+                  <span class="status-dot"></span>
+                  Live
+                </div>                    <div class="range-selector" aria-label="Chart time range">
+                      <button type="button" data-range="15m" class="active">15M</button>
+                      <button type="button" data-range="1h">1H</button>
+                      <button type="button" data-range="4h">4H</button>
+                      <button type="button" data-range="1d">1D</button>
+                      <button type="button" data-range="7d">7D</button>
+                      <button type="button" data-range="30d">30D</button>
+                      <button type="button" data-range="all">ALL</button>
+                    </div>
+              </div>
+            </header>
+            <div class="performance-stats">
+              <article class="stat-card">
+                <span class="stat-label">Balance</span>
+                <strong class="stat-value" id="statBalance">$0.00</strong>
+                <span class="stat-subtext">Realized account value</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Equity</span>
+                <strong class="stat-value" id="statEquity">$0.00</strong>
+                <span class="stat-subtext">Including open positions</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Floating P&amp;L</span>
+                <strong class="stat-value" id="statFloating">$0.00</strong>
+                <span class="stat-subtext" id="statFloatingPct">0.00%</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Current drawdown</span>
+                <strong class="stat-value negative" id="statDrawdown">0.00%</strong>
+                <span class="stat-subtext" id="statDrawdownUsd">$0.00</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Maximum drawdown</span>
+                <strong class="stat-value negative" id="statMaxDrawdown">0.00%</strong>
+                <span class="stat-subtext" id="statMaxDrawdownUsd">$0.00</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Win rate</span>
+                <strong class="stat-value" id="statWinRate">0.0%</strong>
+                <span class="stat-subtext" id="statWinLoss">0 wins / 0 losses</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Profit factor</span>
+                <strong class="stat-value" id="statProfitFactor">N/A</strong>
+                <span class="stat-subtext">Gross wins / gross losses</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-label">Expectancy</span>
+                <strong class="stat-value" id="statExpectancy">$0.00</strong>
+                <span class="stat-subtext">Average result per trade</span>
+              </article>
+            </div>
+            <div class="chart-card">
+              <div class="chart-toolbar">
+                <div class="chart-legend">
+                  <span><i class="legend-line legend-balance"></i> Balance</span>
+                  <span><i class="legend-line legend-equity"></i> Equity</span>
+                  <span><i class="legend-marker legend-win"></i> Win</span>
+                  <span><i class="legend-marker legend-loss"></i> Loss</span>
+                </div>
+                <div class="chart-live-badge" id="chartLiveBadge">0 points</div>
+              </div>
+              <div class="chart-wrap">
+                <canvas id="equityChart" class="chart-canvas" aria-label="Balance and equity chart"></canvas>
+                <canvas id="equityChartOverlay" class="chart-overlay chart-canvas" aria-label="Interactive chart overlay"></canvas>
+                <div class="chart-tooltip" id="chartTooltip" role="tooltip" style="display:none"></div>
+                <div class="chart-empty-state" id="chartEmptyState">Waiting for account performance data</div>
+              </div>
+              <div class="drawdown-heading">
+                <span>Drawdown</span>
+                <span id="drawdownSummary">Maximum: 0.00%</span>
+              </div>
+              <div class="drawdown-wrap">
+                <canvas id="drawdownChart" aria-label="Account drawdown chart"></canvas>
               </div>
             </div>
-            <div class="chart-wrap">
-              <canvas id="equityChart" class="chart-canvas"></canvas>
-              <canvas id="equityChartOverlay" class="chart-overlay chart-canvas"></canvas>
-              <div class="chart-live-badge" id="chartLiveBadge"></div>
-              <div class="chart-tooltip" id="chartTooltip"></div>
+            <div class="trade-history-card">
+              <div class="trade-history-header">
+                <div>
+                  <div class="performance-eyebrow">TRADE RESULTS</div>
+                  <h3>Recent wins and losses</h3>
+                </div>
+                <span id="tradeCountBadge" class="trade-count-badge">0 trades</span>
+              </div>
+              <div class="trade-table-wrap">
+                <table class="trade-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Symbol</th>
+                      <th>Side</th>
+                      <th>Result</th>
+                      <th>R multiple</th>
+                      <th>Fill drift</th>
+                      <th>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recentTradesBody">
+                    <tr><td colspan="7" class="table-empty">No completed trades available</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div class="chart-legend">
-              <span><i style="background:#0a84ff"></i> Equity</span>
-              <span><i style="background:#98989d;opacity:.8"></i> Balance</span>
-              <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized</span>
-              <span><i style="background:#30d158;height:8px;width:8px;border-radius:50%"></i> Win close</span>
-              <span><i style="background:#ff453a;height:8px;width:8px;border-radius:50%"></i> Loss close</span>
-              <span><i style="background:rgba(255,69,58,.22);height:12px"></i> Drawdown fill</span>
-            </div>
-            <div class="chart-stats-grid" id="chartStats"></div>
-          </div>
+          </section>
           <div class="card hero-card" id="heroCard"></div>
           <div class="kpi-row" id="kpiRow"></div>
           <div class="card daily-pnl-card" id="dailyPnlCard" style="display:none">
@@ -1501,7 +1732,7 @@
           </div>
         </div>
 
-        <!-- EQUITY VIEW -->
+        <!-- EQUITY VIEW (full-screen performance panel — same engine as main chart) -->
         <div class="view" id="view-equity">
           <div class="equity-view-wrap">
             <div class="card equity-hero">
@@ -1511,32 +1742,123 @@
                   <div class="equity-hero-sub" id="equityRangeLabelFull">Full-screen equity curve with trade markers</div>
                 </div>
                 <div class="equity-headline-kpis" id="equityHeadlineKpisFull"></div>
-                <div class="chart-range-bar" id="chartRangeBarFull">
-                  <button type="button" class="chart-range-btn" data-range="1m">1m</button>
-                  <button type="button" class="chart-range-btn" data-range="15m">15m</button>
-                  <button type="button" class="chart-range-btn" data-range="1h">1h</button>
-                  <button type="button" class="chart-range-btn" data-range="4h">4h</button>
-                  <button type="button" class="chart-range-btn active" data-range="1d">1d</button>
-                  <button type="button" class="chart-range-btn" data-range="7d">7d</button>
-                  <button type="button" class="chart-range-btn" data-range="30d">30d</button>
-                  <button type="button" class="chart-range-btn" data-range="all">All</button>
+              </div>
+              <section class="performance-panel performance-panel-full" id="performancePanelFull">
+                <header class="performance-header">
+                  <div>
+                    <div class="performance-eyebrow">ACCOUNT PERFORMANCE</div>
+                    <h2>Equity, balance and drawdown</h2>
+                  </div>
+                  <div class="performance-header-actions">
+                    <div class="chart-status" id="performanceStatusFull">
+                      <span class="status-dot"></span>
+                      Live
+                    </div>
+                    <div class="range-selector" aria-label="Chart time range">
+                      <button type="button" data-range="15m">15M</button>
+                      <button type="button" data-range="1h">1H</button>
+                      <button type="button" data-range="4h">4H</button>
+                      <button type="button" data-range="1d" class="active">1D</button>
+                      <button type="button" data-range="7d">7D</button>
+                      <button type="button" data-range="30d">30D</button>
+                      <button type="button" data-range="all">ALL</button>
+                    </div>
+                  </div>
+                </header>
+                <div class="performance-stats">
+                  <article class="stat-card">
+                    <span class="stat-label">Balance</span>
+                    <strong class="stat-value" id="statBalanceFull">$0.00</strong>
+                    <span class="stat-subtext">Realized account value</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Equity</span>
+                    <strong class="stat-value" id="statEquityFull">$0.00</strong>
+                    <span class="stat-subtext">Including open positions</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Floating P&amp;L</span>
+                    <strong class="stat-value" id="statFloatingFull">$0.00</strong>
+                    <span class="stat-subtext" id="statFloatingPctFull">0.00%</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Current drawdown</span>
+                    <strong class="stat-value negative" id="statDrawdownFull">0.00%</strong>
+                    <span class="stat-subtext" id="statDrawdownUsdFull">$0.00</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Maximum drawdown</span>
+                    <strong class="stat-value negative" id="statMaxDrawdownFull">0.00%</strong>
+                    <span class="stat-subtext" id="statMaxDrawdownUsdFull">$0.00</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Win rate</span>
+                    <strong class="stat-value" id="statWinRateFull">0.0%</strong>
+                    <span class="stat-subtext" id="statWinLossFull">0 wins / 0 losses</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Profit factor</span>
+                    <strong class="stat-value" id="statProfitFactorFull">N/A</strong>
+                    <span class="stat-subtext">Gross wins / gross losses</span>
+                  </article>
+                  <article class="stat-card">
+                    <span class="stat-label">Expectancy</span>
+                    <strong class="stat-value" id="statExpectancyFull">$0.00</strong>
+                    <span class="stat-subtext">Average result per trade</span>
+                  </article>
                 </div>
-              </div>
-              <div class="chart-wrap">
-                <canvas id="equityChartFull" class="chart-canvas"></canvas>
-                <canvas id="equityChartOverlayFull" class="chart-overlay chart-canvas"></canvas>
-                <div class="chart-live-badge" id="chartLiveBadgeFull"></div>
-                <div class="chart-tooltip" id="chartTooltipFull"></div>
-              </div>
-              <div class="chart-legend">
-                <span><i style="background:#0a84ff"></i> Equity</span>
-                <span><i style="background:#98989d;opacity:.8"></i> Balance</span>
-                <span><i style="background:rgba(48,209,88,.35)"></i> Unrealized gap</span>
-                <span><i style="background:#30d158;height:8px;width:8px;border-radius:50%"></i> Win</span>
-                <span><i style="background:#ff453a;height:8px;width:8px;border-radius:50%"></i> Loss</span>
-                <span><i style="background:rgba(255,69,58,.22);height:12px"></i> Drawdown fill</span>
-              </div>
-              <div class="chart-stats-grid" id="chartStatsFull"></div>
+                <div class="chart-card">
+                  <div class="chart-toolbar">
+                    <div class="chart-legend">
+                      <span><i class="legend-line legend-balance"></i> Balance</span>
+                      <span><i class="legend-line legend-equity"></i> Equity</span>
+                      <span><i class="legend-marker legend-win"></i> Win</span>
+                      <span><i class="legend-marker legend-loss"></i> Loss</span>
+                    </div>
+                    <div class="chart-live-badge" id="chartLiveBadgeFull">0 points</div>
+                  </div>
+                  <div class="chart-wrap">
+                    <canvas id="equityChartFull" class="chart-canvas" aria-label="Balance and equity chart"></canvas>
+                    <canvas id="equityChartOverlayFull" class="chart-overlay chart-canvas" aria-label="Interactive chart overlay"></canvas>
+                    <div class="chart-tooltip" id="chartTooltipFull" role="tooltip" style="display:none"></div>
+                    <div class="chart-empty-state" id="chartEmptyStateFull">Waiting for account performance data</div>
+                  </div>
+                  <div class="drawdown-heading">
+                    <span>Drawdown</span>
+                    <span id="drawdownSummaryFull">Maximum: 0.00%</span>
+                  </div>
+                  <div class="drawdown-wrap">
+                    <canvas id="drawdownChartFull" aria-label="Account drawdown chart"></canvas>
+                  </div>
+                </div>
+                <div class="trade-history-card">
+                  <div class="trade-history-header">
+                    <div>
+                      <div class="performance-eyebrow">TRADE RESULTS</div>
+                      <h3>Recent wins and losses</h3>
+                    </div>
+                    <span id="tradeCountBadgeFull" class="trade-count-badge">0 trades</span>
+                  </div>
+                  <div class="trade-table-wrap">
+                    <table class="trade-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Symbol</th>
+                          <th>Side</th>
+                          <th>Result</th>
+                          <th>R multiple</th>
+                          <th>Fill drift</th>
+                          <th>Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody id="recentTradesBodyFull">
+                        <tr><td colspan="7" class="table-empty">No completed trades available</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
         </div>
@@ -1570,6 +1892,22 @@
           <div class="card">
             <div class="card-title">Recent Adjustments</div>
             <div id="memoryAdjustments"></div>
+          </div>
+        </div>
+
+        <!-- STRATEGIES VIEW -->
+        <div class="view" id="view-strategies">
+          <div class="card">
+            <div class="card-title">Arsenal Summary</div>
+            <div id="strategiesSummary" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Rating per Symbol</div>
+            <div id="strategiesPerSymbol" style="margin-top:8px"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">All Strategies <span id="strategiesCount" style="font-size:11px;color:var(--muted2);font-weight:400"></span></div>
+            <div id="strategiesCatalog" style="margin-top:8px"></div>
           </div>
         </div>
 
@@ -1647,6 +1985,17 @@
             <div class="card-title">Configuration</div>
             <div id="configInfo"></div>
           </div>
+          <div class="card profile-manager-card" id="profileManagerCard">
+            <div class="section-head">
+              <div>
+                <div class="card-title">Trading Profile</div>
+                <div style="font-size:12px;color:var(--muted);line-height:1.45">Choose a profile to restart the bot now. The description explains its current symbols, mode, and risk intent.</div>
+              </div>
+              <span class="badge" id="profileManagerActive">—</span>
+            </div>
+            <div class="profile-manager-grid" id="profileManagerGrid"><p class="empty">Loading profiles…</p></div>
+            <div id="profileManagerStatus" style="margin-top:10px;font-size:12px;color:var(--muted);min-height:18px"></div>
+          </div>
           <div class="card" id="fastModeSettingsCard">
             <div class="card-title">Fast Scalper Presets</div>
             <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
@@ -1690,6 +2039,7 @@
     <button type="button" class="mobile-tab" data-view="research"><span class="ico">⚗</span>Research</button>
     <button type="button" class="mobile-tab" data-view="replay"><span class="ico">▶</span>Replay</button>
     <button type="button" class="mobile-tab" data-view="memory"><span class="ico">🧠</span>Memory</button>
+    <button type="button" class="mobile-tab" data-view="strategies"><span class="ico">🧩</span>Strategies</button>
     <button type="button" class="mobile-tab" data-view="logs"><span class="ico">≡</span>Logs</button>
     <button type="button" class="mobile-tab" data-view="settings"><span class="ico">⚙</span>System</button>
   </nav>
@@ -1814,107 +2164,15 @@
       });
     }
 
-    let chartMeta = null;
-    let chartMetaFull = null;
     let equityCurveRaw = null;
     let chartRange = "1d";
     let liveEquityBuffer = []; // client-side real-time equity samples for short ranges
+    let profileCatalog = null;
+    let profileCatalogPromise = null;
+    let profileCatalogRenderKey = "";
 
     const RANGE_LABELS = { "1m": "Last 1 minute", "15m": "Last 15 minutes", "1h": "Last 1 hour", "4h": "Last 4 hours", "1d": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "all": "Full history" };
 
-    function fmtTs(ts, rangeKey) {
-      if (!ts) return "—";
-      const d = new Date(ts);
-      if (isNaN(d)) return String(ts).slice(0, 16);
-      if (rangeKey === "1m" || rangeKey === "15m" || rangeKey === "1h" || rangeKey === "4h") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
-      if (rangeKey === "1d") return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
-      return d.toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
-    }
-
-    function downsamplePoints(points, maxPts) {
-      if (points.length <= maxPts) return points;
-      const bucket = Math.ceil(points.length / maxPts);
-      const out = [];
-      for (let i = 0; i < points.length; i += bucket) {
-        const slice = points.slice(i, i + bucket);
-        if (!slice.length) continue;
-        let lo = slice[0], hi = slice[0];
-        slice.forEach(p => {
-          const eq = p.equity;
-          if (eq < lo.equity) lo = p;
-          if (eq > hi.equity) hi = p;
-        });
-        if (lo === hi) out.push(lo);
-        else { out.push(lo); if (out[out.length - 1] !== hi) out.push(hi); }
-      }
-      if (out[out.length - 1] !== points[points.length - 1]) out.push(points[points.length - 1]);
-      return out;
-    }
-
-    function runningPeaks(values) {
-      const peaks = [];
-      let peak = values[0] || 0;
-      values.forEach(v => { peak = Math.max(peak, v); peaks.push(peak); });
-      return peaks;
-    }
-
-    function strokeSeries(ctx, times, values, xAt, yAt, color, width, glow) {
-      if (!values.length) return;
-      ctx.save();
-      if (glow) {
-        ctx.strokeStyle = glow;
-        ctx.lineWidth = width + 4;
-        ctx.globalAlpha = 0.25;
-        ctx.beginPath();
-        ctx.moveTo(xAt(times[0]), yAt(values[0]));
-        for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(values[0]));
-      for (let i = 1; i < values.length; i++) ctx.lineTo(xAt(times[i]), yAt(values[i]));
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    function fillBetween(ctx, times, topVals, botVals, xAt, yAt, fillStyle) {
-      if (!times.length) return;
-      ctx.save();
-      ctx.fillStyle = fillStyle;
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(topVals[0]));
-      for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(topVals[i]));
-      for (let i = times.length - 1; i >= 0; i--) ctx.lineTo(xAt(times[i]), yAt(botVals[i]));
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-
-    function syncOverlayCanvas(overlay, baseCanvas) {
-      if (!overlay || !baseCanvas) return;
-      const dpr = devicePixelRatio || 1;
-      const rect = baseCanvas.getBoundingClientRect();
-      overlay.width = rect.width * dpr;
-      overlay.height = rect.height * dpr;
-      overlay.style.width = rect.width + "px";
-      overlay.style.height = rect.height + "px";
-      const ctx = overlay.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, rect.width, rect.height);
-    }
-
-    function clearChartOverlay(overlayId) {
-      const overlay = document.getElementById(overlayId);
-      if (!overlay) return;
-      const ctx = overlay.getContext("2d");
-      const rect = overlay.getBoundingClientRect();
-      ctx.clearRect(0, 0, rect.width, rect.height);
-    }
 
     function sliceCurveClient(curve, rangeKey) {
       if (!curve) return { points: [], markers: [], range_stats: {} };
@@ -1934,186 +2192,6 @@
       return { points: sliced.length ? sliced : [points[points.length - 1]], markers: (curve.markers || []).filter(m => new Date(m.ts).getTime() >= cutoff), range_stats: {} };
     }
 
-    function drawChartOnCanvas(canvas, overlayId, statsEl, curve, rangeKey, metaRef) {
-      if (!canvas) return null;
-      const ctx = canvas.getContext("2d");
-      const dpr = devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width < 2 || rect.height < 2) return null;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const W = rect.width, H = rect.height;
-      const pad = { top: 28, right: 58, bottom: 42, left: 68 };
-      ctx.clearRect(0, 0, W, H);
-
-      const overlay = document.getElementById(overlayId);
-      syncOverlayCanvas(overlay, canvas);
-
-      const slice = sliceCurveClient(curve, rangeKey);
-      let points = slice.points || [];
-      const markers = slice.markers || [];
-      const stats = slice.range_stats || {};
-
-      if (!points.length) {
-        ctx.fillStyle = "#636366";
-        ctx.font = "13px -apple-system,sans-serif";
-        ctx.fillText("Collecting equity snapshots — data appears each risk cycle (~45s)", pad.left, H / 2 - 8);
-        ctx.font = "11px -apple-system,sans-serif";
-        ctx.fillStyle = "#48484a";
-        ctx.fillText("Try 1d / 7d / All for historical trade-based curve", pad.left, H / 2 + 12);
-        if (statsEl) statsEl.innerHTML = "";
-        if (metaRef === "main") chartMeta = null; else chartMetaFull = null;
-        return null;
-      }
-
-      const rawCount = points.length;
-      if (points.length > 2000) points = downsamplePoints(points, 2000);
-
-      const times = points.map(p => new Date(p.ts).getTime());
-      const t0 = times[0], t1 = times[times.length - 1] || t0 + 1;
-      const equities = points.map(p => p.equity);
-      const balances = points.map(p => p.cash ?? p.balance ?? p.equity);
-      const peaks = runningPeaks(equities);
-      const periodStart = stats.period_start_equity ?? equities[0];
-      const start = periodStart;
-      let minV = Math.min(...equities, ...balances, start);
-      let maxV = Math.max(...equities, ...balances, start, ...peaks);
-      const span = maxV - minV || Math.max(maxV * 0.01, 1);
-      minV -= span * 0.1;
-      maxV += span * 0.1;
-      const pW = W - pad.left - pad.right, pH = H - pad.top - pad.bottom;
-      const xAt = t => pad.left + ((t - t0) / (t1 - t0 || 1)) * pW;
-      const yAt = v => pad.top + pH - ((v - minV) / (maxV - minV)) * pH;
-
-      const bgGrad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
-      bgGrad.addColorStop(0, "rgba(10,132,255,.04)");
-      bgGrad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(pad.left, pad.top, pW, pH);
-
-      const yTicks = Math.max(4, Math.min(9, Math.round(pH / 55)));
-      const yScale = niceScale(minV, maxV, yTicks);
-      ctx.font = "10px -apple-system,sans-serif";
-      const tickCount = yScale.ticks;
-      for (let t = 0; t <= tickCount; t++) {
-        const v = yScale.min + t * yScale.step;
-        const y = yAt(v);
-        if (y < pad.top - 5 || y > H - pad.bottom + 5) continue;
-        ctx.strokeStyle = t % 2 === 0 ? "rgba(255,255,255,.07)" : "rgba(255,255,255,.03)";
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
-        ctx.fillStyle = "#636366";
-        ctx.textAlign = "right";
-        ctx.fillText(fmtAxis(v), pad.left - 8, y + 3);
-        ctx.textAlign = "left";
-        ctx.fillText(fmtAxis(v), W - pad.right + 8, y + 3);
-      }
-      ctx.textAlign = "start";
-
-      const xTickCount = Math.min(9, Math.max(4, Math.floor(pW / 100)));
-      for (let i = 0; i <= xTickCount; i++) {
-        const frac = i / xTickCount;
-        const ts = t0 + (t1 - t0) * frac;
-        const x = xAt(ts);
-        ctx.strokeStyle = "rgba(255,255,255,.03)";
-        ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.stroke();
-        ctx.fillStyle = "#636366";
-        const lbl = fmtTs(new Date(ts).toISOString(), rangeKey);
-        ctx.fillText(lbl, Math.max(pad.left, Math.min(x - 28, W - pad.right - 50)), H - 14);
-      }
-
-      fillBetween(ctx, times, peaks, equities, xAt, yAt, "rgba(255,69,58,.14)");
-
-      ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = "rgba(255,159,10,.45)";
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad.left, yAt(start)); ctx.lineTo(W - pad.right, yAt(start)); ctx.stroke();
-      ctx.setLineDash([]);
-
-      const topLine = equities.map((eq, i) => Math.max(eq, balances[i]));
-      const botLine = equities.map((eq, i) => Math.min(eq, balances[i]));
-      fillBetween(ctx, times, topLine, botLine, xAt, yAt, "rgba(48,209,88,.12)");
-
-      const eqGrad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
-      eqGrad.addColorStop(0, "rgba(10,132,255,.35)");
-      eqGrad.addColorStop(1, "rgba(10,132,255,0)");
-      ctx.save();
-      ctx.fillStyle = eqGrad;
-      ctx.beginPath();
-      ctx.moveTo(xAt(times[0]), yAt(equities[0]));
-      for (let i = 1; i < times.length; i++) ctx.lineTo(xAt(times[i]), yAt(equities[i]));
-      ctx.lineTo(xAt(times[times.length - 1]), H - pad.bottom);
-      ctx.lineTo(xAt(times[0]), H - pad.bottom);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      strokeSeries(ctx, times, balances, xAt, yAt, "rgba(152,152,157,.75)", 1.5, null);
-      strokeSeries(ctx, times, equities, xAt, yAt, "#0a84ff", 3, "rgba(10,132,255,.5)");
-
-      const lastX = xAt(times[times.length - 1]), lastY = yAt(equities[equities.length - 1]);
-      ctx.fillStyle = "rgba(10,132,255,.2)";
-      ctx.beginPath(); ctx.arc(lastX, lastY, 10, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#0a84ff";
-      ctx.beginPath(); ctx.arc(lastX, lastY, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
-
-      markers.forEach(m => {
-        const mt = new Date(m.ts).getTime();
-        const win = m.result === "win" || (m.pnl || 0) >= 0;
-        const color = win ? "#30d158" : "#ff453a";
-        const x = xAt(mt), y = yAt(m.equity);
-        ctx.fillStyle = "rgba(0,0,0,.35)";
-        ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#0a0a0c"; ctx.lineWidth = 1.5; ctx.stroke();
-      });
-
-      const meta = { points, markers, pad, W, H, xAt, yAt, minV, maxV, times, rangeKey, rawCount };
-      if (metaRef === "main") chartMeta = meta; else chartMetaFull = meta;
-
-      const rs = stats.period_change != null ? stats : {};
-      const pnl = rs.period_change ?? (curve.pnl_total ?? 0);
-      const pnlPct = rs.period_change_pct ?? (curve.pnl_pct ?? 0);
-      const dd = rs.period_max_drawdown_pct ?? (curve.max_drawdown_pct ?? 0);
-      if (statsEl) {
-        statsEl.innerHTML = `
-          <div class="chart-stat"><div class="lbl">Period Start</div><div class="val">$${fmt(rs.period_start_equity ?? equities[0])}</div></div>
-          <div class="chart-stat"><div class="lbl">Period End</div><div class="val">$${fmt(rs.period_end_equity ?? curve.current_equity)}</div></div>
-          <div class="chart-stat"><div class="lbl">Period Change</div><div class="val" style="color:${pnl>=0?"var(--green)":"var(--red)"}">${pnl>=0?"+":""}$${fmt(pnl)} (${fmt(pnlPct,2)}%)</div></div>
-          <div class="chart-stat"><div class="lbl">Period High</div><div class="val">$${fmt(rs.period_high ?? Math.max(...equities))}</div></div>
-          <div class="chart-stat"><div class="lbl">Period Low</div><div class="val">$${fmt(rs.period_low ?? Math.min(...equities))}</div></div>
-          <div class="chart-stat"><div class="lbl">Max DD</div><div class="val">${fmt(dd,2)}%</div></div>
-          <div class="chart-stat"><div class="lbl">Data Points</div><div class="val">${rawCount}${rawCount !== points.length ? " → " + points.length : ""}</div></div>
-          <div class="chart-stat"><div class="lbl">Trade Closes</div><div class="val">${markers.length}</div></div>`;
-      }
-      return meta;
-    }
-
-    function drawChartOverlay(overlayId, meta, hoverX, pointIdx, marker) {
-      const overlay = document.getElementById(overlayId);
-      if (!overlay || !meta) return;
-      syncOverlayCanvas(overlay, overlay.previousElementSibling);
-      const ctx = overlay.getContext("2d");
-      const { pad, W, H, xAt, yAt, points } = meta;
-      ctx.strokeStyle = "rgba(10,132,255,.65)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(hoverX, pad.top); ctx.lineTo(hoverX, H - pad.bottom); ctx.stroke();
-      ctx.setLineDash([]);
-
-      const p = marker || points[pointIdx];
-      if (!p) return;
-      const px = marker ? xAt(new Date(marker.ts).getTime()) : xAt(new Date(p.ts).getTime());
-      const py = yAt(p.equity);
-      ctx.fillStyle = "rgba(10,132,255,.15)";
-      ctx.beginPath(); ctx.arc(px, py, 12, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = marker ? ((marker.result === "win" || (marker.pnl || 0) >= 0) ? "#30d158" : "#ff453a") : "#0a84ff";
-      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
-    }
 
     function updateEquityHeadline(curve, live) {
       const c = curve || equityCurveRaw || {};
@@ -2147,13 +2225,56 @@
     }
 
     function updateChartBadge(curve, rangeKey) {
+      // The main dashboard badge is owned by TradingPerformanceChart (its
+      // updateLiveBadge writes "N pts · Last …" to #chartLiveBadge). This
+      // helper now only updates the full-screen view's badge.
       const slice = sliceCurveClient(curve || {}, rangeKey);
       const n = slice.points?.length || 0;
       const text = n ? `${n} pts · ${RANGE_LABELS[rangeKey] || rangeKey}` : "Awaiting data";
-      ["chartLiveBadge", "chartLiveBadgeFull"].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
+      // The full-screen view's badge is owned by its TradingPerformanceChart
+      // instance; only write here when that instance is not running.
+      const el = document.getElementById("chartLiveBadgeFull");
+      if (el && !window.tradingPerformanceChartFull) el.textContent = text;
+    }
+
+    function curveToPerformancePoints(curve) {
+      // Convert the server equity_curve payload (points + trade markers) into
+      // the format TradingPerformanceChart expects: {timestamp, balance, equity, trade?}.
+      const pts = (curve?.points || []).map(p => ({
+        timestamp: p.ts,
+        balance: p.cash ?? p.balance ?? p.equity,
+        equity: p.equity
+      }));
+      const byTs = new Map(pts.map(p => [new Date(p.timestamp).getTime(), p]));
+      (curve?.markers || []).forEach(m => {
+        const trade = {
+          symbol: m.symbol || "Unknown",
+          side: (m.side || "").toUpperCase(),
+          pnl: Number(m.pnl) || 0,
+          outcome: m.result || (Number(m.pnl) >= 0 ? "win" : "loss")
+        };
+        const target = byTs.get(new Date(m.ts).getTime());
+        if (target) {
+          target.trade = trade;
+        } else {
+          pts.push({ timestamp: m.ts, balance: m.equity, equity: m.equity, trade });
+        }
       });
+      return pts.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+
+    function updatePerformanceStatus(curve, live) {
+      // Health integration: stop showing green when the pipeline is degraded/halted.
+      if (typeof window.tradingPerformanceChart?.setStatus !== "function") return;
+      const st = (typeof lastData !== "undefined" && lastData && lastData.trading_status) || {};
+      let status = "live", label = "Live";
+      if (st.kill_switch || st.live_trading_enabled === false) {
+        status = "halted"; label = st.kill_switch ? "Trading halted" : "Live trading disabled";
+      } else if (st.degraded || st.status === "degraded" || st.can_execute === false) {
+        status = "degraded"; label = "Signal service degraded";
+      }
+      window.tradingPerformanceChart.setStatus(status, label);
+      if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setStatus(status, label);
     }
 
     function drawChart(curve, live) {
@@ -2161,103 +2282,30 @@
       updateEquityHeadline(equityCurveRaw, live);
       updateChartBadge(equityCurveRaw, chartRange);
       const rangeText = RANGE_LABELS[chartRange] || chartRange;
-      const label = document.getElementById("equityRangeLabel");
-      if (label) label.textContent = `Live MT5 account · ${rangeText}`;
       const labelFull = document.getElementById("equityRangeLabelFull");
       if (labelFull) labelFull.textContent = `Full-screen equity · ${rangeText}`;
-      drawChartOnCanvas(
-        document.getElementById("equityChart"),
-        "equityChartOverlay",
-        document.getElementById("chartStats"),
-        equityCurveRaw,
-        chartRange,
-        "main"
-      );
-      if (document.getElementById("view-equity")?.classList.contains("active")) {
-        drawChartOnCanvas(
-          document.getElementById("equityChartFull"),
-          "equityChartOverlayFull",
-          document.getElementById("chartStatsFull"),
-          equityCurveRaw,
-          chartRange,
-          "full"
-        );
-      }
-      syncRangeButtons(chartRange);
-    }
-
-    function syncRangeButtons(rangeKey) {
-      document.querySelectorAll(".chart-range-btn").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.range === rangeKey);
-      });
-    }
-
-    function bindChartHover(canvasId, overlayId, tipId, metaGetter) {
-      const canvas = document.getElementById(canvasId);
-      const tip = document.getElementById(tipId);
-      if (!canvas || !tip) return;
-      canvas.onmousemove = (e) => {
-        const meta = metaGetter();
-        if (!meta || !meta.points.length) { tip.style.display = "none"; clearChartOverlay(overlayId); return; }
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const { points, markers, pad, W, H, xAt, yAt, rangeKey } = meta;
-        if (x < pad.left || x > W - pad.right) { tip.style.display = "none"; clearChartOverlay(overlayId); return; }
-
-        let nearMarker = null, nearMarkerDist = 14;
-        markers.forEach(m => {
-          const mx = xAt(new Date(m.ts).getTime()), my = yAt(m.equity);
-          const d = Math.hypot(mx - x, my - y);
-          if (d < nearMarkerDist) { nearMarkerDist = d; nearMarker = m; }
-        });
-
-        let best = 0, bestDist = Infinity;
-        points.forEach((p, i) => {
-          const px = xAt(new Date(p.ts).getTime());
-          const d = Math.abs(px - x);
-          if (d < bestDist) { bestDist = d; best = i; }
-        });
-        const p = nearMarker || points[best];
-        const px = xAt(new Date(p.ts).getTime());
-        drawChartOverlay(overlayId, meta, px, best, nearMarker);
-
-        tip.style.display = "block";
-        tip.style.left = Math.min(Math.max(x + 16, 8), rect.width - 200) + "px";
-        tip.style.top = Math.min(Math.max(y - 10, 8), rect.height - 120) + "px";
-
-        if (nearMarker) {
-          const win = nearMarker.result === "win" || (nearMarker.pnl || 0) >= 0;
-          tip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${fmtTs(nearMarker.ts, rangeKey)} · Trade close</div>
-            <div>${nearMarker.symbol || ""} ${nearMarker.side || ""} · <strong style="color:${win ? "#30d158" : "#ff453a"}">${win ? "WIN" : "LOSS"}</strong></div>
-            <div>PnL <strong style="color:${win ? "#30d158" : "#ff453a"}">${(nearMarker.pnl || 0) >= 0 ? "+" : ""}$${fmt(nearMarker.pnl)}</strong></div>
-            <div>Equity after <strong>$${fmt(nearMarker.equity)}</strong></div>`;
-        } else {
-          tip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${fmtTs(p.ts, rangeKey)}</div>
-            <div>Equity <strong>$${fmt(p.equity)}</strong></div>
-            <div>Balance <strong>$${fmt(p.cash ?? p.balance)}</strong></div>
-            ${p.unrealized_pnl != null ? `<div>Unrealized <strong style="color:${p.unrealized_pnl>=0?"#30d158":"#ff453a"}">$${fmt(p.unrealized_pnl)}</strong></div>` : ""}
-            ${p.drawdown_pct != null ? `<div>Drawdown <strong>${fmt(p.drawdown_pct,2)}%</strong></div>` : ""}
-            ${p.peak_equity != null ? `<div>Peak <strong>$${fmt(p.peak_equity)}</strong></div>` : ""}
-            ${p.event ? `<div style="color:#98989d;margin-top:6px">${p.event}${p.source ? " · "+p.source : ""}</div>` : ""}`;
+      // Main dashboard chart is driven by TradingPerformanceChart (canvas #equityChart
+      // + #equityChartOverlay + #drawdownChart). Feed it the converted curve.
+      if (window.tradingPerformanceChart) {
+        try {
+          window.tradingPerformanceChart.setData(curveToPerformancePoints(equityCurveRaw));
+          updatePerformanceStatus(equityCurveRaw, live);
+        } catch (err) {
+          console.error("performance chart render failed", err);
         }
-      };
-      canvas.onmouseleave = () => { tip.style.display = "none"; clearChartOverlay(overlayId); };
-    }
-
-    function setupChartRanges() {
-      document.querySelectorAll(".chart-range-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          chartRange = btn.dataset.range || "1d";
-          drawChart(equityCurveRaw, lastData?.live_portfolio);
-        });
-      });
+      }
+      if (window.tradingPerformanceChartFull) {
+        try {
+          window.tradingPerformanceChartFull.setData(curveToPerformancePoints(equityCurveRaw));
+        } catch (err) {
+          console.error("full-screen performance chart render failed", err);
+        }
+      }
     }
 
     function initChartInteractions() {
-      bindChartHover("equityChart", "equityChartOverlay", "chartTooltip", () => chartMeta);
-      bindChartHover("equityChartFull", "equityChartOverlayFull", "chartTooltipFull", () => chartMetaFull);
-      setupChartRanges();
+      // Hover is owned by TradingPerformanceChart for both the main and
+      // full-screen instances (each binds its own overlay canvas internally).
     }
 
     function renderTradeAlert(status, verdict) {
@@ -2688,6 +2736,24 @@
       const cpu = (sup.system && sup.system.cpu_pct != null) ? sup.system.cpu_pct : "—";
       const runtimeLabel = cfg.runtime_mode === "live_plan" ? "Live Plan" : "Practice";
       const runtimeColor = cfg.performance_plan_active ? "var(--green)" : "var(--orange)";
+      const kill = data.kill_switch || {};
+      const killOn = Boolean(kill.kill_switch || (data.trading_status || {}).kill_switch);
+      const killBtn = document.getElementById("killSwitchBtn");
+      const killStatus = document.getElementById("killSwitchStatus");
+      if (killBtn) {
+        killBtn.className = "kill-switch-btn " + (killOn ? "on" : "off");
+        killBtn.textContent = killOn ? "TRADING STOPPED" : "TRADING";
+        killBtn.title = killOn
+          ? "Click to clear the operator kill switch and resume new trading"
+          : "Click to stop new trading; existing positions are not closed";
+        killBtn.dataset.killOn = killOn ? "1" : "0";
+      }
+      if (killStatus) {
+        const source = kill.source === "operator" ? "operator stop" : (kill.reason || "");
+        killStatus.textContent = killOn ? (source || "trading halted") : "trading live";
+        killStatus.style.color = killOn ? "var(--red)" : "var(--muted2)";
+      }
+
       document.getElementById("topStats").innerHTML = `
         <span>MT5 <strong>${conn.logged_in?"Connected":"Offline"}</strong></span>
         <span>Account <strong>${(data.account||{}).login||"—"}</strong></span>
@@ -2975,6 +3041,152 @@
       } catch (e) { /* swallow */ }
     }
 
+    // --- /api/live: fast (1.5s) poll for time-critical tiles ----------------
+    // The heavy /api/summary poll self-paces to its ~5s response time, so the
+    // daily-PnL + kill-switch tiles lagged ~5s behind real-time. /api/live is
+    // ~10-20KB with an mtime-keyed daily-PnL cache, so these tiles now update
+    // within the poll interval of a trade closing. Additive only — the heavy
+    // poll still owns the full render (charts, Research, Memory, Strategies).
+    let _liveTimer = null;
+    let _liveInFlight = false;
+    async function fetchLive() {
+      if (_liveInFlight) return;
+      _liveInFlight = true;
+      try {
+        const resp = await fetch('/api/live', { headers: { 'Cache-Control': 'no-cache' } });
+        if (!resp.ok) return;
+        const live = await resp.json();
+        if (live && live.daily_pnl) {
+          dailyPnlCache = live.daily_pnl;
+          renderDailyPnl(dailyPnlCache);
+        }
+        // Kill-switch button + status (mirrors renderCore logic)
+        const killOn = !!(live && live.kill_switch);
+        const killBtn = document.getElementById('killSwitchBtn');
+        const killStatus = document.getElementById('killSwitchStatus');
+        if (killBtn) {
+          killBtn.className = 'kill-switch-btn ' + (killOn ? 'on' : 'off');
+          killBtn.textContent = killOn ? 'TRADING STOPPED' : 'TRADING';
+          killBtn.dataset.killOn = killOn ? '1' : '0';
+        }
+        if (killStatus) {
+          killStatus.textContent = killOn ? (live.kill_reason || 'trading halted') : 'trading live';
+          killStatus.style.color = killOn ? 'var(--red)' : 'var(--muted2)';
+        }         // Compact open-positions + last-trade strip on the dashboard header
+         const strip = document.getElementById('liveTradesStrip');
+         if (strip && live) {
+           const op = live.open_positions_count || 0;
+           const tot = live.trade_stats && live.trade_stats.trade_count != null
+             ? live.trade_stats.trade_count
+             : (live.total_trades_all_time || live.total_trades || 0);
+           const last = (live.recent_trades || [])[0];
+
+          const lastTxt = last
+            ? `${(last.symbol||'?')} ${last.side||''} ${last.result||''} ${last.pnl!=null?('$'+Number(last.pnl).toFixed(2)):''} <span style="color:var(--muted2)">${(last.closed_at||'').slice(11,19)}</span>`
+            : '<span style="color:var(--muted2)">no closed trades yet</span>';
+          strip.innerHTML = `<span>Open <strong>${op}</strong></span><span>Closed <strong>${tot}</strong></span><span style="flex:1;text-align:right">Last: ${lastTxt}</span>`;
+        }
+        // Live chart: append fresh account balance/equity every poll so the
+        // performance chart reflects trading within the 1.5s poll interval.
+        // When a new closed trade appears in /api/live recent_trades, attach it
+        // so the trade table + markers react instantly instead of waiting for
+        // the heavy /api/summary curve to catch up.         try {
+           const connection = live && live.health && live.health.connection;
+           const dataDegraded = !!(
+             live && live.freshness && live.freshness.degraded
+           ) || !!(
+             live && live.health && live.health.status && live.health.status !== 'ok'
+           ) || !!(
+             connection && connection.logged_in === false
+           );
+           if (window.tradingPerformanceChart && live && live.account && live.account.equity != null) {
+
+            const bal = Number(live.account.balance);
+            const eq = Number(live.account.equity);
+            if (isFinite(bal) && isFinite(eq) && (bal > 0 || eq > 0)) {
+              const point = { timestamp: Date.now(), balance: bal, equity: eq };
+              const recent = (live.recent_trades || []);
+              const newest = recent[0];
+              if (newest && newest.trade_id) {
+                const seen = window.__perfSeenTradeIds || (window.__perfSeenTradeIds = {});
+                if (!seen[newest.trade_id]) {
+                  seen[newest.trade_id] = 1;
+                  const pnl = Number(newest.pnl) || 0;
+                  point.trade = {
+                    symbol: newest.symbol || "Unknown",
+                    side: (newest.side || "").toUpperCase(),
+                    pnl: pnl,
+                    outcome: newest.result || (pnl >= 0 ? "win" : "loss")
+                  };
+                }
+              }
+              window.tradingPerformanceChart.appendPoint(point);
+              if (window.tradingPerformanceChartFull && document.getElementById("view-equity")?.classList.contains("active")) {
+                window.tradingPerformanceChartFull.appendPoint(point);
+              }
+            }
+            if (live.kill_switch) {
+              const label = live.kill_reason || 'Trading halted';
+              window.tradingPerformanceChart.setStatus('halted', label);
+              if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setStatus('halted', label);
+            } else if (dataDegraded) {
+              const label = (connection && connection.logged_in === false)
+                ? 'MT5 connection degraded'
+                : 'Data service degraded';
+              window.tradingPerformanceChart.setStatus('degraded', label);
+              if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setStatus('degraded', label);
+            } else {
+              window.tradingPerformanceChart.setStatus('live', 'Live');
+              if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setStatus('live', 'Live');
+            }           }
+           if (window.tradingPerformanceChart && live && (!live.account || live.account.equity == null)) {
+             const label = (connection && connection.logged_in === false)
+               ? 'MT5 connection degraded'
+               : 'Account data unavailable';
+             window.tradingPerformanceChart.setStatus('degraded', label);
+             if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setStatus('degraded', label);
+           } else if (window.tradingPerformanceChart && live && !live.kill_switch) {
+             if (dataDegraded) {
+               const label = (connection && connection.logged_in === false)
+                 ? 'MT5 connection degraded'
+                 : 'Data service degraded';
+               window.tradingPerformanceChart.setStatus('degraded', label);
+               if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setStatus('degraded', label);
+             }
+           }
+           // Align the performance panel's Win rate / Profit factor / Expectancy
+
+          // cards + recent-trades table with the ACTIVE ledger — the exact
+          // same source the Daily P&L tile reads (not window-sliced curve
+          // markers). Server computes trade_stats with the daily cutoff.
+          if (live && live.trade_stats) {
+            const ts = live.trade_stats;
+            const stats = {
+              trade_count: Number(ts.trade_count) || 0,
+              wins: Number(ts.wins) || 0,
+              losses: Number(ts.losses) || 0,
+              win_rate: Number(ts.win_rate) || 0,
+              net_pnl: Number(ts.net_pnl) || 0,
+              profit_factor: ts.profit_factor == null ? null : Number(ts.profit_factor),
+              expectancy: Number(ts.expectancy) || 0
+            };
+            if (window.tradingPerformanceChart) window.tradingPerformanceChart.setTradeStats(stats);
+            if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setTradeStats(stats);
+          }
+          if (live && Array.isArray(live.recent_trades) && live.recent_trades.length) {
+            if (window.tradingPerformanceChart) window.tradingPerformanceChart.setRecentTrades(live.recent_trades);
+            if (window.tradingPerformanceChartFull) window.tradingPerformanceChartFull.setRecentTrades(live.recent_trades);
+          }
+        } catch (e) { /* non-fatal */ }
+      } catch (e) { /* swallow — heavy poll still renders */ }
+      finally { _liveInFlight = false; }
+    }
+    function ensureLivePolling() {
+      if (_liveTimer) return;
+      _liveTimer = setInterval(fetchLive, 1500);
+      fetchLive();
+    }
+
     function _dpUsd(v) {
       const n = Number(v);
       if (!isFinite(n)) return '—';
@@ -3038,7 +3250,7 @@
           '<div class="goal">' + goalTxt + '</div>' +
         '</div>' +
         '<div class="daily-pnl-bar"><div class="fill ' + fillClass + '" style="width:' + barPct.toFixed(1) + '%"></div></div>' +
-        '<div class="daily-pnl-scale"><span>$0</span><span>' + Math.round(pct) + '% of target</span><span>' + (threshold > 0 ? _dpUsd(threshold) : '—') + '</span></div>' +
+        '<div class="daily-pnl-scale"><span>$0</span><span>' + Math.round(barPct) + '% of target</span><span>' + (threshold > 0 ? _dpUsd(threshold) : '—') + '</span></div>' +
         '<div class="daily-pnl-stats">' +
           '<div class="st"><div class="k">Realized Today</div><div class="v ' + bigClass + '">' + _dpUsd(realized) + '</div></div>' +
           '<div class="st"><div class="k">Trades</div><div class="v">' + trades + '</div></div>' +
@@ -4086,6 +4298,68 @@
         <div class="ai-stat-row"><span>Total Records</span><strong>${learning.total_records||0}</strong></div>
         ${(learning.weight_deltas||[]).map(a=>`<div class="ai-reason">${a.label} weight ${a.delta} — ${a.note}</div>`).join("")}`;
 
+      // Strategies
+      const st = data.strategies_tab||{};
+      const esc = (s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+      const pct = (v)=>(v==null||v===""?"—":(v+"%"));
+      const setupLabel = (n)=>esc((n||"").replace(/_/g," "));
+      document.getElementById("strategiesSummary").innerHTML = [
+        `<div class="ai-stat-row"><span>Total strategies</span><strong>${st.total_setups||0}</strong></div>`,
+        `<div class="ai-stat-row"><span>Live (emit signals)</span><strong>${st.live_setups||0}</strong></div>`,
+        `<div class="ai-stat-row"><span>Metadata-only</span><strong>${st.metadata_only_setups||0}</strong></div>`,
+        `<div class="ai-stat-row"><span>Families</span><strong>${(st.families||[]).length}</strong></div>`,
+      ].join("");
+      document.getElementById("strategiesCount").textContent = st.total_setups ? `(${st.total_setups} setups, ${st.live_setups} live)` : "";
+      // Per-symbol rating table
+      const ps = st.per_symbol||[];
+      document.getElementById("strategiesPerSymbol").innerHTML = ps.length ? (
+        `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="text-align:left;color:var(--muted2);border-bottom:1px solid var(--border)">`
+        + `<th style="padding:6px 8px">Symbol</th><th>Top setup</th><th>Score</th><th>Win%</th><th>Trades</th><th>Top ranked setups</th>`
+        + `</tr></thead><tbody>`
+        + ps.map(s=>{
+            const top = (s.ranked||[]).slice(0,3).map(r=>`${setupLabel(r.setup)}${r.insufficient_data?"*":""} (${pct(r.win_rate_pct)}, n=${r.total==null?0:r.total})`).join(" · ");
+            return `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px;font-weight:600">${esc(s.symbol)}</td>`
+              + `<td>${setupLabel(s.top_setup)}${s.insufficient_data?"*":""}</td>`
+              + `<td>${s.top_score==null?"—":s.top_score}</td>`
+              + `<td style="color:${(s.top_win_rate_pct||0)>=50?"var(--green)":"var(--red)"}">${pct(s.top_win_rate_pct)}</td>`
+              + `<td>${s.total_trades||0}</td>`
+              + `<td style="color:var(--muted)">${top}</td></tr>`;
+          }).join("")
+        + `</tbody></table>`
+        + `<div style="font-size:10px;color:var(--muted2);margin-top:6px">* insufficient data (ranker prior, not live trades). Ratings repopulate as the bot closes live demo trades.</div>`
+      ) : '<p class="empty">No per-symbol ratings yet — repopulates as live trades close.</p>';
+      // Full catalog grouped by family
+      const fams = (st.families||[]).slice().sort((a,b)=>b.live-a.live || a.family.localeCompare(b.family));
+      const catalogByName = {};
+      (st.catalog||[]).forEach(c=>{ catalogByName[c.family] = catalogByName[c.family]||[]; catalogByName[c.family].push(c); });
+      document.getElementById("strategiesCatalog").innerHTML = (st.catalog&&st.catalog.length) ? (
+        `<div style="display:flex;flex-direction:column;gap:10px">`
+        + fams.map(f=>{
+            const rows = (catalogByName[f.family]||[]).slice().sort((a,b)=>(b.win_rate_pct||0)-(a.win_rate_pct||0));
+            return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px">`
+              + `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`
+              + `<strong style="text-transform:capitalize">${setupLabel(f.family)}</strong>`
+              + `<span style="font-size:10px;color:var(--muted2)">${f.live}/${f.count} live</span></div>`
+              + `<div style="display:flex;flex-direction:column;gap:4px">`
+              + rows.map(c=>{
+                  const wr = c.win_rate_pct==null ? null : c.win_rate_pct;
+                  const wrCol = wr==null?"var(--muted2)":(wr>=50?"var(--green)":"var(--red)");
+                  const badge = c.detect_only ? `<span style="font-size:9px;color:var(--blue)">detect-only</span>`
+                              : c.metadata_only ? `<span style="font-size:9px;color:var(--muted2)">no-detect</span>`
+                              : `<span style="font-size:9px;color:var(--green)">live</span>`;
+                  return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;border-top:1px solid var(--border);padding-top:4px">`
+                    + `<div style="flex:1"><div style="display:flex;gap:6px;align-items:center"><span style="font-weight:600;text-transform:capitalize">${setupLabel(c.name)}</span>${badge}</div>`
+                    + (c.description?`<div style="color:var(--muted);font-size:11px;margin-top:2px">${esc(c.description)}</div>`:"")
+                    + `</div>`
+                    + `<div style="text-align:right;white-space:nowrap">`
+                    + `<div style="color:${wrCol};font-weight:600">${wr==null?"—":(wr+"%")}</div>`
+                    + `<div style="font-size:10px;color:var(--muted2)">n=${c.total==null?0:c.total}</div></div></div>`;
+                }).join("")
+              + `</div></div>`;
+          }).join("")
+        + `</div>`
+      ) : '<p class="empty">Catalog unavailable.</p>';
+
       // Replay
       const syms = cfg.symbols||[];
       const symSel = document.getElementById("replaySymbol");
@@ -4113,6 +4387,8 @@
         <div class="ai-stat-row"><span>Execution Mode</span><strong>${cfg.mode}</strong></div>
         <div class="ai-stat-row"><span>Symbols</span><strong>${(cfg.symbols||[]).join(", ")}</strong></div>
         <div class="ai-stat-row"><span>Max Exposure</span><strong>$${cfg.risk?.max_total_exposure_usd||"—"}</strong></div>`;
+
+      renderProfileManager();
 
       const secs = (data.meta||{}).refresh_seconds||2;
       if (refreshMs !== secs*1000) {
@@ -4213,6 +4489,35 @@
       resetSessionState(e.currentTarget);
     });
 
+    async function toggleKillSwitch(triggerEl) {
+      const statusEl = document.getElementById("killSwitchStatus");
+      const isOn = triggerEl?.dataset.killOn === "1";
+      const action = isOn ? "off" : "on";
+      if (action === "on" && !confirm("STOP NEW TRADING?\n\nExisting MT5 positions will remain open. The bot will not open new positions until you press Resume Trading.")) return;
+      if (triggerEl) triggerEl.disabled = true;
+      if (statusEl) statusEl.textContent = action === "on" ? "stopping…" : "resuming…";
+      try {
+        const res = await fetch("/api/kill-switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, reason: "Stopped from dashboard" }),
+        });
+        const out = await res.json();
+        if (!res.ok || !out.ok) throw new Error(out.message || "Kill switch request failed");
+        if (statusEl) statusEl.textContent = out.message;
+        await refresh(true);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Kill switch error: " + err.message;
+        if (typeof safeRender === "function" && lastData) safeRender(lastData);
+      } finally {
+        if (triggerEl) triggerEl.disabled = false;
+      }
+    }
+
+    document.getElementById("killSwitchBtn")?.addEventListener("click", (e) => {
+      toggleKillSwitch(e.currentTarget);
+    });
+
     async function unblockTrades(triggerEl) {
       const statusEl = document.getElementById("unblockStatus");
       if (triggerEl) triggerEl.disabled = true;
@@ -4270,6 +4575,78 @@
     function apiUrl(path) {
       const sep = path.includes("?") ? "&" : "?";
       return path + sep + API_BUST + "&t=" + Date.now();
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value).replace(/[&<>"']/g, ch => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    async function loadProfileCatalog(force) {
+      if (profileCatalogPromise && !force) return profileCatalogPromise;
+      profileCatalogPromise = fetchJson("/api/profiles")
+        .then(payload => {
+          profileCatalog = payload || { profiles: [] };
+          renderProfileManager();
+          return profileCatalog;
+        })
+        .catch(err => {
+          profileCatalogPromise = null;
+          const status = document.getElementById("profileManagerStatus");
+          if (status) status.textContent = "Could not load profiles: " + (err.message || err);
+          return null;
+        });
+      return profileCatalogPromise;
+    }
+
+    function renderProfileManager() {
+      const grid = document.getElementById("profileManagerGrid");
+      const activeBadge = document.getElementById("profileManagerActive");
+      if (!grid || !profileCatalog) return;
+      const active = profileCatalog.active || "";
+      const profiles = profileCatalog.profiles || [];
+      const renderKey = active + "|" + profiles.map(p => [p.name, p.label, p.description, (p.symbols || []).join(",")].join("~")).join("||");
+      if (renderKey === profileCatalogRenderKey) return;
+      profileCatalogRenderKey = renderKey;
+      if (activeBadge) {
+        activeBadge.textContent = active ? "active: " + active : "active profile unavailable";
+        activeBadge.className = "badge " + (active ? "ok" : "warn");
+      }
+      grid.innerHTML = profiles.length ? profiles.map(p => {
+        const name = escapeHtml(p.name || "");
+        const label = escapeHtml(p.label || p.name || "Unnamed profile");
+        const description = escapeHtml(p.description || "No description provided.");
+        const symbols = Array.isArray(p.symbols) ? p.symbols.join(", ") : "";
+        const isActive = p.name === active;
+        return `<article class="profile-option${isActive ? " active" : ""}">
+          <div class="profile-option-head"><span class="profile-option-name">${label}</span>${isActive ? '<span class="badge ok">running</span>' : ""}</div>
+          <div class="profile-option-description">${description}</div>
+          <div class="profile-option-meta">${symbols ? "Symbols: " + escapeHtml(symbols) : "Symbols: profile-defined"}</div>
+          ${isActive ? '<button type="button" class="btn secondary" disabled>Current profile</button>' : `<button type="button" class="btn secondary profile-switch-btn" data-profile="${name}">Switch and restart</button>`}
+        </article>`;
+      }).join("") : '<p class="empty">No profile YAML files found.</p>';
+      grid.querySelectorAll(".profile-switch-btn").forEach(btn => {
+        btn.addEventListener("click", () => switchDashboardProfile(btn.dataset.profile, btn));
+      });
+    }
+
+    async function switchDashboardProfile(profile, triggerEl) {
+      const selected = (profileCatalog?.profiles || []).find(p => p.name === profile);
+      const label = selected?.label || profile;
+      if (!confirm("Switch to " + label + " and restart the bot?\n\nThis applies on the next process start. Open live positions are preserved by MT5, but the current bot process will be replaced.")) return;
+      const status = document.getElementById("profileManagerStatus");
+      if (triggerEl) { triggerEl.disabled = true; triggerEl.textContent = "Switching…"; }
+      if (status) status.textContent = "Requesting profile switch…";
+      try {
+        const res = await fetch("/api/switch_profile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile }) });
+        const out = await res.json();
+        if (!res.ok || !out.ok) throw new Error(out.message || "Profile switch failed");
+        if (status) status.textContent = out.message || "Profile switch requested — restarting…";
+      } catch (err) {
+        if (status) status.textContent = "Profile switch failed: " + (err.message || err);
+        if (triggerEl) { triggerEl.disabled = false; triggerEl.textContent = "Switch and restart"; }
+      }
     }
 
     async function fetchJson(url, timeoutMs = 20000) {
@@ -4375,6 +4752,7 @@
         ensureLearningTimelinePolling();
         ensureLivingParamsPolling();
         ensureDailyPnlPolling();
+        ensureLivePolling();
       }
     }
 
@@ -4407,6 +4785,7 @@
     // (startLoaderWatchdog) or the first refresh() from arming — which would otherwise
     // leave the loading screen up forever.
     try { setupNav(); } catch(e) { console.error("setupNav failed", e); }      try { initChartInteractions(); } catch(e) { console.error("initChartInteractions failed", e); }
+      loadProfileCatalog();
       document.getElementById("mobileRetryBtn")?.addEventListener("click", () => refresh(true));
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden) refresh(true);
@@ -4486,6 +4865,781 @@
           })
           .catch(() => { /* SSE will fill it in */ });
       })();
+    </script>
+
+    <script>
+    // ---- TradingPerformanceChart: synchronized equity/balance + drawdown + trades ----
+    (function () {
+      class TradingPerformanceChart {
+        constructor(options = {}) {
+          // All element lookups go through options so the same class can drive
+          // multiple chart instances (main dashboard + full-screen equity view).
+          this.ids = {
+            tooltip: options.tooltipId || "chartTooltip",
+            emptyState: options.emptyStateId || "chartEmptyState",
+            liveBadge: options.liveBadgeId || "chartLiveBadge",
+            status: options.statusId || "performanceStatus",
+            tradesBody: options.tradesBodyId || "recentTradesBody",
+            tradeCount: options.tradeCountId || "tradeCountBadge",
+            drawdownSummary: options.drawdownSummaryId || "drawdownSummary",
+            statBalance: options.statBalanceId || "statBalance",
+            statEquity: options.statEquityId || "statEquity",
+            statFloating: options.statFloatingId || "statFloating",
+            statFloatingPct: options.statFloatingPctId || "statFloatingPct",
+            statDrawdown: options.statDrawdownId || "statDrawdown",
+            statDrawdownUsd: options.statDrawdownUsdId || "statDrawdownUsd",
+            statMaxDrawdown: options.statMaxDrawdownId || "statMaxDrawdown",
+            statMaxDrawdownUsd: options.statMaxDrawdownUsdId || "statMaxDrawdownUsd",
+            statWinRate: options.statWinRateId || "statWinRate",
+            statWinLoss: options.statWinLossId || "statWinLoss",
+            statProfitFactor: options.statProfitFactorId || "statProfitFactor",
+            statExpectancy: options.statExpectancyId || "statExpectancy"
+          };
+          this.mainCanvas = document.getElementById(options.mainCanvasId || "equityChart");
+          this.overlayCanvas = document.getElementById(options.overlayCanvasId || "equityChartOverlay");
+          this.drawdownCanvas = document.getElementById(options.drawdownCanvasId || "drawdownChart");
+          this.tooltip = document.getElementById(this.ids.tooltip);
+          this.emptyState = document.getElementById(this.ids.emptyState);
+          this.liveBadge = document.getElementById(this.ids.liveBadge);
+          this.statusElement = document.getElementById(this.ids.status);
+          this.tradeTableBody = document.getElementById(this.ids.tradesBody);
+          this.tradeCountBadge = document.getElementById(this.ids.tradeCount);
+          this.drawdownSummary = document.getElementById(this.ids.drawdownSummary);
+          if (!this.mainCanvas || !this.overlayCanvas || !this.drawdownCanvas) {
+            console.warn("TradingPerformanceChart: canvases missing, skipping init");
+            return;
+          }
+          this.mainContext = this.mainCanvas.getContext("2d");
+          this.overlayContext = this.overlayCanvas.getContext("2d");
+          this.drawdownContext = this.drawdownCanvas.getContext("2d");
+          this.rawData = [];
+          this.visibleData = [];
+          this.activeRange = options.defaultRange || "15m";
+          this.hoverIndex = null;
+          this.colors = {
+            background: "#0f1014",
+            grid: "rgba(255,255,255,0.06)",
+            axis: "#777981",
+            balance: "#8b8f99",
+            equity: "#5ea1ff",
+            positive: "#41d98d",
+            negative: "#ff6174",
+            crosshair: "rgba(255,255,255,0.22)",
+            equityFill: "rgba(94,161,255,0.08)",
+            positiveFill: "rgba(65,217,141,0.10)",
+            negativeFill: "rgba(255,97,116,0.12)",
+            drawdownFill: "rgba(255,97,116,0.14)"
+          };
+          this.mainMargins = { left: 72, right: 22, top: 22, bottom: 38 };
+          this.drawdownMargins = { left: 72, right: 22, top: 14, bottom: 28 };
+          this.bindEvents();
+          this.bindRangeButtons();
+          this.bindResizeObserver();
+          this.resizeAndRender();
+        }
+
+        bindEvents() {
+          this.overlayCanvas.addEventListener("mousemove", event => { this.handlePointerMove(event); });
+          this.overlayCanvas.addEventListener("mouseleave", () => {
+            this.hoverIndex = null;
+            this.tooltip.style.display = "none";
+            this.clearOverlay();
+          });
+          this.overlayCanvas.addEventListener("touchmove", event => {
+            event.preventDefault();
+            const touch = event.touches[0];
+            if (touch) this.handlePointerMove(touch);
+          }, { passive: false });
+          this.overlayCanvas.addEventListener("touchend", () => {
+            this.hoverIndex = null;
+            this.tooltip.style.display = "none";
+            this.clearOverlay();
+          });
+        }
+
+        bindRangeButtons() {
+          const scope = this.mainCanvas.closest(".performance-panel");
+          const root = scope || document;
+          root.querySelectorAll("[data-range]").forEach(button => {
+            button.addEventListener("click", () => {
+              root.querySelectorAll("[data-range]").forEach(item => item.classList.remove("active"));
+              button.classList.add("active");
+              this.activeRange = button.dataset.range;
+              this.applyRange();
+            });
+          });
+        }
+
+        bindResizeObserver() {
+          if (typeof ResizeObserver === "undefined") return;
+          this.resizeObserver = new ResizeObserver(() => { this.resizeAndRender(); });
+          this.resizeObserver.observe(this.mainCanvas.parentElement);
+          this.resizeObserver.observe(this.drawdownCanvas.parentElement);
+        }
+
+        setData(points) {
+          if (!Array.isArray(points)) {
+            console.error("TradingPerformanceChart.setData expects an array.");
+            return;
+          }
+          this.rawData = this.normalizeData(points);
+          this.applyRange();
+        }
+
+        appendPoint(point) {
+          const normalized = this.normalizeData([point]);
+          if (!normalized.length) return;
+          this.rawData.push(normalized[0]);
+          this.rawData.sort((a, b) => a.timestamp - b.timestamp);
+          if (this.rawData.length > 10000) this.rawData = this.rawData.slice(-10000);
+          this.applyRange();
+        }
+
+        // External trade-quality stats from the ACTIVE trade ledger (the same
+        // source the Daily P&L tile reads). When set, the Win rate / Profit
+        // factor / Expectancy cards use these instead of stats derived from
+        // the in-window equity-curve markers — so the two panels can never
+        // disagree about the trade count.
+        setTradeStats(stats) {
+          const next = (stats && typeof stats === "object") ? stats : null;
+          const key = next ? JSON.stringify(next) : null;
+          if (key === this._lastStatsKey) return;  // no-op when unchanged (1.5s poll)
+          this._lastStatsKey = key;
+          this.externalStats = next;
+          this.render();
+        }
+
+        // External recent-trades rows from the ACTIVE ledger (server-side tail).
+        setRecentTrades(trades) {
+          const next = Array.isArray(trades) ? trades : null;
+          const first = next && next.length ? next[0] : null;
+          const key = next
+            ? `${next.length}|${first ? (first.trade_id || first.closed_at || first.ts || "") : ""}`
+            : null;
+          if (key === this._lastTradesKey) return;  // no-op when unchanged (1.5s poll)
+          this._lastTradesKey = key;
+          this.externalTrades = next;
+          this.render();
+        }
+
+        normalizeData(points) {
+          let previousBalance = null;
+          let runningPeak = Number.NEGATIVE_INFINITY;
+          return points
+            .map((point, index) => {
+              const timestamp = this.parseTimestamp(point.timestamp ?? point.time ?? point.datetime ?? Date.now() + index);
+              const balance = this.numberOrNull(point.balance);
+              const equity = this.numberOrNull(point.equity);
+              const normalizedBalance = balance ?? previousBalance ?? equity ?? 0;
+              const normalizedEquity = equity ?? normalizedBalance;
+              previousBalance = normalizedBalance;
+              runningPeak = Math.max(runningPeak, normalizedEquity);
+              const drawdownUsd = Math.max(0, runningPeak - normalizedEquity);
+              const drawdownPct = runningPeak > 0 ? (drawdownUsd / runningPeak) * 100 : 0;
+              const trade = point.trade ? {
+                symbol: String(point.trade.symbol || "Unknown"),
+                side: String(point.trade.side || "").toUpperCase(),
+                pnl: this.numberOrZero(point.trade.pnl),
+                r: this.numberOrNull(point.trade.r ?? point.trade.resultR),
+                fillDriftR: this.numberOrNull(point.trade.fillDriftR),
+                ticket: point.trade.ticket ?? null,
+                outcome: point.trade.outcome || (this.numberOrZero(point.trade.pnl) >= 0 ? "win" : "loss")
+              } : null;
+              return {
+                timestamp,
+                balance: normalizedBalance,
+                equity: normalizedEquity,
+                floatingPnl: normalizedEquity - normalizedBalance,
+                drawdownUsd,
+                drawdownPct,
+                trade
+              };
+            })
+            .filter(point => Number.isFinite(point.timestamp))
+            .sort((a, b) => a.timestamp - b.timestamp);
+        }
+
+        applyRange() {
+          if (!this.rawData.length) { this.visibleData = []; this.render(); return; }
+          if (this.activeRange === "all") { this.visibleData = [...this.rawData]; this.render(); return; }
+          const durationMap = { "15m": 15 * 60 * 1000, "1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000, "1d": 24 * 60 * 60 * 1000, "7d": 7 * 24 * 60 * 60 * 1000, "30d": 30 * 24 * 60 * 60 * 1000 };
+          const duration = durationMap[this.activeRange];
+          const latestTimestamp = this.rawData[this.rawData.length - 1].timestamp;
+          const startTimestamp = latestTimestamp - duration;
+          this.visibleData = this.rawData.filter(point => point.timestamp >= startTimestamp);
+          this.render();
+        }
+
+        resizeAndRender() {
+          this.resizeCanvasToDisplaySize(this.mainCanvas);
+          this.resizeCanvasToDisplaySize(this.overlayCanvas);
+          this.resizeCanvasToDisplaySize(this.drawdownCanvas);
+          this.render();
+        }
+
+        resizeCanvasToDisplaySize(canvas) {
+          if (!canvas || !canvas.parentElement) return { width: 0, height: 0, ratio: 1 };
+          const ratio = Math.max(1, window.devicePixelRatio || 1);
+          const rect = canvas.getBoundingClientRect();
+          const width = Math.max(1, Math.round(rect.width));
+          const height = Math.max(1, Math.round(rect.height));
+          const targetWidth = Math.round(width * ratio);
+          const targetHeight = Math.round(height * ratio);
+          if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+          }
+          const context = canvas.getContext("2d");
+          context.setTransform(ratio, 0, 0, ratio, 0, 0);
+          return { width, height, ratio };
+        }
+
+        render() {
+          this.drawMainChart();
+          this.drawDrawdownChart();
+          this.updateStatistics();
+          this.updateRecentTrades();
+          this.updateLiveBadge();
+          if (this.emptyState) this.emptyState.style.display = this.visibleData.length > 0 ? "none" : "grid";
+        }
+
+        drawMainChart() {
+          const context = this.mainContext;
+          const width = this.mainCanvas.clientWidth || this.mainCanvas.parentElement.clientWidth;
+          const height = this.mainCanvas.clientHeight || this.mainCanvas.parentElement.clientHeight;
+          context.clearRect(0, 0, width, height);
+          context.fillStyle = this.colors.background;
+          context.fillRect(0, 0, width, height);
+          if (!this.visibleData.length) return;
+          const bounds = this.getMainBounds();
+          const plot = this.getPlotBounds(width, height, this.mainMargins);
+          this.drawMainGrid(context, plot, bounds);
+          this.drawFloatingExposure(context, plot, bounds);
+          this.drawSeries(context, this.visibleData.map(point => point.balance), plot, bounds, this.colors.balance, 1.5);
+          this.drawSeries(context, this.visibleData.map(point => point.equity), plot, bounds, this.colors.equity, 2.2);
+          this.drawTradeMarkers(context, plot, bounds);
+          this.drawTimeLabels(context, plot, this.mainMargins.bottom);
+        }
+
+        getMainBounds() {
+          const values = [];
+          this.visibleData.forEach(point => { values.push(point.balance, point.equity); });
+          let minimum = Math.min(...values);
+          let maximum = Math.max(...values);
+          if (minimum === maximum) { minimum -= 1; maximum += 1; }
+          const range = maximum - minimum;
+          const padding = range * 0.1;
+          return { minimum: minimum - padding, maximum: maximum + padding };
+        }
+
+        getPlotBounds(width, height, margins) {
+          return {
+            left: margins.left,
+            right: width - margins.right,
+            top: margins.top,
+            bottom: height - margins.bottom,
+            width: width - margins.left - margins.right,
+            height: height - margins.top - margins.bottom
+          };
+        }
+
+        drawMainGrid(context, plot, bounds) {
+          const rows = 5;
+          context.save();
+          context.font = "11px Inter, system-ui, sans-serif";
+          context.textAlign = "right";
+          context.textBaseline = "middle";
+          for (let index = 0; index <= rows; index += 1) {
+            const ratio = index / rows;
+            const y = plot.top + plot.height * ratio;
+            const value = bounds.maximum - (bounds.maximum - bounds.minimum) * ratio;
+            context.beginPath();
+            context.moveTo(plot.left, y);
+            context.lineTo(plot.right, y);
+            context.strokeStyle = this.colors.grid;
+            context.lineWidth = 1;
+            context.stroke();
+            context.fillStyle = this.colors.axis;
+            context.fillText(this.formatMoneyCompact(value), plot.left - 10, y);
+          }
+          context.restore();
+        }
+
+        drawSeries(context, values, plot, bounds, color, lineWidth) {
+          if (!values.length) return;
+          context.save();
+          context.beginPath();
+          values.forEach((value, index) => {
+            const x = this.indexToX(index, values.length, plot);
+            const y = this.valueToY(value, bounds, plot);
+            if (index === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          });
+          context.strokeStyle = color;
+          context.lineWidth = lineWidth;
+          context.lineJoin = "round";
+          context.lineCap = "round";
+          context.stroke();
+          context.restore();
+        }
+
+        drawFloatingExposure(context, plot, bounds) {
+          if (this.visibleData.length < 2) return;
+          context.save();
+          for (let index = 0; index < this.visibleData.length - 1; index += 1) {
+            const current = this.visibleData[index];
+            const next = this.visibleData[index + 1];
+            const x1 = this.indexToX(index, this.visibleData.length, plot);
+            const x2 = this.indexToX(index + 1, this.visibleData.length, plot);
+            const currentBalanceY = this.valueToY(current.balance, bounds, plot);
+            const currentEquityY = this.valueToY(current.equity, bounds, plot);
+            const nextBalanceY = this.valueToY(next.balance, bounds, plot);
+            const nextEquityY = this.valueToY(next.equity, bounds, plot);
+            context.beginPath();
+            context.moveTo(x1, currentBalanceY);
+            context.lineTo(x2, nextBalanceY);
+            context.lineTo(x2, nextEquityY);
+            context.lineTo(x1, currentEquityY);
+            context.closePath();
+            const averageFloating = (current.floatingPnl + next.floatingPnl) / 2;
+            context.fillStyle = averageFloating >= 0 ? this.colors.positiveFill : this.colors.negativeFill;
+            context.fill();
+          }
+          context.restore();
+        }
+
+        drawTradeMarkers(context, plot, bounds) {
+          this.visibleData.forEach(point => {
+            if (!point.trade) return;
+            const x = this.indexToX(this.visibleData.indexOf(point), this.visibleData.length, plot);
+            const y = this.valueToY(point.equity, bounds, plot);
+            const isWin = point.trade.pnl >= 0;
+            context.save();
+            context.beginPath();
+            context.arc(x, y, 5, 0, Math.PI * 2);
+            context.fillStyle = isWin ? this.colors.positive : this.colors.negative;
+            context.fill();
+            context.strokeStyle = this.colors.background;
+            context.lineWidth = 2;
+            context.stroke();
+            context.restore();
+          });
+        }
+
+        drawTimeLabels(context, plot) {
+          const numberOfLabels = Math.min(5, this.visibleData.length);
+          if (numberOfLabels < 2) return;
+          context.save();
+          context.font = "10px Inter, system-ui, sans-serif";
+          context.fillStyle = this.colors.axis;
+          context.textAlign = "center";
+          context.textBaseline = "top";
+          for (let index = 0; index < numberOfLabels; index += 1) {
+            const dataIndex = Math.round((index / (numberOfLabels - 1)) * (this.visibleData.length - 1));
+            const x = this.indexToX(dataIndex, this.visibleData.length, plot);
+            const label = this.formatAxisTime(this.visibleData[dataIndex].timestamp);
+            context.fillText(label, x, plot.bottom + 11);
+          }
+          context.restore();
+        }
+
+        drawDrawdownChart() {
+          const context = this.drawdownContext;
+          const width = this.drawdownCanvas.clientWidth || this.drawdownCanvas.parentElement.clientWidth;
+          const height = this.drawdownCanvas.clientHeight || this.drawdownCanvas.parentElement.clientHeight;
+          context.clearRect(0, 0, width, height);
+          context.fillStyle = this.colors.background;
+          context.fillRect(0, 0, width, height);
+          if (!this.visibleData.length) return;
+          const plot = this.getPlotBounds(width, height, this.drawdownMargins);
+          const maximumDrawdown = Math.max(0.01, ...this.visibleData.map(point => point.drawdownPct));
+          this.drawDrawdownGrid(context, plot, maximumDrawdown);
+          context.save();
+          context.beginPath();
+          context.moveTo(plot.left, plot.top);
+          this.visibleData.forEach((point, index) => {
+            const x = this.indexToX(index, this.visibleData.length, plot);
+            const y = plot.top + (point.drawdownPct / maximumDrawdown) * plot.height;
+            context.lineTo(x, y);
+          });
+          context.lineTo(plot.right, plot.top);
+          context.closePath();
+          context.fillStyle = this.colors.drawdownFill;
+          context.fill();
+          context.restore();
+          context.save();
+          context.beginPath();
+          this.visibleData.forEach((point, index) => {
+            const x = this.indexToX(index, this.visibleData.length, plot);
+            const y = plot.top + (point.drawdownPct / maximumDrawdown) * plot.height;
+            if (index === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          });
+          context.strokeStyle = this.colors.negative;
+          context.lineWidth = 1.7;
+          context.lineJoin = "round";
+          context.stroke();
+          context.restore();
+          this.drawTimeLabelsForCanvas(context, plot, this.visibleData);
+        }
+
+        drawDrawdownGrid(context, plot, maximumDrawdown) {
+          const rows = 3;
+          context.save();
+          context.font = "10px Inter, system-ui, sans-serif";
+          context.textAlign = "right";
+          context.textBaseline = "middle";
+          for (let index = 0; index <= rows; index += 1) {
+            const ratio = index / rows;
+            const y = plot.top + plot.height * ratio;
+            const value = maximumDrawdown * ratio;
+            context.beginPath();
+            context.moveTo(plot.left, y);
+            context.lineTo(plot.right, y);
+            context.strokeStyle = this.colors.grid;
+            context.stroke();
+            context.fillStyle = this.colors.axis;
+            context.fillText(`-${value.toFixed(1)}%`, plot.left - 10, y);
+          }
+          context.restore();
+        }
+
+        drawTimeLabelsForCanvas(context, plot, data) {
+          const numberOfLabels = Math.min(5, data.length);
+          if (numberOfLabels < 2) return;
+          context.save();
+          context.font = "10px Inter, system-ui, sans-serif";
+          context.fillStyle = this.colors.axis;
+          context.textAlign = "center";
+          context.textBaseline = "top";
+          for (let index = 0; index < numberOfLabels; index += 1) {
+            const dataIndex = Math.round((index / (numberOfLabels - 1)) * (data.length - 1));
+            const x = this.indexToX(dataIndex, data.length, plot);
+            context.fillText(this.formatAxisTime(data[dataIndex].timestamp), x, plot.bottom + 8);
+          }
+          context.restore();
+        }
+
+        handlePointerMove(event) {
+          if (!this.visibleData.length) return;
+          const rect = this.overlayCanvas.getBoundingClientRect();
+          const pointerX = event.clientX - rect.left;
+          const plot = this.getPlotBounds(this.overlayCanvas.clientWidth, this.overlayCanvas.clientHeight, this.mainMargins);
+          const clampedX = Math.max(plot.left, Math.min(pointerX, plot.right));
+          const ratio = plot.width > 0 ? (clampedX - plot.left) / plot.width : 0;
+          const index = Math.round(ratio * (this.visibleData.length - 1));
+          this.hoverIndex = Math.max(0, Math.min(index, this.visibleData.length - 1));
+          this.drawOverlay();
+          this.showTooltip(event);
+        }
+
+        drawOverlay() {
+          this.clearOverlay();
+          if (this.hoverIndex === null || !this.visibleData[this.hoverIndex]) return;
+          const context = this.overlayContext;
+          const width = this.overlayCanvas.clientWidth;
+          const height = this.overlayCanvas.clientHeight;
+          const plot = this.getPlotBounds(width, height, this.mainMargins);
+          const bounds = this.getMainBounds();
+          const point = this.visibleData[this.hoverIndex];
+          const x = this.indexToX(this.hoverIndex, this.visibleData.length, plot);
+          const balanceY = this.valueToY(point.balance, bounds, plot);
+          const equityY = this.valueToY(point.equity, bounds, plot);
+          context.save();
+          context.beginPath();
+          context.moveTo(x, plot.top);
+          context.lineTo(x, plot.bottom);
+          context.strokeStyle = this.colors.crosshair;
+          context.setLineDash([4, 5]);
+          context.stroke();
+          context.setLineDash([]);
+          this.drawHoverPoint(context, x, balanceY, this.colors.balance);
+          this.drawHoverPoint(context, x, equityY, this.colors.equity);
+          context.restore();
+        }
+
+        drawHoverPoint(context, x, y, color) {
+          context.beginPath();
+          context.arc(x, y, 4.5, 0, Math.PI * 2);
+          context.fillStyle = color;
+          context.fill();
+          context.strokeStyle = "#0f1014";
+          context.lineWidth = 2;
+          context.stroke();
+        }
+
+        clearOverlay() {
+          this.overlayContext.clearRect(0, 0, this.overlayCanvas.clientWidth, this.overlayCanvas.clientHeight);
+        }
+
+        showTooltip(event) {
+          const point = this.visibleData[this.hoverIndex];
+          if (!point) return;
+          const trade = point.trade;
+          const floatingClass = point.floatingPnl >= 0 ? "tooltip-positive" : "tooltip-negative";
+          const tradeHtml = trade ? `
+            <div class="tooltip-divider"></div>
+            <div class="tooltip-row"><span>Trade</span><strong>${this.escapeHtml(trade.symbol)} ${this.escapeHtml(trade.side)}</strong></div>
+            <div class="tooltip-row"><span>Result</span><strong class="${trade.pnl >= 0 ? "tooltip-positive" : "tooltip-negative"}">${this.formatSignedMoney(trade.pnl)}</strong></div>
+            <div class="tooltip-row"><span>R multiple</span><strong>${this.formatR(trade.r)}</strong></div>
+            <div class="tooltip-row"><span>Fill drift</span><strong>${this.formatR(trade.fillDriftR)}</strong></div>
+          ` : "";
+          this.tooltip.innerHTML = `
+            <div class="tooltip-time">${this.formatFullTime(point.timestamp)}</div>
+            <div class="tooltip-row"><span>Balance</span><strong>${this.formatMoney(point.balance)}</strong></div>
+            <div class="tooltip-row"><span>Equity</span><strong>${this.formatMoney(point.equity)}</strong></div>
+            <div class="tooltip-row"><span>Floating P&amp;L</span><strong class="${floatingClass}">${this.formatSignedMoney(point.floatingPnl)}</strong></div>
+            <div class="tooltip-row"><span>Drawdown</span><strong class="tooltip-negative">-${point.drawdownPct.toFixed(2)}%</strong></div>
+            ${tradeHtml}
+          `;
+          this.tooltip.style.display = "block";
+          const chartRect = this.overlayCanvas.parentElement.getBoundingClientRect();
+          const pointerX = event.clientX - chartRect.left;
+          const pointerY = event.clientY - chartRect.top;
+          const tooltipWidth = this.tooltip.offsetWidth;
+          const tooltipHeight = this.tooltip.offsetHeight;
+          let left = pointerX + 16;
+          let top = pointerY - tooltipHeight / 2;
+          if (left + tooltipWidth > chartRect.width - 8) left = pointerX - tooltipWidth - 16;
+          top = Math.max(8, Math.min(top, chartRect.height - tooltipHeight - 8));
+          this.tooltip.style.left = `${left}px`;
+          this.tooltip.style.top = `${top}px`;
+        }
+
+        updateStatistics() {
+          // Trade-quality cards prefer the ACTIVE ledger stats when present
+          // (set via setTradeStats) so they match the Daily P&L tile exactly;
+          // the equity-curve values are the fallback for window-only views.
+          const hasExternal = !!(this.externalStats && this.externalStats.trade_count);
+          const es = this.externalStats || {};
+          const points = this.visibleData;
+          const latest = points.length ? points[points.length - 1] : null;
+          if (!points.length && !hasExternal) {
+            this.setStat(this.ids.statBalance, "$0.00"); this.setStat(this.ids.statEquity, "$0.00");
+            this.setStat(this.ids.statFloating, "$0.00"); this.setStat(this.ids.statFloatingPct, "0.00%");
+            this.setStat(this.ids.statDrawdown, "0.00%"); this.setStat(this.ids.statDrawdownUsd, "$0.00");
+            this.setStat(this.ids.statMaxDrawdown, "0.00%"); this.setStat(this.ids.statMaxDrawdownUsd, "$0.00");
+            this.setStat(this.ids.statWinRate, "0.0%"); this.setStat(this.ids.statWinLoss, "0 wins / 0 losses");
+            this.setStat(this.ids.statProfitFactor, "N/A"); this.setStat(this.ids.statExpectancy, "$0.00");
+            return;
+          }
+          const trades = points.filter(point => point.trade).map(point => point.trade);
+          const wins = trades.filter(trade => trade.pnl > 0);
+          const losses = trades.filter(trade => trade.pnl < 0);
+          const grossProfit = wins.reduce((total, trade) => total + trade.pnl, 0);
+          const grossLoss = Math.abs(losses.reduce((total, trade) => total + trade.pnl, 0));
+          const totalPnl = trades.reduce((total, trade) => total + trade.pnl, 0);
+          let winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
+          let winCount = wins.length;
+          let lossCount = losses.length;
+          let expectancy = trades.length > 0 ? totalPnl / trades.length : 0;
+          let profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Number.POSITIVE_INFINITY : null;
+          if (hasExternal) {
+            winRate = Number(es.win_rate) || 0;
+            winCount = Number(es.wins) || 0;
+            lossCount = Number(es.losses) || 0;
+            profitFactor = es.profit_factor == null ? null : Number(es.profit_factor);
+            expectancy = Number(es.expectancy) || 0;
+          }
+          if (latest) {
+            const maximumDrawdownPoint = points.reduce((maximum, point) => point.drawdownPct > maximum.drawdownPct ? point : maximum, points[0]);
+            const floatingPct = latest.balance !== 0 ? (latest.floatingPnl / latest.balance) * 100 : 0;
+            this.setStat(this.ids.statBalance, this.formatMoney(latest.balance));
+            this.setStat(this.ids.statEquity, this.formatMoney(latest.equity));
+            this.setStat(this.ids.statFloating, this.formatSignedMoney(latest.floatingPnl), this.valueClass(latest.floatingPnl));
+            this.setStat(this.ids.statFloatingPct, `${floatingPct >= 0 ? "+" : ""}${floatingPct.toFixed(2)}%`);
+            this.setStat(this.ids.statDrawdown, `-${latest.drawdownPct.toFixed(2)}%`, latest.drawdownPct > 0 ? "negative" : "");
+            this.setStat(this.ids.statDrawdownUsd, `-${this.formatMoney(latest.drawdownUsd)}`);
+            this.setStat(this.ids.statMaxDrawdown, `-${maximumDrawdownPoint.drawdownPct.toFixed(2)}%`, maximumDrawdownPoint.drawdownPct > 0 ? "negative" : "");
+            this.setStat(this.ids.statMaxDrawdownUsd, `-${this.formatMoney(maximumDrawdownPoint.drawdownUsd)}`);
+            if (this.drawdownSummary) this.drawdownSummary.textContent = `Maximum: ${maximumDrawdownPoint.drawdownPct.toFixed(2)}%`;
+          }
+          this.setStat(this.ids.statWinRate, `${winRate.toFixed(1)}%`, winRate >= 50 ? "positive" : "negative");
+          this.setStat(this.ids.statWinLoss, `${winCount} wins / ${lossCount} losses`);
+          this.setStat(this.ids.statProfitFactor, profitFactor === Number.POSITIVE_INFINITY ? "∞" : profitFactor === null ? "N/A" : profitFactor.toFixed(2), profitFactor !== null && profitFactor >= 1 ? "positive" : profitFactor !== null ? "negative" : "");
+          this.setStat(this.ids.statExpectancy, this.formatSignedMoney(expectancy), this.valueClass(expectancy));
+        }
+
+        updateRecentTrades() {
+          // Prefer the ACTIVE ledger rows (server-side tail, same source as
+          // the Daily P&L tile) over the in-window curve trades.
+          let trades;
+          if (Array.isArray(this.externalTrades) && this.externalTrades.length) {
+            trades = this.externalTrades.slice(-10).reverse().map(t => ({
+              symbol: t.symbol || "Unknown",
+              side: String(t.side || "").toUpperCase(),
+              pnl: this.numberOrZero(t.pnl),
+              r: null,
+              fillDriftR: null,
+              balance: null,
+              outcome: t.result || (this.numberOrZero(t.pnl) >= 0 ? "win" : "loss"),
+              timestamp: this.parseTimestamp(t.closed_at || t.close_ts || t.ts)
+            }));
+          } else {
+            trades = this.visibleData.filter(point => point.trade).map(point => ({ ...point.trade, timestamp: point.timestamp, balance: point.balance })).slice(-10).reverse();
+          }
+          this.tradeCountBadge.textContent = `${trades.length} trade${trades.length === 1 ? "" : "s"}`;
+          if (!trades.length) {
+            this.tradeTableBody.innerHTML = `<tr><td colspan="7" class="table-empty">No completed trades available</td></tr>`;
+            return;
+          }
+          this.tradeTableBody.innerHTML = trades.map(trade => {
+            const resultClass = trade.pnl >= 0 ? "trade-result-win" : "trade-result-loss";
+            return `<tr>
+              <td>${this.formatTableTime(trade.timestamp)}</td>
+              <td>${this.escapeHtml(trade.symbol)}</td>
+              <td><span class="trade-side">${this.escapeHtml(trade.side || "N/A")}</span></td>
+              <td class="${resultClass}">${this.formatSignedMoney(trade.pnl)}</td>
+              <td>${this.formatR(trade.r)}</td>
+              <td>${this.formatR(trade.fillDriftR)}</td>
+              <td>${trade.balance == null ? "—" : this.formatMoney(trade.balance)}</td>
+            </tr>`;
+          }).join("");
+        }
+
+        updateLiveBadge() {
+          if (!this.visibleData.length) { this.liveBadge.textContent = "0 points"; return; }
+          const first = this.visibleData[0].timestamp;
+          const last = this.visibleData[this.visibleData.length - 1].timestamp;
+          const span = this.formatDuration(last - first);
+          this.liveBadge.textContent = `${this.visibleData.length} pts · Last ${span}`;
+        }
+
+        setStatus(status, label) {
+          // A partially-initialized instance (canvas missing) has a null
+          // statusElement; no-op instead of throwing.
+          if (!this.statusElement) return;
+          const safeStatus = ["live", "degraded", "halted"].includes(status) ? status : "degraded";
+          this.statusElement.classList.remove("live", "degraded", "halted");
+          this.statusElement.classList.add(safeStatus);
+          this.statusElement.innerHTML = `<span class="status-dot"></span> ${this.escapeHtml(label || safeStatus)}`;
+        }
+
+        setStat(id, value, className = "") {
+          const element = document.getElementById(id);
+          if (!element) return;
+          element.textContent = value;
+          if (element.classList.contains("stat-value")) {
+            element.classList.remove("positive", "negative");
+            if (className) element.classList.add(className);
+          }
+        }
+
+        indexToX(index, total, plot) {
+          if (total <= 1) return plot.left + plot.width / 2;
+          return plot.left + (index / (total - 1)) * plot.width;
+        }
+
+        valueToY(value, bounds, plot) {
+          const range = bounds.maximum - bounds.minimum;
+          if (range <= 0) return plot.top + plot.height / 2;
+          return plot.bottom - ((value - bounds.minimum) / range) * plot.height;
+        }
+
+        parseTimestamp(value) {
+          if (value instanceof Date) return value.getTime();
+          if (typeof value === "number") return value < 100000000000 ? value * 1000 : value;
+          const parsed = Date.parse(value);
+          return Number.isFinite(parsed) ? parsed : Date.now();
+        }
+
+        numberOrNull(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
+        numberOrZero(value) { const number = Number(value); return Number.isFinite(number) ? number : 0; }
+
+        valueClass(value) {
+          if (value > 0) return "positive";
+          if (value < 0) return "negative";
+          return "";
+        }
+
+        formatMoney(value) {
+          return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value || 0);
+        }
+
+        formatSignedMoney(value) {
+          const amount = Number(value) || 0;
+          const formatted = this.formatMoney(Math.abs(amount));
+          if (amount > 0) return `+${formatted}`;
+          if (amount < 0) return `-${formatted}`;
+          return formatted;
+        }
+
+        formatMoneyCompact(value) {
+          const absolute = Math.abs(value);
+          if (absolute >= 1000000) return `$${(value / 1000000).toFixed(1)}M`;
+          if (absolute >= 1000) return `$${(value / 1000).toFixed(1)}K`;
+          return `$${value.toFixed(0)}`;
+        }
+
+        formatR(value) {
+          if (!Number.isFinite(value)) return "N/A";
+          return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`;
+        }
+
+        formatFullTime(timestamp) {
+          return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(timestamp));
+        }
+
+        formatAxisTime(timestamp) {
+          const date = new Date(timestamp);
+          if (this.activeRange === "1d" || this.activeRange === "7d" || this.activeRange === "30d" || this.activeRange === "all") {
+            return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit" }).format(date);
+          }
+          return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(date);
+        }
+
+        formatTableTime(timestamp) {
+          return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(timestamp));
+        }
+
+        formatDuration(milliseconds) {
+          const minutes = Math.max(0, Math.round(milliseconds / 60000));
+          if (minutes < 60) return `${Math.max(1, minutes)} minutes`;
+          const hours = minutes / 60;
+          if (hours < 24) return `${hours.toFixed(hours >= 10 ? 0 : 1)} hours`;
+          const days = hours / 24;
+          return `${days.toFixed(days >= 10 ? 0 : 1)} days`;
+        }
+
+        escapeHtml(value) {
+          return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+        }
+      }
+
+      const tradingPerformanceChart = new TradingPerformanceChart();
+      window.tradingPerformanceChart = tradingPerformanceChart;
+      // Full-screen equity view uses the same engine with its own element set.
+      window.tradingPerformanceChartFull = new TradingPerformanceChart({
+        mainCanvasId: "equityChartFull",
+        overlayCanvasId: "equityChartOverlayFull",
+        drawdownCanvasId: "drawdownChartFull",
+        tooltipId: "chartTooltipFull",
+        emptyStateId: "chartEmptyStateFull",
+        liveBadgeId: "chartLiveBadgeFull",
+        statusId: "performanceStatusFull",
+        tradesBodyId: "recentTradesBodyFull",
+        tradeCountId: "tradeCountBadgeFull",
+        drawdownSummaryId: "drawdownSummaryFull",
+        statBalanceId: "statBalanceFull",
+        statEquityId: "statEquityFull",
+        statFloatingId: "statFloatingFull",
+        statFloatingPctId: "statFloatingPctFull",
+        statDrawdownId: "statDrawdownFull",
+        statDrawdownUsdId: "statDrawdownUsdFull",
+        statMaxDrawdownId: "statMaxDrawdownFull",
+        statMaxDrawdownUsdId: "statMaxDrawdownUsdFull",
+        statWinRateId: "statWinRateFull",
+        statWinLossId: "statWinLossFull",
+        statProfitFactorId: "statProfitFactorFull",
+        statExpectancyId: "statExpectancyFull",
+        defaultRange: "1d"
+      });
+    })();
     </script>
 </body>
 </html>

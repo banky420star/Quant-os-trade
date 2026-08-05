@@ -129,7 +129,9 @@ def run() -> dict | None:
             if has_outcomes and not has_cells:
                 rebuild_analytics_from_outcomes(arena_state)
 
-    positions_data = read_json_state("paper_positions.json", default={"positions": []})
+    mode = str((config.get("execution") or {}).get("mode") or "paper").lower()
+    positions_file = "mt5_positions.json" if mode == "mt5" else "paper_positions.json"
+    positions_data = read_json_state(positions_file, default={"positions": []})
     open_positions = list(positions_data.get("positions") or [])
 
     engine = DecisionEngine(config, logger)

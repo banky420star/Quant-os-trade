@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from core.blue_guardian import blue_guardian_enabled, evaluate_daily_state
 from core.equity_tracker import record_snapshot
 from core.risk_manager import RiskManager
+from core.trade_history import trade_history_filename
 from core.utils import (
     load_config,
     read_json_state,
@@ -29,7 +30,10 @@ def run() -> dict:
 
     positions_data = read_json_state("paper_positions.json", default={"positions": []})
     orders_data = read_json_state("paper_orders.json", default={"orders": [], "balance": {}})
-    trades_data = read_json_state("paper_trades.json", default={"trades": []})
+    # Read the ACTIVE closed-trade ledger, not a hardcoded paper_trades.json.
+    # In MT5 mode closed trades live in mt5_trades.json; paper_trades.json is
+    # empty/stale, which silently broke risk math (drawdown, giveback guard).
+    trades_data = read_json_state(trade_history_filename(config), default={"trades": []})
     features = read_json_state("features.json", default={"symbols": {}})
     kill_existing = read_json_state("kill_switch.json", default={"kill_switch": config["risk"].get("kill_switch", False)})
 
@@ -118,6 +122,9 @@ def run() -> dict:
                 "kill_switch": True,
                 "reason": bg.get("pause_reason") or "Blue Guardian daily pause",
                 "activated_at": kill_existing.get("activated_at") or result["kill_switch"].get("activated_at"),
+                # Preserve an explicit dashboard stop through guardian updates;
+                # risk conditions must never silently resume operator-paused bot.
+                **({"source": "operator"} if kill_existing.get("source") == "operator" else {}),
             }
 
     write_json_state("risk_state.json", result["risk_state"])

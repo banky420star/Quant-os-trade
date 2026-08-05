@@ -34,6 +34,8 @@ try:
 except ImportError:
     mt5 = None  # type: ignore
 
+from core.mt5_owner import MT5Owner
+
 
 # ----- Tier-2 mgmt archive (2026-07-20) ---------------------------------------
 # Append-only JSONL log at state/position_mgmt_archive.jsonl. One record per
@@ -645,18 +647,30 @@ def compute_managed_sl(
     current_sl = float(position.get("sl", 0))
     be_cfg = _be_cfg(config)
     trail_cfg = _trail_cfg(config)
+    fixed_exit_only = bool(
+        config.get("execution", {}).get("fixed_exit_only", False)
+        or config.get("trading", {}).get("fixed_exit_only", False)
+    )
+    if fixed_exit_only:
+        # Data-lab fixed-exit experiment: the broker's initial SL/TP are the
+        # only exits. Continue recording MFE/MAE below, but never move SL.
+        be_cfg = {**be_cfg, "enabled": False}
+        trail_cfg = {**trail_cfg, "enabled": False}
     be_sym = _symbol_overrides(be_cfg, symbol)
     trail_sym = _symbol_overrides(trail_cfg, symbol)
-    be_sym, trail_sym = _merge_management_profile(be_sym, trail_sym, position)
-    # Data-driven live override (scripts/calibrate_be_trail.py). Trusted only.
-    be_sym, trail_sym, _applied = _merge_live(be_sym, trail_sym, symbol, _load_live_mgmt())
-    # Ghost promotions from trade_manager (wider BE/trail that beat live).
-    try:
-        from core.trade_manager import merge_promotion_into_mgmt
+    if not fixed_exit_only:
+        be_sym, trail_sym = _merge_management_profile(be_sym, trail_sym, position)
+    # Data-driven overrides and ghost promotions are management features, not
+    # part of the fixed-exit experiment. Do not allow learned state to re-enable
+    # them after the profile has disabled BE/trailing.
+    if not fixed_exit_only:
+        be_sym, trail_sym, _applied = _merge_live(be_sym, trail_sym, symbol, _load_live_mgmt())
+        try:
+            from core.trade_manager import merge_promotion_into_mgmt
 
-        be_sym, trail_sym, _promo = merge_promotion_into_mgmt(be_sym, trail_sym, symbol)
-    except Exception:
-        pass
+            be_sym, trail_sym, _promo = merge_promotion_into_mgmt(be_sym, trail_sym, symbol)
+        except Exception:
+            pass
 
     # Distance-first: when *broker points* are configured, null USD triggers
     # entirely so OR-semantics cannot fire BE/trail early (review bug: $25 USD
@@ -812,6 +826,8 @@ def compute_managed_sl(
     # to entry (breakeven) then force-activate trailing at the per-symbol
     # trail_atr (default 0.25 ATR) so the runner captures further profit.
     _adex_cfg = (config.get("trading") or {}).get("adaptive_exit") or {}
+    if fixed_exit_only:
+        _adex_cfg = {**_adex_cfg, "enabled": False}
     if _adex_cfg.get("enabled", True) and not row.get("break_even"):
         try:
             _adex_per = _adex_cfg.get("per_symbol") or {}
@@ -853,6 +869,19 @@ def compute_managed_sl(
     if trail_cfg.get("enabled", True):
         trail_dist = _trail_distance_price(trail_sym, trail_cfg, atr, point)
         trail_dist *= trail_distance_multiplier(row, config)
+        # 2026-08-05 — cap the trailing offset at ``trail_max_r`` R-multiples
+        # of risk. trail_points 350-500 is ~1.7-2.5R on FX, so an armed trail
+        # sat below entry at modest MFE and the capital-protection clamp below
+        # pinned it to break-even — winners gave back everything. Capping the
+        # offset locks profit ABOVE entry once trailing arms (e.g. 0.6R = max
+        # 0.6R give-back from the peak). Per-symbol override via
+        # trailing.per_symbol.<SYM>.trail_max_r.
+        _trail_max_r = float(
+            trail_sym.get("trail_max_r", trail_cfg.get("trail_max_r", 0.6))
+        )
+        _risk_dist_trail = abs(float(entry) - float(risk_sl))
+        if _risk_dist_trail > 0 and _trail_max_r > 0:
+            trail_dist = min(trail_dist, _trail_max_r * _risk_dist_trail)
         rr = profit_rr(side, entry, risk_sl, current_price)
         trail_armed = trail_activation_allowed(
             row,
@@ -903,6 +932,9 @@ def compute_managed_sl(
         if row.get("partial_tp_done") and not row.get("trailing"):
             _ptp_dist = _trail_distance_price(trail_sym, trail_cfg, atr, point)
             _ptp_dist *= trail_distance_multiplier(row, config)
+            # Same trail_max_r cap as the main trail block (2026-08-05).
+            if _risk_dist_trail > 0 and _trail_max_r > 0:
+                _ptp_dist = min(_ptp_dist, _trail_max_r * _risk_dist_trail)
             row["trailing"] = True
             row["trail_distance"] = round(_ptp_dist, 8)
             if side == "BUY":
@@ -921,6 +953,8 @@ def compute_managed_sl(
     # (never loosens) and defers to any existing BE/trail SL that is already
     # tighter than the time-based floor.
     _tsl_cfg = ((config.get("trading") or {}).get("exits") or {}).get("time_based_sl") or {}
+    if fixed_exit_only:
+        _tsl_cfg = {**_tsl_cfg, "enabled": False}
     if _tsl_cfg.get("enabled", False) and risk_sl != entry:
         try:
             _tsl_start = int(_tsl_cfg.get("start_tighten_seconds", 1800))
@@ -1095,6 +1129,16 @@ def manage_mt5_positions(
     logger = logger or logging.getLogger("position_manager")
     if mt5 is None:
         raise RuntimeError("MetaTrader5 package not installed")
+    # Defense-in-depth (2026-08-04 review fix): never send modify/close orders
+    # when live trading is disabled — this function's order path bypasses
+    # MT5Broker's TradingRefusedError guard, so the gate lives here too (not
+    # just at the loop call sites) so no future caller can fire orders.
+    if not config.get("execution", {}).get("live_trading_enabled", False):
+        logger.info(
+            "manage_mt5_positions: live_trading_enabled=false — skipping "
+            "SL management (validation mode)"
+        )
+        return {"updated": 0, "actions": [], "errors": [], "audit": [], "timestamp": utc_now_iso()}
 
     mgmt = _load_mgmt_state()
     open_times = _load_open_times()
@@ -1113,10 +1157,10 @@ def manage_mt5_positions(
         ticket = int(pos["ticket"])
         ticket_key = str(ticket)
         feat = features.get("symbols", {}).get(symbol, {})
-        if not mt5.symbol_select(broker_sym, True):
+        if not MT5Owner.instance().symbol_select(broker_sym, True):
             continue
-        tick = mt5.symbol_info_tick(broker_sym)
-        info = mt5.symbol_info(broker_sym)
+        tick = MT5Owner.instance().symbol_info_tick(broker_sym)
+        info = MT5Owner.instance().symbol_info(broker_sym)
         if tick is None or info is None:
             continue
 
@@ -1154,7 +1198,11 @@ def manage_mt5_positions(
         )
         _mp = pos.get("management_profile") or {}
         _mhm = float(_mp.get("max_hold_minutes") or (config.get("risk") or {}).get("stale_close_minutes") or (config.get("risk") or {}).get("max_order_age_minutes") or 30)
-        if age > _mhm * 60 and profit_usd < 0:
+        fixed_exit_only = bool(
+            config.get("execution", {}).get("fixed_exit_only", False)
+            or (config.get("trading") or {}).get("fixed_exit_only", False)
+        )
+        if not fixed_exit_only and age > _mhm * 60 and profit_usd < 0:
             # Prefer shared broker close path (correct filling enum, not raw bitmask).
             try:
                 from core.mt5_broker import MT5Broker
@@ -1205,7 +1253,7 @@ def manage_mt5_positions(
             side, symbol, features, config,
             age_seconds=age,
         )
-        if _rev:
+        if not fixed_exit_only and _rev:
             try:
                 from core.mt5_broker import MT5Broker
 
@@ -1323,9 +1371,9 @@ def manage_mt5_positions(
             "sl": new_sl,
             "tp": float(pos.get("tp1", pos.get("tp", 0))),
         }
-        result = mt5.order_send(request)
+        result = MT5Owner.instance().order_send(request)
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            err = str(mt5.last_error()) if result is None else f"{result.retcode} {result.comment}"
+            err = str(MT5Owner.instance().last_error()) if result is None else f"{result.retcode} {result.comment}"
             summary["errors"].append({"ticket": ticket, "error": err})
             audit_entry["status"] = "modify_failed"
             audit_entry["error"] = err
@@ -1410,6 +1458,22 @@ def manage_partial_tp_mt5(
     }
     if mt5 is None:
         return summary
+    # Defense-in-depth (2026-08-04 review fix): this path can send partial/full
+    # TP close orders — skip whenever live trading is disabled so validation
+    # runs send zero orders regardless of which caller reaches us.
+    if not config.get("execution", {}).get("live_trading_enabled", False):
+        logger.info(
+            "manage_partial_tp_mt5: live_trading_enabled=false — skipping "
+            "TP closes (validation mode)"
+        )
+        return summary
+    fixed_exit_only = bool(
+        config.get("execution", {}).get("fixed_exit_only", False)
+        or (config.get("trading") or {}).get("fixed_exit_only", False)
+    )
+    if fixed_exit_only:
+        # Fixed-exit experiments leave the broker's initial TP/SL untouched.
+        return summary
     if not partial_tp_enabled(config):
         # Partial TP off: same full-close-at-TP1 fallback as the paper path.
         # Without this, winners sit until the broker's open-time TP fires —
@@ -1441,10 +1505,10 @@ def manage_partial_tp_mt5(
 
         symbol = pos["symbol"]
         broker_sym = broker_symbol(symbol)
-        if not mt5.symbol_select(broker_sym, True):
+        if not MT5Owner.instance().symbol_select(broker_sym, True):
             continue
-        tick = mt5.symbol_info_tick(broker_sym)
-        info = mt5.symbol_info(broker_sym)
+        tick = MT5Owner.instance().symbol_info_tick(broker_sym)
+        info = MT5Owner.instance().symbol_info(broker_sym)
         if tick is None or info is None:
             continue
 
@@ -1510,9 +1574,9 @@ def manage_partial_tp_mt5(
             "comment": "qagent_partial_tp1",
             "type_time": mt5.ORDER_TIME_GTC,
         }
-        close_result = mt5.order_send(close_req)
+        close_result = MT5Owner.instance().order_send(close_req)
         if close_result is None or close_result.retcode != mt5.TRADE_RETCODE_DONE:
-            err = str(mt5.last_error()) if close_result is None else f"{close_result.retcode} {close_result.comment}"
+            err = str(MT5Owner.instance().last_error()) if close_result is None else f"{close_result.retcode} {close_result.comment}"
             summary["errors"].append({"ticket": pos["ticket"], "error": err})
             logger.warning("Partial TP close failed ticket=%s: %s", pos["ticket"], err)
             continue
@@ -1545,9 +1609,9 @@ def manage_partial_tp_mt5(
             "sl": lock_sl,
             "tp": new_tp,
         }
-        mod_result = mt5.order_send(mod_req)
+        mod_result = MT5Owner.instance().order_send(mod_req)
         if mod_result is None or mod_result.retcode != mt5.TRADE_RETCODE_DONE:
-            err = str(mt5.last_error()) if mod_result is None else f"{mod_result.retcode} {mod_result.comment}"
+            err = str(MT5Owner.instance().last_error()) if mod_result is None else f"{mod_result.retcode} {mod_result.comment}"
             summary["errors"].append({"ticket": pos["ticket"], "error": f"post_partial_sltp:{err}"})
             logger.warning("Post-partial SLTP failed ticket=%s: %s", pos["ticket"], err)
 
@@ -1618,6 +1682,13 @@ def manage_partial_tp_paper(
         "timestamp": utc_now_iso(),
     }
     partial_trades: list[dict[str, Any]] = []
+    fixed_exit_only = bool(
+        config.get("execution", {}).get("fixed_exit_only", False)
+        or (config.get("trading") or {}).get("fixed_exit_only", False)
+    )
+    if fixed_exit_only:
+        # Fixed-exit experiments leave the broker's initial TP/SL untouched.
+        return positions, partial_trades, summary
     if not partial_tp_enabled(config):
         # Don't return early — close 100% at TP1 (single-shot full exit instead
         # of partial scale-out). This is the only TP-execution channel for paper

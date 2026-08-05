@@ -52,9 +52,17 @@ def test_losing_arm_is_rejected_not_promoted():
     assert v["status"] == "reject"
 
 
+def test_promotion_requires_comparable_control_sample():
+    control = reward_score([{"r_multiple": 0.1}] * 5)
+    strong_arm = reward_score([{"r_multiple": 0.8}] * 30)
+    v = promotion_verdict(control, strong_arm)
+    assert v["status"] == "running"
+    assert "control" in v["detail"]
+
+
 def test_score_arms_tags_control_and_arms():
     arms = generate_experiments()
-    armid = arms[0]["id"]
+    armid = next(a["id"] for a in arms if a["family"] == "gate")
     control = [{"r_multiple": 0.0} for _ in range(40)]
     tagged = [{"r_multiple": 0.6, "experiment_arm": armid} for _ in range(30)]
     scored = score_arms(control + tagged, arms)

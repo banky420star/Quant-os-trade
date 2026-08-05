@@ -23,7 +23,13 @@ def _has_market_context(trade: dict[str, Any]) -> bool:
 def assess_trade_learning(trades: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Score how much context closed trades carry for culturing / arena / edge DB."""
     if trades is None:
-        data = read_json_state("paper_trades.json", default={"trades": []}) or {}
+        # No caller-provided trades: read the ACTIVE closed-trade ledger. In MT5
+        # mode paper_trades.json is empty; prefer trade_log.json (rich context,
+        # maintained by trade_log_loop) then mt5_trades.json before paper.
+        data = read_json_state("trade_log.json", default=None)
+        if not isinstance(data, dict) or not data.get("trades"):
+            mt5 = read_json_state("mt5_trades.json", default=None)
+            data = mt5 if (isinstance(mt5, dict) and mt5.get("trades")) else read_json_state("paper_trades.json", default={"trades": []}) or {}
         trades = list(data.get("trades") or [])
 
     clean_trades = [

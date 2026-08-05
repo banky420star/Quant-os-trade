@@ -19,6 +19,8 @@ ANALYTICAL_LOOPS: set[str] = {
     "policy_optimizer_loop",
     "adaptation_loop",
     "news_sentiment_loop",
+    # Read-only aggregation of the specialized-setup shadow fire ledger.
+    "specialized_shadow_loop",
 }
 
 
@@ -42,6 +44,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         trade_log_loop,
         babysit_loop,
         news_sentiment_loop,
+        specialized_shadow_loop,
     )
     return [
         ("data_loop", data_loop.run),
@@ -70,6 +73,10 @@ def _init_loops() -> list[tuple[str, Any]]:
         # self-throttled (news.refresh_interval_seconds, default 900s). No-op
         # when news.enabled is false (default). Never blocks the pipeline.
         ("news_sentiment_loop", news_sentiment_loop.run),
+        # 2026-08-04 — aggregate the specialized-setup shadow fire ledger into a
+        # per-symbol/per-setup/per-session report. Read-only, analytical, gated
+        # on signals.specialized_setups.shadow.
+        ("specialized_shadow_loop", specialized_shadow_loop.run),
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
 

@@ -138,7 +138,14 @@ class RiskManager:
         if kill_triggers:
             kill = self._activate_kill_switch(kill, kill_triggers[0])
         elif not risk_cfg.get("kill_switch", False):
-            kill = self._clear_kill_switch(kill)
+            # An operator-owned dashboard stop is intentionally sticky. Risk
+            # normalization must not silently resume trading; only the explicit
+            # Resume Trading control may clear source=operator.
+            if not (
+                kill.get("kill_switch")
+                and kill.get("source") == "operator"
+            ):
+                kill = self._clear_kill_switch(kill)
 
         state = {
             "timestamp": utc_now_iso(),
@@ -216,11 +223,14 @@ class RiskManager:
     def _activate_kill_switch(self, kill: dict[str, Any], reason: str) -> dict[str, Any]:
         if not kill.get("kill_switch"):
             self.logger.warning("KILL SWITCH ACTIVATED: %s", reason)
-        return {
+        result = {
             "kill_switch": True,
             "reason": reason,
             "activated_at": kill.get("activated_at") or utc_now_iso(),
         }
+        if kill.get("source") == "operator":
+            result["source"] = "operator"
+        return result
 
     def _clear_kill_switch(self, kill: dict[str, Any]) -> dict[str, Any]:
         if kill.get("kill_switch"):

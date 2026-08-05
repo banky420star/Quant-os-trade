@@ -1,5 +1,5 @@
 label: $30 Micro Live
-description: REAL account micro — XAU/Oil/UK100, 0.01 lot, $10 max loss, positive-evolution
+description: REAL account micro — 14 symbols, 0.01 lot, $10 max loss/trade (XAU $30), positive-evolution
 mode: live
 mt5:
   account_mode: real

@@ -103,6 +103,15 @@ def run() -> dict | None:
         logger=logger,
     )
 
+    # Paper data-lab only: retain policy-filtered opportunities for later
+    # forward labeling. This is observational and never changes evaluated
+    # signals or the MT5 path.
+    try:
+        from core.forward_opportunity_labeler import record_filtered_signals
+        record_filtered_signals(skipped, config, source="evaluation", now=utc_now_iso())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Forward opportunity labeling skipped: %s", exc)
+
     doc = {
         "timestamp": utc_now_iso(),
         "mode": evaluation_mode(config),

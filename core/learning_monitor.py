@@ -44,7 +44,14 @@ _NEG_EXPECTANCY_R = -0.05
 def _closed_trades() -> list[dict[str, Any]]:
     data = read_json_state("trade_log.json", default=None)
     if not isinstance(data, dict) or not data.get("trades"):
-        data = read_json_state("paper_trades.json", default={"trades": []}) or {}
+        # trade_log.json is the preferred source (populated in MT5 mode by
+        # trade_log_loop). If it's empty, try the MT5 closed-trade ledger before
+        # falling back to paper_trades.json (which is empty in MT5 mode).
+        mt5 = read_json_state("mt5_trades.json", default=None)
+        if isinstance(mt5, dict) and mt5.get("trades"):
+            data = mt5
+        else:
+            data = read_json_state("paper_trades.json", default={"trades": []}) or {}
     trades = list(data.get("trades") or [])
     # Chronological order: prefer closed_at, fall back to list order.
     def _key(t: dict[str, Any]) -> str:

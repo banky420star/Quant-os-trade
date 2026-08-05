@@ -119,14 +119,15 @@ def _collect_symbol_specs(
     specs: dict[str, dict[str, float]] = {}
     client = MT5Client(config, logger)
     try:
-        import MetaTrader5 as mt5
+        from core.mt5_owner import MT5Owner
 
+        owner = MT5Owner.instance()
         client.connect()
         for symbol in config["mt5"]["symbols"]:
             broker = broker_symbol(symbol)
-            if not mt5.symbol_select(broker, True):
+            if not owner.symbol_select(broker, True):
                 continue
-            info = mt5.symbol_info(broker)
+            info = owner.symbol_info(broker)
             if info is not None:
                 specs[symbol] = symbol_spec_from_mt5(info)
     except (ConnectionError, OSError, RuntimeError) as exc:
@@ -273,6 +274,14 @@ def run() -> dict | None:
     rejected_doc = {**meta, "count": len(rejected), "rejected": rejected}
     write_json_state("approved_signals.json", approved_doc)
     write_json_state("rejected_signals.json", rejected_doc)
+    # Paper data-lab only: retain verifier-rejected opportunities and their
+    # complete signal payload for later forward outcome labeling. This does not
+    # alter approval, sizing, or any MT5 execution behavior.
+    try:
+        from core.forward_opportunity_labeler import record_filtered_signals
+        record_filtered_signals(rejected, config, source="verifier", now=meta["timestamp"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Forward opportunity labeling skipped: %s", exc)
     sync_store_from_doc(config, "approved", approved_doc)
     sync_store_from_doc(config, "rejected", rejected_doc)
     if approved:

@@ -191,13 +191,24 @@ def calibrate(config: dict[str, Any], log: logging.Logger) -> dict[str, Any]:
         ci_positive = ci_lo > 0.0
         trusted = bool(enough and beats and positive and ci_positive)
         # The live override expresses the new SL as an ATR multiple. We don't
-        # know each historical trade's ATR, so we ship a sl_atr_mult that scales
-        # the seeded sl_atr_mult by k_sl (k_sl>1 -> wider stop), and the new RR.
+        # know each historical trade's ATR, so we ship ATR multiples that scale
+        # the seeded SL by k_sl (k_sl>1 -> wider stop), plus the new RR.
+        #
+        # BUGFIX 2026-08-04: the effective SL is
+        #   sl = min(support - sl_atr_mult*atr, entry - risk_floor)
+        # where risk_floor = atr * risk_floor_atr_mult (see strategy_entry.py).
+        # risk_floor_atr_mult (1.2-1.6) is the BINDING term in the normal case
+        # (it sits further from entry than support - sl_atr_mult*atr), so the
+        # previous version — which scaled only sl_atr_mult by k_sl and left
+        # risk_floor_atr_mult at the seed — made trusted overrides into no-ops:
+        # the effective SL never moved. Scale BOTH by k_sl so the wider-stop
+        # finding actually takes effect when a symbol clears the trust gate.
         sl_atr_mult = round(float(seeds["sl_atr_mult"]) * best["k_sl"], 4)
+        risk_floor_atr_mult = round(float(seeds["risk_floor_atr_mult"]) * best["k_sl"], 4)
         entry = {
             "n": n,
             "sl_atr_mult": sl_atr_mult,
-            "risk_floor_atr_mult": float(seeds["risk_floor_atr_mult"]),
+            "risk_floor_atr_mult": risk_floor_atr_mult,
             "risk_floor_pct": float(seeds["risk_floor_pct"]),
             "tp1_rr": round(best["rr1"], 4),
             "tp2_rr": round(best["rr2"], 4),

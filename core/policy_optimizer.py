@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from core.strategy_policy import KNOWN_SETUPS, normalize_setup_type
+from core.trade_history import trade_history_filename
 from core.utils import read_json_state, utc_now_iso, write_json_state
 
 BEST_POLICIES_FILE = "best_policies.json"
@@ -311,7 +312,7 @@ def run(
         return None
 
     policy_scores = read_json_state(POLICY_SCORES_FILE, default={}) or {}
-    trades_doc = read_json_state("paper_trades.json", default={"trades": []}) or {}
+    trades_doc = read_json_state(trade_history_filename(cfg_root), default={"trades": []}) or {}
     trades = list(trades_doc.get("trades") or [])
 
     doc = build_best_policies(policy_scores, trades, cfg_root, logger=log)

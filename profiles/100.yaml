@@ -1,5 +1,5 @@
 label: $100 Small
-description: 4 symbols, up to 0.02 lot, $20 max loss, tight trail, no pyramiding (real account)
+description: Real account — XAUUSDm/EURUSDm/USDCHFm/GBPUSDm, up to 0.02 lot, $20 max loss/trade, no pyramiding
 mode: live
 mt5:
   account_mode: real
@@ -172,9 +172,6 @@ practice:
     - EURUSDm
     - USDCHFm
     - GBPUSDm
-    - AUDUSDm
-    - US30m
-    - USDJPYm
     max_open_per_symbol: 1
     max_open_per_setup: 1
     allow_pyramiding: false
@@ -188,7 +185,7 @@ practice:
     max_symbol_exposure_fraction: 0.5
     max_total_exposure_fraction: 0.55
     max_session_trades_per_symbol: 0
-    max_loss_per_trade_usd: 12
+    max_loss_per_trade_usd: 20
     cap_loss_to_balance: true
     reentry_cooldown_seconds: 20
     entry_confirm_seconds: 30

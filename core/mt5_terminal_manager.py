@@ -103,6 +103,25 @@ class MT5TradeEvent:
         return asdict(self)
 
 
+class _OwnerProxy:
+    """Read-only facade over MT5Owner so the event poller can call the same
+    ``positions_get`` / ``orders_get`` / ``history_deals_get`` API it did with
+    the raw module, but through the process-global single owner (serialized,
+    never torn down by another worker)."""
+
+    def __init__(self, owner: Any):
+        self._owner = owner
+
+    def positions_get(self, *args: Any, **kwargs: Any) -> Any:
+        return self._owner.positions_get(*args, **kwargs)
+
+    def orders_get(self, *args: Any, **kwargs: Any) -> Any:
+        return self._owner.orders_get(*args, **kwargs)
+
+    def history_deals_get(self, *args: Any, **kwargs: Any) -> Any:
+        return self._owner.history_deals_get(*args, **kwargs)
+
+
 # Schema for an execution intent pushed onto terminal_manager.intent_queue.
 # Both ``execution_loop.run()`` (slow pipeline) and ``fast_tick_loop`` live
 # entries flow through this single chokepoint. The broker-side ``trade_lock``
@@ -137,6 +156,14 @@ class MT5TerminalManager:
     # silently return.
     _shared_trade_lock: threading.RLock = threading.RLock()
     _shared_intent_queue: _queue_mod.Queue = _queue_mod.Queue(maxsize=1000)
+    # 2026-08-04 — in-flight open-intent fingerprints. Guards against the fast
+    # entry layer re-pushing the SAME (symbol, side, signal_id) open while an
+    # identical intent is still queued. Previously the 1Hz fast_tick_loop could
+    # accumulate e.g. 2x7 identical limit entries, and a failed drain then
+    # dropped all of them (or a successful one double-placed). A fingerprint is
+    # added on push and released on drain / requeue-repush.
+    _shared_pending_open: set[str] = set()
+    _pending_open_lock: threading.Lock = threading.Lock()
 
     def __init__(self, config: dict[str, Any], logger: logging.Logger | None = None):
         self.config = config
@@ -181,16 +208,42 @@ class MT5TerminalManager:
                     pass
         return _unsub
 
+    @staticmethod
+    def _open_fingerprint(intent: IntentDict) -> str | None:
+        """Stable dedupe key for an open intent; None for non-open intents."""
+        if intent.get("action") != "open":
+            return None
+        return "|".join((
+            "open",
+            str(intent.get("symbol") or ""),
+            str(intent.get("side") or ""),
+            str(intent.get("signal_id") or ""),
+        ))
+
     def push_intent(self, intent: IntentDict) -> None:
         """Push an execution intent onto the shared queue (non-blocking).
 
-        Raises ``queue.Full`` if the queue is at capacity (1000). Callers
-        should map that exception to a back-off / drop decision rather
-        than crash.
+        Open intents are deduplicated in-flight: pushing an open whose
+        (symbol, side, signal_id) is already queued is a no-op, because the
+        fast-tick layer re-emits the same limit entry on every cycle while the
+        first copy is still pending. Raises ``queue.Full`` if the queue is at
+        capacity (1000) — callers map that to a back-off / drop decision.
         """
+        fp = self._open_fingerprint(intent)
+        if fp is not None:
+            with MT5TerminalManager._pending_open_lock:
+                if fp in MT5TerminalManager._shared_pending_open:
+                    self.logger.debug(
+                        "intent dedupe: identical open already queued — %s", fp,
+                    )
+                    return
+                MT5TerminalManager._shared_pending_open.add(fp)
         try:
             self.intent_queue.put_nowait(intent)
         except _queue_mod.Full as exc:  # pragma: no cover - defensive
+            if fp is not None:
+                with MT5TerminalManager._pending_open_lock:
+                    MT5TerminalManager._shared_pending_open.discard(fp)
             self.logger.error(
                 "intent_queue FULL (maxsize=%d) — dropping intent: %s",
                 self.intent_queue.maxsize, intent,
@@ -201,7 +254,10 @@ class MT5TerminalManager:
         """Pop up to ``max_items`` pending intents without blocking.
 
         Returns the list of intents in FIFO order; consumers should hold
-        ``self.trade_lock`` while executing each one.
+        ``self.trade_lock`` while executing each one. Releases the in-flight
+        dedupe fingerprint of every drained open so a NEW identical open can be
+        queued again (e.g. after the broker placed it and the fast layer
+        re-arms for the next signal).
         """
         drained: list[IntentDict] = []
         for _ in range(max_items):
@@ -209,7 +265,42 @@ class MT5TerminalManager:
                 drained.append(self.intent_queue.get_nowait())
             except _queue_mod.Empty:
                 break
+        with MT5TerminalManager._pending_open_lock:
+            for it in drained:
+                fp = self._open_fingerprint(it)
+                if fp is not None:
+                    MT5TerminalManager._shared_pending_open.discard(fp)
         return drained
+
+    def requeue_intents(self, intents: list[IntentDict]) -> int:
+        """Re-push drained intents so a failed drain does not lose orders.
+
+        Used by execution_loop when the broker call fails (e.g. transient
+        ``-10004 No IPC connection``): the intents were already dequeued, so
+        without this they would be silently dropped. Re-adds the in-flight
+        fingerprints so the dedupe keeps protecting them on the retry.
+        Returns the number of intents actually queued.
+        """
+        pushed = 0
+        for it in intents:
+            # Bump the retry counter so execution_loop can cap how many times a
+            # persistently-failing intent is requeued before it is dropped.
+            it["retry_count"] = int(it.get("retry_count", 0)) + 1
+            fp = self._open_fingerprint(it)
+            if fp is not None:
+                with MT5TerminalManager._pending_open_lock:
+                    MT5TerminalManager._shared_pending_open.add(fp)
+            try:
+                self.intent_queue.put_nowait(it)
+                pushed += 1
+            except _queue_mod.Full:  # pragma: no cover - defensive
+                if fp is not None:
+                    with MT5TerminalManager._pending_open_lock:
+                        MT5TerminalManager._shared_pending_open.discard(fp)
+                self.logger.error(
+                    "requeue_intents: queue FULL — intent dropped: %s", it,
+                )
+        return pushed
 
     # ----- Event loop worker (start/stop) ----------------------------------
     def start_event_loop(
@@ -311,13 +402,15 @@ class MT5TerminalManager:
         The MT5 package import is optional; tests can pass a stub via the
         ``attach_mt5`` kwarg without needing a real connection.
         """
-        mt5 = attach_mt5  # local alias; tests inject here
+        # local alias; tests inject a stub here. Production reads go through
+        # the shared MT5Owner so the process-global session is never torn down
+        # and every read is serialized (single-owner contract 2026-08-04).
+        mt5 = attach_mt5
         ts_now = utc_now_iso()
         if mt5 is None:
-            try:
-                import MetaTrader5 as mt5
-            except ImportError:
-                mt5 = None  # type: ignore
+            from core.mt5_owner import MT5Owner
+
+            mt5 = _OwnerProxy(MT5Owner.instance())
         if mt5 is None:
             return  # no package available — quietly no-op
 
@@ -430,19 +523,17 @@ class MT5TerminalManager:
         """
         mt5_mod = None
         if connect_now:
+            # Single-owner contract (2026-08-04): this worker must NOT call
+            # mt5.initialize() itself — the process-global MT5Owner owns the
+            # session. Attach to the shared owner so the connection is
+            # established once for every worker.
             try:
-                import MetaTrader5 as mt5_mod  # type: ignore
-            except ImportError:
+                from core.mt5_owner import MT5Owner
+
+                MT5Owner.instance().acquire(self.config, self.logger)
                 mt5_mod = None
-            if mt5_mod is not None:
-                try:
-                    if not mt5_mod.initialize():
-                        self.logger.debug(
-                            "event worker: mt5.initialize returned False; "
-                            "worker will retry via next poll",
-                        )
-                except Exception as exc:
-                    self.logger.debug("event worker: mt5.initialize exception: %s", exc)
+            except Exception as exc:
+                self.logger.debug("event worker: MT5 owner acquire failed: %s", exc)
 
         last_candle_tick = 0.0
         while not self._shutdown_event.is_set():

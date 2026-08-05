@@ -25,8 +25,9 @@ rules make experimentation safe:
 What this module does NOT do
 ============================
 * It does not enable live shadow execution by itself. Registering arms is safe
-  and free; actually routing paper/live trades through an arm is a separate,
-  explicitly-opted-in step the operator controls.
+  and free; actually routing paper trades through an executable gate arm is a
+  separate, explicitly-opted-in step the operator controls. Weight arms remain
+  proposal-only until the decision layer applies their patches.
 * It never guarantees an arm will keep winning. Promotion means "beat control
   out-of-sample on this sample" — evidence, not a promise.
 """
@@ -44,8 +45,137 @@ LEDGER_FILE = "shadow_experiments.json"
 
 # Bounds — an arm can never move a weight more than this fraction of baseline.
 MAX_WEIGHT_SHIFT = 0.15
+
+# Routing (2026-08-04). Shadow experiment arms only accumulate forward trades
+# when the execution layer stamps each executed signal with the arm it belongs
+# to. This is OFF by default — the module stays a proposal-only scorer until an
+# operator explicitly opts in via self_learning.shadow_experiments.routing_enabled.
+# Routing is paper-mode ONLY (never MT5): a signal is deterministically bucketed
+# (stable by signal_id) into control or one arm, gate arms raise the confidence /
+# R:R floor so the arm's trade set genuinely differs from control, and the arm id
+# is stamped onto the signal so it survives into the closed trade in
+# paper_trades.json where score_arms() reads it.
+ROUTING_CONFIG_KEY = "shadow_experiments"
+DEFAULT_ROUTING_ENABLED = False
+# Fraction of signals reserved for the control sample (remainder = arms).
+# Clamped at runtime so a misconfig cannot eliminate the control arm.
+ROUTING_CONTROL_FRACTION = 0.5
+# Only families whose behavior is applied by the current execution path may be
+# routed. Weight patches are proposals for a future decision-layer adapter; they
+# must not be stamped as if the approved signal had actually used the patch.
+ROUTABLE_EXPERIMENT_FAMILIES = frozenset({"gate"})
+
+
+def routing_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolved shadow-experiment routing config (all opt-in, default off)."""
+    sl = config.get("self_learning") or {}
+    exp = sl.get(ROUTING_CONFIG_KEY) or {}
+    if not isinstance(exp, dict):
+        exp = {}
+    return {
+        "routing_enabled": bool(exp.get("routing_enabled", DEFAULT_ROUTING_ENABLED)),
+        "control_fraction": float(exp.get("control_fraction", ROUTING_CONTROL_FRACTION)),
+    }
+
+
+def _stable_bucket(signal_id: str, n_buckets: int) -> int:
+    """Stable, repeatable bucket for a signal_id across cycles."""
+    return int(hashlib.sha1(str(signal_id).encode("utf-8")).hexdigest()[:8], 16) % n_buckets
+
+
+def annotate_experiment_arm_signals(
+    approved: list[dict[str, Any]],
+    config: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Stamp each paper signal with its experiment arm (or leave as control).
+
+    Paper-mode only — MT5 signals are returned unchanged so this can never
+    alter live execution. When routing is disabled, returns ``approved``
+    untouched (the default, so this is a safe no-op).
+
+    Deterministic by signal_id: the same signal is always routed to the same
+    arm, and repeated cycles do not re-bucket an already-stamped signal.
+    Gate arms (confidence / R:R floor) filter marginal candidates out of the
+    arm's trade set so the arm genuinely trades a different population than
+    control. Weight arms remain proposal-only because the current execution
+    layer does not apply their weight patch.
+    """
+    config = config or {}
+    if str((config.get("execution") or {}).get("mode") or "paper").lower() != "paper":
+        return approved
+    rcfg = routing_config(config)
+    if not rcfg["routing_enabled"]:
+        return approved
+
+    ledger = read_json_state(LEDGER_FILE, default={}) or {}
+    experiments = list(ledger.get("experiments") or [])
+    if not experiments:
+        # First run: propose the arm set deterministically so stamping and the
+        # scorer agree on arm ids. Persisted so future runs reuse it.
+        experiments = generate_experiments(config=config)
+        ledger["experiments"] = experiments
+        write_json_state(LEDGER_FILE, ledger)
+    # Weight arms are intentionally proposal-only until the decision layer can
+    # apply their patch before signals are approved. Routing them here would
+    # create a label without changing behavior and yield a false experiment.
+    experiments = [
+        exp for exp in experiments
+        if exp.get("family") in ROUTABLE_EXPERIMENT_FAMILIES
+    ]
+    if not experiments:
+        return approved
+
+    out: list[dict[str, Any]] = []
+    n_arms = len(experiments)
+    control_fraction = min(0.9, max(0.1, float(rcfg["control_fraction"])))
+    bucket_count = 10_000
+    control_cutoff = int(bucket_count * control_fraction)
+    arm_bucket_count = bucket_count - control_cutoff
+
+    for record in approved:
+        signal = record.get("signal", record) if isinstance(record, dict) else {}
+        if not isinstance(signal, dict) or not signal.get("signal_id"):
+            out.append(record)
+            continue
+        sid = str(signal["signal_id"])
+        # Deterministic control/arm split. The first control_fraction of the
+        # stable bucket space is control; the remainder is evenly divided among
+        # arms. This keeps a real control sample while making the configured
+        # fraction meaningful, and remains stable across process restarts.
+        bucket = _stable_bucket(sid, bucket_count)
+        if bucket < control_cutoff:
+            out.append(record)  # control — untouched (no experiment_arm stamp)
+            continue
+        arm_index = min(
+            n_arms - 1,
+            ((bucket - control_cutoff) * n_arms) // arm_bucket_count,
+        )
+        arm = experiments[arm_index]
+        candidate = dict(signal)
+        candidate["experiment_arm"] = arm["id"]
+        # Gate arms: enforce the arm's raised floor so the arm's trade set
+        # differs from control. A signal rejected by the arm is dropped from
+        # this experiment route; it must not be reclassified as control because
+        # that would bias the control sample with trades the arm would skip.
+        if arm.get("family") == "gate":
+            patch = arm.get("patch") or {}
+            min_conf = float(patch.get("signals.min_confidence") or 0)
+            min_rr = float(patch.get("signals.min_risk_reward") or 0)
+            conf = float(signal.get("confidence") or 0)
+            rr = float(signal.get("risk_reward") or signal.get("min_risk_reward") or 0)
+            if min_conf and conf < min_conf:
+                continue
+            if min_rr and rr < min_rr:
+                continue
+        if "signal" in record:
+            out.append({**record, "signal": candidate})
+        else:
+            out.append(candidate)
+    return out
+
 # Promotion gates.
 MIN_ARM_TRADES = 25          # arm must have this many forward trades to judge
+MIN_CONTROL_TRADES = 25      # require a comparable control sample as well
 MIN_REWARD_MARGIN = 0.30     # arm score must beat control by this (score units)
 MIN_EXPECTANCY_R = 0.0       # arm must be net-profitable in R, not just > control
 
@@ -107,12 +237,16 @@ def promotion_verdict(
     arm expectancy. All three, or it stays 'running' / 'reject'.
     """
     arm_n = arm.get("n", 0)
+    control_n = control.get("n", 0)
     margin = round(arm.get("score", 0.0) - control.get("score", 0.0), 4)
     arm_exp = arm.get("expectancy_r", 0.0)
 
     if arm_n < MIN_ARM_TRADES:
         status = "running"
         detail = f"arm has {arm_n}/{MIN_ARM_TRADES} trades — keep collecting"
+    elif control_n < MIN_CONTROL_TRADES:
+        status = "running"
+        detail = f"control has {control_n}/{MIN_CONTROL_TRADES} trades — keep collecting"
     elif margin >= MIN_REWARD_MARGIN and arm_exp > MIN_EXPECTANCY_R:
         status = "promote"
         detail = f"beats control by {margin:+.2f} at {arm_exp:+.3f}R expectancy — propose for deploy"
@@ -139,7 +273,14 @@ def score_arms(
     for exp in experiments:
         arm_trades = [t for t in trades if t.get("experiment_arm") == exp["id"]]
         arm_reward = reward_score(arm_trades)
-        verdict = promotion_verdict(control, arm_reward)
+        if exp.get("family") not in ROUTABLE_EXPERIMENT_FAMILIES:
+            verdict = {
+                "status": "running",
+                "reward_margin": 0.0,
+                "detail": "proposal-only arm is not routed until its patch is executable",
+            }
+        else:
+            verdict = promotion_verdict(control, arm_reward)
         results.append({
             **exp,
             "reward": arm_reward,
@@ -182,6 +323,7 @@ def run_shadow_experiments(
         "bounds": {
             "max_weight_shift": MAX_WEIGHT_SHIFT,
             "min_arm_trades": MIN_ARM_TRADES,
+            "min_control_trades": MIN_CONTROL_TRADES,
             "min_reward_margin": MIN_REWARD_MARGIN,
         },
         "note": (

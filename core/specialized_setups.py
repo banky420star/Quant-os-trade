@@ -2740,6 +2740,313 @@ def _ny_ha(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
                          "NY Heikin-Ashi — 14:00-17:00 UTC")
 
 
+def _opening_range_breakout(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """Unified per-symbol Opening Range Breakout — fires on the FIRST close
+    beyond the session opening range (``feat.orb_signal``), one fire per session.
+
+    Source: TradingView opening-range-breakout strategies. Distinct from the
+    hand-rolled symbol-specific ORB setups (oil_orb / asia_range_breakout /
+    us_open_orb / eu_open_orb / tokyo_open_orb) because it keys off a single
+    feature-engine-precomputed session-anchored range (feat.orb_signal /
+    or_high / or_low) with per-symbol session opens — so EVERY symbol gets a
+    principled ORB cell, including 24h markets + Asian indices anchored at
+    00:00 UTC (fills the 21:00-07:00 UTC coverage gap the london_/ny_
+    killzone setups leave empty). The 33rd entry model + new SESSION-ANCHORED-
+    RANGE family. Conf = avg(momentum, volume) — a breakout confirmed by
+    momentum + volume commitment.
+
+    HONESTY: OOS pooled +0.0051R raw (0/14 cells) / +0.0209R with a 1.5x
+    volume filter (4x raw, still 0/14) — NO EDGE at retail 30bps pre-cost.
+    Wired live on demo per explicit user sign-off ("turn it on right now ...
+    if they don't [do well] who cares"); demo losses are the accepted cost of
+    live forward scoring. DSR/SPA across full K remains the bar.
+    """
+    sig = feat.get("orb_signal")
+    if sig not in ("bullish_breakout", "bearish_breakout"):
+        return None
+    mom = float(ev.get("momentum", 0))
+    vol = float(ev.get("volume", 0))
+    conf = (mom + vol) / 2.0
+    if sig == "bullish_breakout":
+        return _base("opening_range_breakout", "BUY", conf,
+                     "ORB — first close above the session opening range")
+    return _base("opening_range_breakout", "SELL", conf,
+                 "ORB — first close below the session opening range")
+
+
+# --- 2026-08-04 research-setup shadow trials (iterations 44-47) ---
+# Each reads a state the FeatureEngine precomputes on the CURRENT bar from full
+# history (like _opening_range_breakout reads feat.orb_signal), so the live
+# detectors are one-bar lookahead-free. All four are shadow_only (see registry).
+
+def _cvd_divergence_reversal(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """CVD divergence reversal — price new extreme on thinning aggressive flow.
+
+    Keys off ``feat.cvd_divergence`` (bearish_divergence = price higher high
+    with CVD lower high -> SELL; bullish_divergence = price lower low with CVD
+    higher low -> BUY). Tick-rule delta proxy on Exness tick volume (research
+    setup, shadow-only). Conf = avg(liquidity, structure) — reversion-shaped.
+    """
+    state = feat.get("cvd_divergence")
+    if state not in ("bearish_divergence", "bullish_divergence"):
+        return None
+    liq = float(ev.get("liquidity", 0))
+    struct = float(ev.get("structure", 0))
+    if state == "bearish_divergence":
+        return _base("cvd_divergence_reversal", "SELL", (liq + struct) / 2,
+                     "CVD bearish divergence — price higher high on thinning aggressive buying")
+    return _base("cvd_divergence_reversal", "BUY", (liq + struct) / 2,
+                 "CVD bullish divergence — price lower low on thinning aggressive selling")
+
+
+def _intermarket_divergence_zero_cross(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """Intermarket pair divergence — target reverts when its z-spread vs anchor
+    crosses zero (research setup, shadow-only). Keys off
+    ``feat.intermarket_zero_cross`` (stamped by FeatureEngine.compute_all's
+    cross-symbol pass; only present on target symbols).
+    """
+    state = feat.get("intermarket_zero_cross")
+    anchor = feat.get("intermarket_anchor")
+    if state not in ("bullish_cross", "bearish_cross"):
+        return None
+    liq = float(ev.get("liquidity", 0))
+    mom = float(ev.get("momentum", 0))
+    if state == "bullish_cross":
+        return _base("intermarket_divergence_zero_cross", "BUY", (liq + mom) / 2,
+                     f"Intermarket zero-cross — {anchor or 'anchor'} reverted up from weakness")
+    return _base("intermarket_divergence_zero_cross", "SELL", (liq + mom) / 2,
+                 f"Intermarket zero-cross — {anchor or 'anchor'} reverted down from strength")
+
+
+def _session_volume_profile_poc_rejection(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """Session volume profile POC-rejection — wick into POC, close back away
+    (research setup, shadow-only). Keys off ``feat.vp_poc_rejection``
+    ("bullish" close > POC / "bearish" close < POC). Reversion-shaped conf.
+    """
+    state = feat.get("vp_poc_rejection")
+    if state not in ("bullish", "bearish"):
+        return None
+    liq = float(ev.get("liquidity", 0))
+    struct = float(ev.get("structure", 0))
+    if state == "bullish":
+        return _base("session_volume_profile_poc_rejection", "BUY", (liq + struct) / 2,
+                     "Volume profile POC-rejection — wick to POC, bullish close away")
+    return _base("session_volume_profile_poc_rejection", "SELL", (liq + struct) / 2,
+                 "Volume profile POC-rejection — wick to POC, bearish close away")
+
+
+def _session_volume_profile_va_breakout(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """Session volume profile VALUE-AREA breakout — close broke VAH/VAL with
+    volume_ratio >= 1.2 confirmation (research setup, shadow-only). Keys off
+    ``feat.vp_va_breakout`` ("bullish" close > VAH / "bearish" close < VAL).
+    Breakout-shaped conf = avg(structure, volume, momentum).
+    """
+    state = feat.get("vp_va_breakout")
+    if state not in ("bullish", "bearish"):
+        return None
+    struct = float(ev.get("structure", 0))
+    vol = float(ev.get("volume", 0))
+    mom = float(ev.get("momentum", 0))
+    if state == "bullish":
+        return _base("session_volume_profile_va_breakout", "BUY", (struct + vol + mom) / 3,
+                     "Volume profile VA-breakout — close above value-area high on volume")
+    return _base("session_volume_profile_va_breakout", "SELL", (struct + vol + mom) / 3,
+                 "Volume profile VA-breakout — close below value-area low on volume")
+
+
+# --- 2026-08-04 arsenal expansion (TradingView/web research, iterations 48-49). ---
+# Genuinely-new entry models added per repeated user request to grow the usable
+# strategy arsenal. Both reuse FeatureEngine states that already have replay
+# parity (bb_squeeze_pct / bb bands / volume_ratio / macd_hist + the new
+# macd_divergence state added to feature_engine + _vectorized_features), so they
+# are scored by BOTH the live culturing ledger AND the historical replay veto.
+# HONESTY: OHLCV space is CONCLUSIVELY falsified per VERDICT.md (iter33+iter43
+# DECISIVE NEGATIVE). These add ARSENAL BREADTH for demo data collection, not
+# deployable edge. Live on demo per user sign-off; risk rails bind.
+
+def _bb_squeeze_breakout_volume(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """Session-AGNOSTIC Bollinger-squeeze breakout WITH volume confirmation.
+
+    Distinct from the iter-19 ``london_squeeze_breakout`` / ``ny_squeeze_breakout``
+    (which are SESSION-GATED 07:00-10:00 / 14:00-17:00 UTC and require NO volume
+    confirmation): this is the 24h-eligible variant keyed on the same
+    ``feat.bb_squeeze_pct`` compression coil but requiring a volume-confirmed
+    release — ``feat.volume_ratio >= min_volume_ratio`` (default 1.5) on the
+    breakout bar. Source: StratBase.ai / TradingView TTM-Squeeze backtests —
+    volume confirmation lifted breakout win rate from 51% -> 72% and PF 1.71 on
+    crypto/indices (the unconfirmed session-gated coil is the weaker variant).
+    The volume gate is the genuinely-new compound (squeeze_pct + breakout +
+    volume_ratio, session-agnostic). Requires ``feat.bb_squeeze_pct <=
+    max_squeeze_pct`` (default 0.20) AND ``breakout``/``breakdown`` AND
+    volume_ratio >= min. Conf = avg(structure, volume, momentum).
+    """
+    p = trigger_params(cfg, "bb_squeeze_breakout_volume")
+    sq = float(feat.get("bb_squeeze_pct") if feat.get("bb_squeeze_pct") is not None else 0.5)
+    if sq > float(p.get("max_squeeze_pct", 0.20)):
+        return None  # not compressed enough -> no squeeze coil
+    vr = float(feat.get("volume_ratio") if feat.get("volume_ratio") is not None else 1.0)
+    if vr < float(p.get("min_volume_ratio", 1.5)):
+        return None  # breakout not volume-confirmed -> skip (the whole point)
+    bo = feat.get("breakout")
+    struct = float(ev.get("structure", 0))
+    vol = float(ev.get("volume", 0))
+    mom = float(ev.get("momentum", 0))
+    if bo == "breakout":
+        return _base("bb_squeeze_breakout_volume", "BUY", (struct + vol + mom) / 3,
+                     f"BB squeeze {sq:.0%} pct + volume-confirmed breakout (vr={vr:.1f}x)")
+    if bo == "breakdown":
+        return _base("bb_squeeze_breakout_volume", "SELL", (struct + vol + mom) / 3,
+                     f"BB squeeze {sq:.0%} pct + volume-confirmed breakdown (vr={vr:.1f}x)")
+    return None
+
+
+def _macd_hist_divergence(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """MACD-HISTOGRAM divergence reversal — price new swing extreme vs MACD-hist
+    opposing swing. The best-researched MACD variant.
+
+    Distinct from the iter-22 ``london_macd_cross`` / ``ny_macd_cross`` (signal-
+    line CROSSES, momentum-continuation): this keys off ``feat.macd_divergence``
+    (``bearish_divergence`` = price higher high with MACD-hist lower high -> SELL;
+    ``bullish_divergence`` = price lower low with MACD-hist higher low -> BUY), a
+    REVERSAL model. Source: StratBase.ai MACD backtest — divergence was the most
+    profitable variant (54% WR, PF 1.71, fewest trades/yr) vs crossover (41% WR,
+    PF 1.22, whipsaw-heavy). Divergence fires earlier and on higher-quality
+    reversals. Conf = avg(momentum, structure) — reversion-shaped. The state is
+    precomputed by ``FeatureEngine._macd_divergence`` (pivot L=5 on price +
+    MACD-hist) with replay parity, so the detector is one-bar lookahead-free.
+    """
+    state = feat.get("macd_divergence")
+    if state not in ("bearish_divergence", "bullish_divergence"):
+        return None
+    mom = float(ev.get("momentum", 0))
+    struct = float(ev.get("structure", 0))
+    if state == "bearish_divergence":
+        return _base("macd_hist_divergence", "SELL", (mom + struct) / 2,
+                     "MACD-hist bearish divergence — price higher high on fading histogram momentum")
+    return _base("macd_hist_divergence", "BUY", (mom + struct) / 2,
+                 "MACD-hist bullish divergence — price lower low on rising histogram momentum")
+
+
+def _adx_di_rising_trend(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """ADX/DMI rising-trend CONTINUATION — DI-crossover direction gated by
+    trend-strength + a RISING-ADX filter. The best-researched ADX variant.
+
+    Distinct from the iter-25 ``london_adx_trend`` / ``ny_adx_trend`` (SESSION-
+    GATED 07:00-10:00 / 14:00-17:00, ADX>=25, NO rising filter): this is the
+    24h-eligible variant keyed on ``feat.adx_trend`` — DI-crossover direction
+    with ADX >= 20 (lower threshold) AND ADX RISING (``bullish_trend`` = DI+ >
+    DI- with ADX rising -> BUY; ``bearish_trend`` = DI- > DI+ with ADX rising ->
+    SELL). The rising-slope gate is the genuinely-new compound — it avoids
+    exhausted trends (the differentiator in PineScriptForge's NQ/DAX/ES sweep).
+    Source: Quant Signals 4236-trade ADX sweep (DI-crossover entries > ADX-as-
+    filter in 83% of tests; threshold 20 > 25/30) + PineScriptForge DMI/ADX
+    system (rising-ADX filter -> PF 1.54-2.31, Sharpe 1.93-2.50). Conf =
+    avg(trend, structure, momentum) — trend-continuation-shaped. The state is
+    precomputed by ``FeatureEngine._adx_trend_state`` (Wilder DMI, rising-ADX
+    gate) with replay parity, so the detector is one-bar lookahead-free.
+    """
+    state = feat.get("adx_trend")
+    if state not in ("bullish_trend", "bearish_trend"):
+        return None
+    trend = float(ev.get("trend", 0))
+    struct = float(ev.get("structure", 0))
+    mom = float(ev.get("momentum", 0))
+    adx_val = feat.get("adx")
+    if state == "bullish_trend":
+        return _base("adx_di_rising_trend", "BUY", (trend + struct + mom) / 3,
+                     f"ADX/DMI bullish rising trend — DI+ > DI- with ADX rising (adx={adx_val})")
+    return _base("adx_di_rising_trend", "SELL", (trend + struct + mom) / 3,
+                 f"ADX/DMI bearish rising trend — DI- > DI+ with ADX rising (adx={adx_val})")
+
+
+def _ict_ote(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """ICT Optimal Trade Entry — 62-79% Fibonacci retracement of a confirmed
+    displacement leg (sweet spot 70.5%). A genuinely-new FIBONACCI dimension.
+
+    Distinct from every prior setup (none use a measured-move retracement): keys
+    off ``feat.ote_state`` — ``bullish_ote`` = price retraced 62-79% of an up leg
+    (low->high) -> BUY the pullback; ``bearish_ote`` = price retraced 62-79% of a
+    down leg (high->low) -> SELL the rally. Source: PineScriptForge ICT OTE
+    backtests (PF 2.30 gold / 2.22 RTY / 2.63 silver, Sharpe ~2.5) +
+    ictkillzone.com (71% fill rate, 68% WR to T1 at 70.5% on 160 NQ entries).
+    The state is precomputed by ``FeatureEngine._ote_state`` (pivot L=5 legs,
+    min leg 1.5*ATR, leg age <= 80 bars) with replay parity, so the detector is
+    one-bar lookahead-free. Conf = avg(structure, momentum) — pullback-in-trend
+    shaped. HONESTY: OHLCV falsified per VERDICT.md — breadth, not deployable edge.
+    """
+    state = feat.get("ote_state")
+    if state not in ("bullish_ote", "bearish_ote"):
+        return None
+    struct = float(ev.get("structure", 0))
+    mom = float(ev.get("momentum", 0))
+    if state == "bullish_ote":
+        return _base("ict_ote", "BUY", (struct + mom) / 2,
+                     "ICT OTE bullish — 62-79% retracement of an up-leg (buy the pullback)")
+    return _base("ict_ote", "SELL", (struct + mom) / 2,
+                 "ICT OTE bearish — 62-79% retracement of a down-leg (sell the rally)")
+
+
+def _ict_breaker_block(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """ICT Breaker Block — a FAILED swing level that flips polarity on retest.
+    A genuinely-new ICT dimension (the arsenal has order blocks but no breaker).
+
+    Distinct from ``london_order_block``/``ny_order_block`` (the last opposite-
+    color candle before a displacement, polarity-by-construction): this keys off
+    ``feat.breaker_block`` — ``bullish_breaker`` = a pivot high was broken ABOVE,
+    price retested it from above with a bullish rejection -> BUY (former
+    resistance becomes support); ``bearish_breaker`` = a pivot low was broken
+    BELOW, retested from below with a bearish rejection -> SELL (former support
+    becomes resistance). Source: PineScriptForge ICT Breaker Block backtests
+    (PF 1.54-1.82 across ES/NQ/CL/YM, 47-53% WR, Sharpe 1.76-2.50) + Backtrex
+    (EUR/USD PF 1.62, NAS100 PF 1.74). The state is precomputed by
+    ``FeatureEngine._breaker_block_state`` (pivot L=5, break-then-retest-then-
+    rejection, max age 40 bars) with replay parity, so the detector is one-bar
+    lookahead-free. Conf = avg(structure, momentum) — rejection-at-a-level
+    shaped. HONESTY: OHLCV falsified per VERDICT.md — breadth, not deployable edge.
+    """
+    state = feat.get("breaker_block")
+    if state not in ("bullish_breaker", "bearish_breaker"):
+        return None
+    struct = float(ev.get("structure", 0))
+    mom = float(ev.get("momentum", 0))
+    if state == "bullish_breaker":
+        return _base("ict_breaker_block", "BUY", (struct + mom) / 2,
+                     "ICT breaker bullish — broken pivot high retested with rejection (resistance->support)")
+    return _base("ict_breaker_block", "SELL", (struct + mom) / 2,
+                 "ICT breaker bearish — broken pivot low retested with rejection (support->resistance)")
+
+
+def _rsi_divergence(feat: dict, ctx: dict, ev: dict, cfg: dict[str, Any]) -> dict | None:
+    """RSI DIVERGENCE reversal — price new swing extreme vs RSI opposing swing.
+    A third, mathematically-distinct oscillator divergence.
+
+    Distinct from ``macd_hist_divergence`` (MACD-hist, EMA-spread derivative) and
+    ``cvd_divergence_reversal`` (CVD, cumulative signed-volume): RSI is a smoothed
+    momentum-RATIO oscillator. Keys off ``feat.rsi_divergence``
+    (``bearish_divergence`` = price higher high with RSI lower high -> SELL;
+    ``bullish_divergence`` = price lower low with RSI higher low -> BUY), a
+    REVERSAL model. Also distinct from the session-gated
+    ``london_rsi_reversion``/``ny_rsi_reversion`` (those fade RSI EXTREMES,
+    momentum-continuation; this keys off RSI DIVERGENCE vs price). Source: RSI
+    divergence is a staple TradingView reversal setup (StocksToTrade /
+    Investopedia) and the most-cited RSI variant. Conf = avg(momentum,
+    structure) — reversion-shaped. The state is precomputed by
+    ``FeatureEngine._rsi_divergence`` (pivot L=5 on price + Wilder RSI(14)) with
+    replay parity, so the detector is one-bar lookahead-free. HONESTY: OHLCV
+    falsified per VERDICT.md — breadth, not deployable edge.
+    """
+    state = feat.get("rsi_divergence")
+    if state not in ("bearish_divergence", "bullish_divergence"):
+        return None
+    mom = float(ev.get("momentum", 0))
+    struct = float(ev.get("structure", 0))
+    if state == "bearish_divergence":
+        return _base("rsi_divergence", "SELL", (mom + struct) / 2,
+                     "RSI bearish divergence — price higher high on fading RSI momentum")
+    return _base("rsi_divergence", "BUY", (mom + struct) / 2,
+                 "RSI bullish divergence — price lower low on rising RSI momentum")
+
+
 # Registry — append a SetupSpec here to add a specialized setup. Each iteration
 # of the hourly evolution loop can add one more without touching the classifier.
 SPECIALIZED_SETUPS: tuple[dict[str, Any], ...] = (
@@ -2886,6 +3193,75 @@ SPECIALIZED_SETUPS: tuple[dict[str, Any], ...] = (
     {"name": "ny_order_block", "detect": _ny_order_block},
     {"name": "london_ha", "detect": _london_ha},
     {"name": "ny_ha", "detect": _ny_ha},
+    # iteration 43 — unified per-symbol session-anchored Opening Range Breakout
+    # (33rd entry model, new SESSION-ANCHORED-RANGE family; uses feat.orb_signal
+    # precomputed in feature_engine._orb). Distinct from the hand-rolled symbol-
+    # specific ORB setups above; covers every symbol incl. 24h + Asian (00:00 UTC
+    # anchor) to fill the 21:00-07:00 UTC gap. OOS no-edge; live on demo per sign-off.
+    {"name": "opening_range_breakout", "detect": _opening_range_breakout},
+    # --- 2026-08-04 research setups (iterations 44-47) — FLIPPED LIVE 2026-08-04. ---
+    # Originally wired as shadow_only trials from scripts/score_cvd_divergence.py
+    # + score_intermarket_divergence.py + score_volume_profile_setup.py +
+    # score_volume_profile_vabreakout.py. Per explicit repeated user request
+    # ("implement them into the system to run and be scored like increasing the
+    # arsenal of usable strategies"), flipped shadow_only -> False so they now
+    # EMIT live candidates on demo and are scored via the live culturing ledger
+    # (forward_test_loop cell = symbol|setup|regime|align|session) + calibration,
+    # exactly like the other 73 live setups. User authorized live no-edge setups
+    # on demo ("turn it on right now ... if they don't [do well] who cares");
+    # demo losses are the accepted cost of live forward scoring.
+    # Honesty: each scored NO OOS edge at retail 30bps in the original scripts
+    # (0/14 cells etc.); OHLCV space is CONCLUSIVELY falsified per VERDICT.md
+    # (iter33+iter43 DECISIVE NEGATIVE, DSR 0.0, SPA 1.0). These add ARSENAL
+    # BREADTH for demo data collection, not deployable edge. A losing
+    # (symbol, setup) culturing cell still gets vetoed by forward_test_loop.
+    # NOTE: replay OOS parity — cvd_divergence_reversal NOW HAS parity (iter-51
+    # _vectorized_cvd_divergence); vp_poc_rejection / vp_va_breakout /
+    # intermarket_divergence_zero_cross remain live-cultured only (windowed
+    # volume-profile + cross-symbol vectorization is disproportionate for an OFF
+    # veto — apply_replay_veto is OFF, so they score via the LIVE culturing
+    # ledger + closed-trade calibration, which is the point).
+    {"name": "cvd_divergence_reversal", "detect": _cvd_divergence_reversal},
+    {"name": "intermarket_divergence_zero_cross", "detect": _intermarket_divergence_zero_cross},
+    {"name": "session_volume_profile_poc_rejection", "detect": _session_volume_profile_poc_rejection},
+    {"name": "session_volume_profile_va_breakout", "detect": _session_volume_profile_va_breakout},
+    # --- 2026-08-04 arsenal expansion (iterations 48-49, TradingView/web research). ---
+    # bb_squeeze_breakout_volume: session-agnostic BB-squeeze release WITH a
+    # volume_ratio>=1.5 confirmation gate (StratBase: 51->72% WR with volume).
+    # Distinct from the session-gated london/ny_squeeze_breakout (no vol gate).
+    # macd_hist_divergence: MACD-histogram divergence reversal (StratBase: best
+    # MACD variant 54% WR PF 1.71 vs crossover 41%/1.22). Distinct from the
+    # london/ny_macd_cross signal-line crosses. Both have full replay parity.
+    {"name": "bb_squeeze_breakout_volume", "detect": _bb_squeeze_breakout_volume},
+    {"name": "macd_hist_divergence", "detect": _macd_hist_divergence},
+    # --- 2026-08-04 arsenal expansion (iteration 50, Quant Signals + PineScriptForge
+    # research). adx_di_rising_trend: 24h-eligible ADX/DMI DI-crossover continuation
+    # WITH a rising-ADX filter + lower threshold (20). Distinct from the session-
+    # gated london/ny_adx_trend (ADX>=25, no rising gate). Rising-ADX was the key
+    # differentiator (PF 1.54-2.31); DI-crossover > ADX-as-filter in 83% of tests.
+    # Full replay parity via _vectorized_adx_trend_state. HONESTY: OHLCV space is
+    # CONCLUSIVELY falsified per VERDICT.md — arsenal breadth, not deployable edge.
+    {"name": "adx_di_rising_trend", "detect": _adx_di_rising_trend},
+    # --- 2026-08-04 arsenal expansion (iteration 52, PineScriptForge + ictkillzone
+    # research). ict_ote: ICT Optimal Trade Entry — 62-79% Fibonacci retracement of
+    # a confirmed displacement leg (sweet spot 70.5%). Genuinely-new FIBONACCI
+    # dimension (no prior setup uses a measured-move retracement). Full replay
+    # parity via _vectorized_ote_state. HONESTY: OHLCV falsified per VERDICT.md.
+    {"name": "ict_ote", "detect": _ict_ote},
+    # --- 2026-08-04 arsenal expansion (iteration 53, PineScriptForge + Backtrex
+    # research). ict_breaker_block: ICT Breaker Block — a FAILED swing level that
+    # flips polarity on retest (broken pivot high retested with bullish rejection
+    # -> BUY; broken pivot low retested with bearish rejection -> SELL). Genuinely-
+    # new ICT dimension (arsenal has order blocks but no breaker). Full replay
+    # parity via _vectorized_breaker_block_state. HONESTY: OHLCV falsified per
+    # VERDICT.md.
+    {"name": "ict_breaker_block", "detect": _ict_breaker_block},
+    # --- 2026-08-04 arsenal expansion (iteration 54, StocksToTrade/Investopedia
+    # research). rsi_divergence: RSI divergence reversal — price new swing extreme
+    # vs Wilder RSI(14) opposing swing. A third, mathematically-distinct oscillator
+    # divergence (RSI momentum-ratio vs MACD-hist EMA-spread vs CVD signed-volume).
+    # Full replay parity via _vectorized_rsi_divergence. HONESTY: OHLCV falsified.
+    {"name": "rsi_divergence", "detect": _rsi_divergence},
 )
 
 
@@ -2942,6 +3318,16 @@ def detect_specialized(
             )
             continue
         if cand:
+            # shadow_only (iteration 44+): research trials logged to the shadow
+            # ledger but NEVER emitted for trading — even when enabled=true.
+            # They accumulate per-symbol culturing evidence without orders.
+            # Evidence collection is the POINT of these trials, so they log
+            # regardless of the global sa["shadow"] flag — an operator flipping
+            # shadow=false to "emit everything" must not silently stop the
+            # trial evidence, and must not accidentally emit them either.
+            if spec.get("shadow_only"):
+                _shadow_log([cand], feat, ctx)
+                continue
             out.append(cand)
     # Shadow fire-ledger (iteration 8): log every fire, even when not emitting.
     if sa["shadow"]:

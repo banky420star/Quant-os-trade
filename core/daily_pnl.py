@@ -25,11 +25,17 @@ from core.utils import read_json_state
 _PROJ = Path(__file__).resolve().parent.parent
 
 
-def today_realized_pnl_usd(state_path: str = "paper_trades.json") -> float:
+def today_realized_pnl_usd(state_path: str = "paper_trades.json", since_iso: str | None = None) -> float:
     """Sum of closed trade pnl from today's UTC midnight onward. Returns 0.0 on
     empty/missing state. Used by the daily-profit-halt gate.
+
+    ``since_iso`` (optional, dashboard session-reset): when provided, only
+    trades closed AFTER this timestamp count. The halt gate in
+    execution_loop calls WITHOUT this arg so the guardrail keeps counting
+    the real full-day total; only the dashboard display honors a reset.
     """
     cutoff = _today_utc_midnight()
+    since_dt = _parse_iso(since_iso) if since_iso else None
     doc = read_json_state(state_path, default={}) or {}
     trades: list[Any] = []
     if isinstance(doc, dict):
@@ -49,6 +55,8 @@ def today_realized_pnl_usd(state_path: str = "paper_trades.json") -> float:
                 closed_dt = closed_dt.replace(tzinfo=timezone.utc)
             if closed_dt < cutoff:
                 continue
+            if since_dt is not None and closed_dt < since_dt:
+                continue
         except (ValueError, TypeError):
             continue
         pnl = entry.get("pnl")
@@ -61,8 +69,12 @@ def today_realized_pnl_usd(state_path: str = "paper_trades.json") -> float:
     return round(total, 2)
 
 
-def today_realized_pnl_breakdown(state_path: str = "paper_trades.json") -> dict[str, Any]:
+def today_realized_pnl_breakdown(state_path: str = "paper_trades.json", since_iso: str | None = None) -> dict[str, Any]:
     """Symbol-level breakdown of today's realized PnL for the dashboard tile.
+
+    ``since_iso`` (optional): when provided, only trades closed AFTER this
+    timestamp count (dashboard session-reset view). The halt gate calls
+    without it.
 
     Returns
     -------
@@ -76,6 +88,7 @@ def today_realized_pnl_breakdown(state_path: str = "paper_trades.json") -> dict[
         }
     """
     cutoff = _today_utc_midnight()
+    since_dt = _parse_iso(since_iso) if since_iso else None
     doc = read_json_state(state_path, default={}) or {}
     trades: list[Any] = []
     if isinstance(doc, dict):
@@ -96,6 +109,8 @@ def today_realized_pnl_breakdown(state_path: str = "paper_trades.json") -> dict[
             if closed_dt.tzinfo is None:
                 closed_dt = closed_dt.replace(tzinfo=timezone.utc)
             if closed_dt < cutoff:
+                continue
+            if since_dt is not None and closed_dt < since_dt:
                 continue
         except (ValueError, TypeError):
             continue
@@ -138,6 +153,17 @@ def today_realized_pnl_breakdown(state_path: str = "paper_trades.json") -> dict[
 def _today_utc_midnight() -> datetime:
     now = datetime.now(timezone.utc)
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    """Parse an ISO 8601 timestamp to an aware UTC datetime, or None on failure."""
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
 
 
 def today_utc_day_stamp() -> str:

@@ -62,7 +62,8 @@ def sync_practice_gates(config: dict[str, Any]) -> dict[str, Any]:
         risk["max_total_exposure_usd"] = round(equity * total_frac, 2)
         # Growth may deliberately disable the ranking engine, but it must not
         # silently rewrite the top-N policy for profiles that keep ranking on.
-        quant["strategy_ranking_enabled"] = bool(growth.get("strategy_ranking_enabled", False))
+        if not bool(config.get("execution", {}).get("strategy_entries_market_only", False)):
+            quant["strategy_ranking_enabled"] = bool(growth.get("strategy_ranking_enabled", False))
         quant["min_rank_win_rate"] = float(growth.get("min_rank_win_rate", 0))
         trading["aggressive_mode"] = bool(growth.get("aggressive_mode", True))
         trading["max_session_trades_per_symbol"] = int(
@@ -71,7 +72,7 @@ def sync_practice_gates(config: dict[str, Any]) -> dict[str, Any]:
         if growth.get("dynamic_entries_enabled"):
             trading.setdefault("dynamic_entries", {})["enabled"] = True
         exec_cfg = config.setdefault("execution", {})
-        if "max_lot" in growth:
+        if "max_lot" in growth and not bool(exec_cfg.get("fixed_exit_only", False)):
             exec_cfg["max_lot"] = float(growth["max_lot"])
         if growth.get("relax_consensus", True):
             intel["regime_veto_enabled"] = False

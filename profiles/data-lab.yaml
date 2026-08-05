@@ -1,0 +1,254 @@
+# Data Lab — live DEMO profile, all strategies trading
+# 2026-08-04: converted from paper-only research lane to LIVE DEMO MT5 trading.
+# Every strategy stream (main + all 70+ specialized setups) emits candidates and
+# the execution loop places real MT5 orders when conditions are hit. Risk caps
+# (per-trade %, equity cap, exposure USD) still bind — this is a demo account,
+# not an unbounded lever.
+label: "Data Lab"
+description: "Live DEMO all-strategy lane: every setup competes, MT5 orders placed when conditions hit"
+# Demo may run any profile; the guard only refuses REAL accounts on non-live
+# profiles (see core/profile_guard.py). mode stays practice so the derived
+# label matches and no growth/live performance gates sneak in.
+mode: practice
+
+# MT5 order path ON — execution.mode is the master switch every loop checks.
+execution:
+  mode: mt5
+  live_trading_enabled: true
+  mt5_trading_enabled: true
+  # Demo account only. If a REAL account were ever connected with
+  # account_mode=demo, refuse rather than trade real money by surprise.
+  allow_live_account: false
+  starting_cash: 1000
+  default_lot: 0.01
+  # Full-Kelly sizing is still calculated from the live ledger. This high
+  # ceiling removes the profile's artificial lot cap; MT5 volume_min/step/max,
+  # available margin, and the broker's own risk checks remain authoritative.
+  max_lot: 100.0
+  fixed_exit_only: true
+
+  # The profile is intentionally demo-only, but do not silently turn a demo
+  # experiment into real-money trading if the terminal account changes.
+  allow_demo_when_live_config: false
+
+  # All entries in this lane are filled at the current market price. Evaluation
+  # recipes may suggest limits, but they must not create stale GTC orders.
+  strategy_entries_market_only: true
+
+  # Fixed exit experiment: attach the signal's initial SL/TP and never mutate
+  # either level after entry. The outcome is therefore exactly TP vs SL.
+  no_trailing: true
+  no_break_even: true
+  no_partial_tp: true
+  no_time_based_sl: true
+  no_adaptive_exit: true
+  # Disable the fast-tick secondary entry producer for this fixed-exit
+  # experiment; the main strategy pipeline is the only order producer.
+  fast_mode_enabled: false
+
+mt5:
+  account_mode: demo
+
+# Forward labeling is paper-mode-only by design; off now that we trade MT5.
+forward_labeling:
+  enabled: false
+  timeframe: M5
+  horizon_bars: 48
+  max_pending: 10000
+  max_labeled: 50000
+
+# Broad evaluation: no policy/edge filters suppress candidates. The verifier
+# and broker still enforce valid prices, executable levels, exposure, and
+# state consistency.
+evaluation:
+  enabled: true
+  mode: shadow
+  min_policy_score: 0
+  skip_below_score: -100
+  symbol_blocklist: []
+  setup_blocklist: []
+  recent_cold_skip_win_rate: 0
+  recent_cold_skip_min_n: 999999
+  global_edge_cold_win_rate: 0
+  global_edge_cold_min_n: 999999
+
+signals:
+  min_confidence: 0
+  min_risk_reward: 0
+  max_candidates_per_run: 0
+  gold_never_rejectable: false
+  specialized_setups:
+    # ALL specialized setups emit candidates for trading AND log fires to the
+    # shadow ledger (enabled=true + shadow=true = emit + log, per
+    # detect_specialized). Data-lab's purpose is data collection, so the
+    # culturing evidence stream stays alive while they trade live on demo.
+    # The 4 research-only trials keep shadow_only=true in
+    # core/specialized_setups.py — they log evidence but never emit.
+    enabled: true
+    shadow: true
+    symbols: []
+    setups: []
+    per_symbol: {}
+  kelly_sizing:
+    enabled: true
+    # Full Kelly is calculated only after a cell has meaningful evidence.
+    # Fresh/uncultured cells use a small fixed fallback so one early loss cannot
+    # consume the demo account. The risk section independently caps all new
+    # orders at 5% of equity.
+    kelly_fraction: 1.0
+    criteria_mode: true
+    # Do not let a profitable symbol-wide aggregate promote a brand-new
+    # strategy cell. Each setup must earn its own 20-trade evidence sample.
+    symbol_aggregate_fallback: false
+    min_n: 20
+    max_fraction: 5.0
+    fallback_fraction: 0.5
+    evidence_min_trades: 20
+    fallback_risk_percent: 0.5
+    max_risk_percent: 5.0
+    # Explicit marker for the dashboard/review: thin cells remain active for
+    # evidence collection but cannot promote themselves to full Kelly.
+
+# No ranking suppression — every strategy stream competes.
+quant:
+  use_adaptive_weights: false
+  strategy_ranking_enabled: false
+  require_top_ranked_setup: false
+  ranking_flex_enabled: false
+  ranking_context_align: false
+  min_rank_sample_size: 0
+  min_rank_win_rate: 0
+
+strategy_arena:
+  enabled: true
+  emit_all_setups: true
+  log_triggers: true
+  log_outcomes: true
+  # No pyramiding: one live position per symbol. Other strategies may still
+  # trigger and be logged/rejected as capacity conflicts for later evaluation.
+  max_open_per_setup: 1
+  max_open_per_symbol: 1
+  min_confidence: 0
+
+# Broad candidate stream, realistic spread/ATR validity checks retained.
+filters:
+  min_volume_ratio: 0.0
+  min_atr_ratio: 0.0
+  spread_mult: 10.0
+  avoid_news: false
+  max_spread_points:
+    XAUUSDm: 1000
+    USOILm: 500
+    BTCUSDm: 5000
+    EURUSDm: 100
+    GBPUSDm: 100
+    USDJPYm: 100
+    USDCHFm: 100
+    AUDUSDm: 100
+    US500m: 500
+    US30m: 500
+    NAS100m: 500
+    UK100m: 1000
+    FR40m: 1000
+    JP225m: 1000
+
+session_scoring:
+  enabled: false
+
+# Risk state, exposure, and the hard per-trade equity cap remain active so the
+# live demo ledger stays useful rather than a fantasy fill stream.
+risk:
+  kill_switch: false
+  # 0 = disabled in current risk_manager (_consecutive_loss_limit returns None
+  # for limit <= 0) — the bot never pauses on a losing streak. Deliberate for
+  # this live-demo lane; flip to e.g. 8 to halt on a real bleed.
+  max_consecutive_losses: 0
+  max_daily_loss_pct: 100
+  max_drawdown_pct: 100
+  max_symbol_exposure_usd: 1000000
+  max_total_exposure_usd: 1000000
+  # Full-Kelly is available only after evidence qualifies the cell, while every
+  # new order is hard-capped at 5% of current equity. This prevents the early
+  # -$243-style blowout seen in the first 18-trade sample.
+  max_risk_per_trade_pct: 5.0
+  allow_full_kelly: true
+  enforce_equity_risk_cap: true
+  daily_profit_halt_usd: 0
+
+trading:
+  aggressive_mode: true
+  allow_pyramiding: false
+  max_open_per_symbol: 1
+  max_session_trades_per_symbol: 0
+  fixed_exit_only: true
+  strategy_entries_market_only: true
+  no_trailing: true
+  no_break_even: true
+  no_partial_tp: true
+  no_time_based_sl: true
+  no_adaptive_exit: true
+  fast_mode_enabled: false
+  strategy_entries:
+    enabled: true
+    use_limit_orders: false
+    reject_unreachable_entries: false
+    skip_at_capacity_in_candidates: false
+  dynamic_entries:
+    enabled: false
+
+# Legacy top-level aliases retained for components that read this section.
+time_based_sl:
+  enabled: false
+
+practice:
+  # Keep the canonical profile guard in practice mode while execution runs the
+  # MT5 path. This also prevents the base practice gate sync from restoring
+  # strict top-ranked filtering.
+  require_top_ranked_setup: false
+  min_confidence: 0
+  min_risk_reward: 0
+  min_volume_ratio: 0.0
+  max_drawdown_pct: 100
+  max_symbol_exposure_usd: 1000000
+  max_total_exposure_usd: 1000000
+  relax_structure_checks: true
+  relax_volume_check: true
+  symbols:
+    - XAUUSDm
+    - USOILm
+    - BTCUSDm
+    - EURUSDm
+    - GBPUSDm
+    - USDJPYm
+    - USDCHFm
+    - AUDUSDm
+    - US500m
+    - US30m
+    - NAS100m
+    - UK100m
+    - FR40m
+    - JP225m
+  micro:
+    enabled: false
+  growth:
+    enabled: false
+
+conviction:
+  enabled: false
+
+# Paper-only experiment router — off in MT5 mode (it refuses to stamp live
+# orders by design; see core/shadow_experiment.py).
+self_learning:
+  enabled: true
+  shadow_experiments:
+    routing_enabled: false
+    control_fraction: 0.50
+
+learning:
+  enabled: true
+  mode: observe_only
+  overtrading_cap: 0
+
+research:
+  auto_deploy: false
+  min_trades_for_research: 1

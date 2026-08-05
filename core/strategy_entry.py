@@ -204,6 +204,12 @@ def resolve_entry_mode(
     config: dict[str, Any],
 ) -> str:
     cfg = _cfg(config)
+    # A market-only experiment must be authoritative even when a downstream
+    # evaluation recipe suggests a limit entry.
+    if bool(config.get("execution", {}).get("strategy_entries_market_only", False)):
+        return "market"
+    if bool(config.get("trading", {}).get("strategy_entries_market_only", False)):
+        return "market"
     if cfg.get("use_limit_orders") is False:
         return "market"
     within = float(cfg.get("market_if_within_atr", 0.15)) * atr

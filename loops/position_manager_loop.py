@@ -26,6 +26,7 @@ from core.position_manager import (
 )
 from core.position_sync import fetch_mt5_agent_positions
 from core.trade_manager import run_trade_manager_cycle
+from core.trade_history import trade_history_filename
 from core.utils import load_config, read_json_state, setup_logger, write_json_state
 
 
@@ -34,17 +35,50 @@ def run() -> dict:
     logger = setup_logger("position_manager_loop", "position_manager_loop.log")
     mode = config.get("execution", {}).get("mode", "paper")
     features = read_json_state("features.json", default={"symbols": {}})
-    paper_trades = read_json_state("paper_trades.json", default={"trades": []}) or {}
+    # Read the ACTIVE closed-trade ledger (mt5_trades.json in MT5 mode), not a
+    # hardcoded paper_trades.json — ghost scoring + stale-loser detection read
+    # closed-trade history and saw nothing in MT5 mode before this fix.
+    paper_trades = read_json_state(trade_history_filename(config), default={"trades": []}) or {}
     closed = list(paper_trades.get("trades") or []) if isinstance(paper_trades, dict) else []
 
     if mode == "mt5":
+        # Single-owner + validation safety (2026-08-04): when live trading is
+        # disabled (validation profile, research mode), NEVER send SL/TP modify
+        # or close orders through MT5. Position *sync* still happens in
+        # verifier/risk loops; this loop is management-only. Mirrors
+        # execution_loop's live_trading_enabled gate so a read-only run stays
+        # read-only end to end.
+        if not config.get("execution", {}).get("live_trading_enabled", False):
+            logger.info(
+                "Position manager MT5: live_trading_enabled=false — "
+                "skipping order-sending management (validation mode)"
+            )
+            return {
+                "updated": 0,
+                "actions": [],
+                "errors": [],
+                "skipped": "live_trading_enabled_false",
+            }
         connection = MT5ConnectionManager(config, logger)
         try:
             connection.connect()
             positions = fetch_mt5_agent_positions(config, logger)
-            partial_summary = manage_partial_tp_mt5(config, positions, features, logger)
-            if partial_summary.get("partial_closes"):
-                positions = fetch_mt5_agent_positions(config, logger)
+            fixed_exit_only = bool(
+                (config.get("execution") or {}).get("fixed_exit_only", False)
+                or (config.get("trading") or {}).get("fixed_exit_only", False)
+            )
+            if fixed_exit_only:
+                partial_summary = {
+                    "partial_closes": 0,
+                    "full_closes": 0,
+                    "actions": [],
+                    "errors": [],
+                    "skipped": "fixed_exit_only",
+                }
+            else:
+                partial_summary = manage_partial_tp_mt5(config, positions, features, logger)
+                if partial_summary.get("partial_closes"):
+                    positions = fetch_mt5_agent_positions(config, logger)
             summary = manage_mt5_positions(config, positions, features, logger)
             summary["partial_tp"] = partial_summary
             if positions:

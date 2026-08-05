@@ -7,6 +7,7 @@ from typing import Any
 
 from core.data_collector import DataCollector
 from core.mt5_connection_manager import MT5ConnectionManager
+from core.mt5_owner import MT5Owner
 from core.mt5_terminal_manager import MT5TerminalManager, get_python_session_id
 from core.symbol_manager import SymbolManager, broker_symbol, load_resolved_symbol_map
 
@@ -105,32 +106,26 @@ class MT5Client:
         return self._collector.fetch_candles(symbol, timeframe, count)
 
     def get_current_price(self, symbol: str) -> dict[str, float] | None:
-        try:
-            import MetaTrader5 as mt5
-        except ImportError:
-            return None
         if not self._connection.connected:
             return None
+        owner = MT5Owner.instance()
         broker = self._broker_symbol(symbol)
-        if not mt5.symbol_select(broker, True):
+        if not owner.symbol_select(broker, True):
             return None
-        tick = mt5.symbol_info_tick(broker)
+        tick = owner.symbol_info_tick(broker)
         if tick is None:
             return None
         return {"bid": float(tick.bid), "ask": float(tick.ask), "mid": (tick.bid + tick.ask) / 2}
 
     def get_spread_points(self, symbol: str) -> float:
-        try:
-            import MetaTrader5 as mt5
-        except ImportError:
-            return 0.0
         if not self._connection.connected:
             return 0.0
+        owner = MT5Owner.instance()
         broker = self._broker_symbol(symbol)
-        if not mt5.symbol_select(broker, True):
+        if not owner.symbol_select(broker, True):
             return 0.0
-        info = mt5.symbol_info(broker)
-        tick = mt5.symbol_info_tick(broker)
+        info = owner.symbol_info(broker)
+        tick = owner.symbol_info_tick(broker)
         if info is None or tick is None or info.point == 0:
             return 0.0
         spread = (tick.ask - tick.bid) / info.point

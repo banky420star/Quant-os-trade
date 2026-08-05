@@ -53,6 +53,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+import numpy as np
 import pandas as pd
 
 from core import specialized_setups
@@ -156,7 +157,365 @@ def _m15_window_up_to(m15: list[dict[str, Any]], cutoff_time: Any,
     return out[-limit:]
 
 
-def _vectorized_features(m5: list[dict[str, Any]], m15: list[dict[str, Any]]) -> pd.DataFrame:
+def _vectorized_orb_signal(times, highs, lows, closes, symbol: str | None,
+                           or_bars: int = 12) -> np.ndarray:
+    """Per-bar Opening Range Breakout signal (lookahead-free), matching
+    FeatureEngine._orb EXACTLY so live + replay labels agree at every bar.
+
+    For each day-block: find the first bar at/after the symbol's session open
+    (OR_SESSION_OPEN_UTC), form the OR over the next `or_bars` bars, then the
+    FIRST close beyond [or_low, or_high] after the OR forms is the signal for
+    that bar (one fire per session). All other bars -> None. Depends only on
+    past+current bars within the day, so the label at bar i equals the live
+    FeatureEngine._orb label at bar i.
+    """
+    import numpy as np
+    n = len(closes)
+    sig = np.array([None] * n, dtype=object)
+    if n < or_bars + 2 or symbol is None:
+        return sig
+    from core.feature_engine import OR_SESSION_OPEN_UTC
+    open_h, open_m = OR_SESSION_OPEN_UTC.get(symbol, (0, 0))
+    open_mod = open_h * 60 + open_m
+    ts = pd.Series(pd.to_datetime(times, utc=True))
+    mod = (ts.dt.hour * 60 + ts.dt.minute).to_numpy()
+    day = ts.dt.strftime("%Y-%m-%d").to_numpy()
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    i = 0
+    while i < n:
+        d = day[i]
+        j = i
+        while j < n and day[j] == d:
+            j += 1
+        blk_mod = mod[i:j]
+        after = np.where(blk_mod >= open_mod)[0]
+        if len(after) < or_bars + 2:
+            i = j
+            continue
+        open_idx = i + int(after[0])
+        or_end = open_idx + or_bars - 1
+        if or_end >= j - 1:
+            i = j
+            continue
+        or_high = float(highs[open_idx:or_end + 1].max())
+        or_low = float(lows[open_idx:or_end + 1].min())
+        if or_high <= or_low:
+            i = j
+            continue
+        for k in range(or_end + 1, j):
+            c = closes[k]
+            if c > or_high:
+                sig[k] = "bullish_breakout"
+                break
+            if c < or_low:
+                sig[k] = "bearish_breakout"
+                break
+        i = j
+    return sig
+
+
+def _vectorized_macd_divergence(highs, lows, closes, pivot_l: int = 5,
+                                fast: int = 12, slow: int = 26, signal: int = 9) -> np.ndarray:
+    """Per-bar MACD-histogram divergence state (lookahead-free), matching
+    FeatureEngine._macd_divergence EXACTLY so live + replay labels agree at
+    every bar. None at every bar except the confirmation bar (i+L) of a
+    divergent pivot: bearish_divergence / bullish_divergence. Arsenal-expansion
+    iter-49 (macd_hist_divergence setup) — gives it replay-veto parity the 4
+    research setups intentionally lack.
+    """
+    n = len(closes)
+    sig = np.array([None] * n, dtype=object)
+    if n < 2 * pivot_l + slow + signal:
+        return sig
+    closes = np.asarray(closes, dtype=float)
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    close_s = pd.Series(closes)
+    ema_fast = close_s.ewm(span=fast, adjust=False).mean()
+    ema_slow = close_s.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    sig_line = macd_line.ewm(span=signal, adjust=False).mean()
+    hist = (macd_line - sig_line).to_numpy(dtype=float)
+    last_ph: tuple[float, float] | None = None
+    last_pl: tuple[float, float] | None = None
+    for i in range(pivot_l, n - pivot_l):
+        confirm = i + pivot_l
+        left_h = highs[i - pivot_l:i]
+        right_h = highs[i + 1:i + pivot_l + 1]
+        left_l = lows[i - pivot_l:i]
+        right_l = lows[i + 1:i + pivot_l + 1]
+        is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+        is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+        if is_ph:
+            if (last_ph is not None and highs[i] > last_ph[0] and hist[i] < last_ph[1]):
+                sig[confirm] = "bearish_divergence"
+            last_ph = (float(highs[i]), float(hist[i]))
+        if is_pl:
+            if (last_pl is not None and lows[i] < last_pl[0] and hist[i] > last_pl[1]):
+                sig[confirm] = "bullish_divergence"
+            last_pl = (float(lows[i]), float(hist[i]))
+    return sig
+
+
+def _vectorized_adx_trend_state(adx, di_plus, di_minus, min_adx: float = 20.0) -> np.ndarray:
+    """Per-bar ADX/DMI rising-trend state (lookahead-free), matching
+    FeatureEngine._adx_trend_state EXACTLY so live + replay labels agree at
+    every bar. At each bar i (i>=1): ADX[i] >= min_adx AND ADX[i] > ADX[i-1]
+    (rising) AND DI+ > DI- -> "bullish_trend"; DI- > DI+ -> "bearish_trend";
+    else None. Arsenal iter-50 (adx_di_rising_trend setup) — gives it
+    replay-veto parity. Uses the Wilder ADX/DI series already computed in
+    ``_vectorized_features`` (identical smoothing to FeatureEngine._adx).
+    """
+    n = len(adx)
+    sig = np.array([None] * n, dtype=object)
+    if n < 2:
+        return sig
+    adx = np.asarray(adx, dtype=float)
+    di_plus = np.asarray(di_plus, dtype=float)
+    di_minus = np.asarray(di_minus, dtype=float)
+    for i in range(1, n):
+        a_cur = adx[i]; a_prev = adx[i - 1]
+        if not np.isfinite(a_cur) or not np.isfinite(a_prev):
+            continue
+        if a_cur < min_adx or a_cur <= a_prev:
+            continue
+        dp = di_plus[i]; dm = di_minus[i]
+        if not np.isfinite(dp) or not np.isfinite(dm):
+            continue
+        if dp > dm:
+            sig[i] = "bullish_trend"
+        elif dm > dp:
+            sig[i] = "bearish_trend"
+    return sig
+
+
+def _vectorized_cvd_divergence(times, opens, highs, lows, closes, vols,
+                               pivot_l: int = 5) -> np.ndarray:
+    """Per-bar CVD-divergence state (lookahead-free), matching
+    FeatureEngine._cvd_divergence EXACTLY so live + replay labels agree at every
+    bar. CVD = cumulative sign(close-open)*tick_volume with a daily UTC reset
+    (Lee-Ready tick-rule proxy on Exness CFD tick volume). Confirmed pivots
+    (L=5) on price; None at every bar except the confirmation bar (i+L) of a
+    divergent pivot: bearish_divergence (price higher high + CVD lower high) /
+    bullish_divergence (price lower low + CVD higher low). Arsenal iter-51 —
+    gives cvd_divergence_reversal the replay-veto parity the 4 PASS-14 flipped
+    setups were missing (vp/intermarket remain live-cultured only — cross-symbol
+    / windowed-profile vectorization is disproportionate for an OFF veto).
+    """
+    n = len(closes)
+    sig = np.array([None] * n, dtype=object)
+    if n < 2 * pivot_l + 30:
+        return sig
+    opens = np.asarray(opens, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    vols = np.asarray(vols, dtype=float)
+    ts = pd.Series(pd.to_datetime(times, utc=True))
+    days = ts.dt.strftime("%Y-%m-%d").to_numpy()
+    delta = np.sign(closes - opens) * vols
+    cvd = np.zeros(n)
+    running = 0.0
+    prev_day: str | None = None
+    for i in range(n):
+        d = days[i]
+        if prev_day is not None and d != prev_day:
+            running = 0.0
+        running += float(delta[i])
+        cvd[i] = running
+        prev_day = d
+    last_ph: tuple[float, float] | None = None  # (price, cvd)
+    last_pl: tuple[float, float] | None = None
+    for i in range(pivot_l, n - pivot_l):
+        confirm = i + pivot_l
+        left_h = highs[i - pivot_l:i]
+        right_h = highs[i + 1:i + pivot_l + 1]
+        left_l = lows[i - pivot_l:i]
+        right_l = lows[i + 1:i + pivot_l + 1]
+        is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+        is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+        if is_ph:
+            if last_ph is not None and highs[i] > last_ph[0] and cvd[i] < last_ph[1]:
+                sig[confirm] = "bearish_divergence"
+            last_ph = (float(highs[i]), float(cvd[i]))
+        if is_pl:
+            if last_pl is not None and lows[i] < last_pl[0] and cvd[i] > last_pl[1]:
+                sig[confirm] = "bullish_divergence"
+            last_pl = (float(lows[i]), float(cvd[i]))
+    return sig
+
+
+def _vectorized_ote_state(highs, lows, closes, atr_arr, pivot_l: int = 5,
+                          max_leg_bars: int = 80, min_leg_atr: float = 1.5) -> np.ndarray:
+    """Per-bar ICT Optimal Trade Entry state (lookahead-free), matching
+    FeatureEngine._ote_state EXACTLY so live + replay labels agree at every bar.
+    Tracks the most recent CONFIRMED displacement leg (pivot at i confirms at
+    i+L, L=5) as of each bar k and fires when close[k] is in the 62-79% fib
+    retracement zone of that leg: bullish_ote (up leg, buy pullback) /
+    bearish_ote (down leg, sell rally). Guards: leg >= 1.5*ATR, leg age <= 80
+    bars. Arsenal iter-52 — gives ict_ote replay-veto parity.
+    """
+    n = len(closes)
+    sig = np.array([None] * n, dtype=object)
+    if n < 2 * pivot_l + 30:
+        return sig
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    atr_arr = np.asarray(atr_arr, dtype=float)
+    is_ph = np.zeros(n, dtype=bool)
+    is_pl = np.zeros(n, dtype=bool)
+    for i in range(pivot_l, n - pivot_l):
+        left_h = highs[i - pivot_l:i]; right_h = highs[i + 1:i + pivot_l + 1]
+        left_l = lows[i - pivot_l:i]; right_l = lows[i + 1:i + pivot_l + 1]
+        if highs[i] > left_h.max() and highs[i] >= right_h.max():
+            is_ph[i] = True
+        if lows[i] < left_l.min() and lows[i] <= right_l.min():
+            is_pl[i] = True
+    last_ph: tuple[int, float] | None = None
+    last_pl: tuple[int, float] | None = None
+    for k in range(2 * pivot_l, n):
+        i = k - pivot_l  # pivot that confirms at bar k
+        if pivot_l <= i < n - pivot_l:
+            if is_ph[i]:
+                last_ph = (i, float(highs[i]))
+            if is_pl[i]:
+                last_pl = (i, float(lows[i]))
+        if last_ph is None or last_pl is None:
+            continue
+        cur = float(closes[k])
+        atr_k = float(atr_arr[k]) if np.isfinite(atr_arr[k]) and atr_arr[k] > 0 else 0.0
+        if atr_k <= 0:
+            continue
+        min_leg = min_leg_atr * atr_k
+        if last_ph[0] > last_pl[0]:
+            low = last_pl[1]; high = last_ph[1]; end_idx = last_ph[0]
+            if high - low < min_leg or k - end_idx > max_leg_bars:
+                continue
+            zone_lo = high - 0.79 * (high - low); zone_hi = high - 0.62 * (high - low)
+            if zone_lo <= cur <= zone_hi:
+                sig[k] = "bullish_ote"
+        else:
+            high = last_ph[1]; low = last_pl[1]; end_idx = last_pl[0]
+            if high - low < min_leg or k - end_idx > max_leg_bars:
+                continue
+            zone_lo = low + 0.62 * (high - low); zone_hi = low + 0.79 * (high - low)
+            if zone_lo <= cur <= zone_hi:
+                sig[k] = "bearish_ote"
+    return sig
+
+
+def _vectorized_rsi_divergence(highs, lows, closes, rsi, pivot_l: int = 5,
+                               period: int = 14) -> np.ndarray:
+    """Per-bar RSI divergence state (lookahead-free), matching
+    FeatureEngine._rsi_divergence EXACTLY so live + replay labels agree at every
+    bar. Wilder RSI(14) series; confirmed pivots (L=5) on price; None at every
+    bar except the confirmation bar (i+L) of a divergent pivot:
+    bearish_divergence (price higher high + RSI lower high) / bullish_divergence
+    (price lower low + RSI higher low). Arsenal iter-54 (rsi_divergence setup) —
+    gives it replay-veto parity. Uses the RSI series already computed in
+    ``_vectorized_features`` (identical Wilder smoothing to FeatureEngine._rsi).
+    Structured identically to ``_vectorized_macd_divergence`` with RSI for hist.
+    """
+    n = len(closes)
+    sig = np.array([None] * n, dtype=object)
+    if n < 2 * pivot_l + period + 10:
+        return sig
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    rsi = np.asarray(rsi, dtype=float)
+    last_ph: tuple[float, float] | None = None
+    last_pl: tuple[float, float] | None = None
+    for i in range(pivot_l, n - pivot_l):
+        confirm = i + pivot_l
+        left_h = highs[i - pivot_l:i]
+        right_h = highs[i + 1:i + pivot_l + 1]
+        left_l = lows[i - pivot_l:i]
+        right_l = lows[i + 1:i + pivot_l + 1]
+        is_ph = highs[i] > left_h.max() and highs[i] >= right_h.max()
+        is_pl = lows[i] < left_l.min() and lows[i] <= right_l.min()
+        if is_ph:
+            if last_ph is not None and highs[i] > last_ph[0] and rsi[i] < last_ph[1]:
+                sig[confirm] = "bearish_divergence"
+            last_ph = (float(highs[i]), float(rsi[i]))
+        if is_pl:
+            if last_pl is not None and lows[i] < last_pl[0] and rsi[i] > last_pl[1]:
+                sig[confirm] = "bullish_divergence"
+            last_pl = (float(lows[i]), float(rsi[i]))
+    return sig
+
+
+def _vectorized_breaker_block_state(highs, lows, closes, opens, atr_arr,
+                                    pivot_l: int = 5, max_age: int = 40,
+                                    zone_atr: float = 0.35) -> np.ndarray:
+    """Per-bar ICT Breaker Block state (lookahead-free), matching
+    FeatureEngine._breaker_block_state EXACTLY so live + replay labels agree at
+    every bar. At each bar k: searches confirmed pivots (L=5, i+L<=k) within
+    max_age of k, most-recent first. bullish_breaker = a pivot high H was broken
+    above (close>H strictly before k), low[k] retests H within zone_atr*ATR, and
+    bar k is a bullish rejection (close>open, close in upper half of range);
+    bearish_breaker = mirror with a broken pivot low. Arsenal iter-53
+    (ict_breaker_block setup) — gives it replay-veto parity. Uses the ATR series
+    already computed in ``_vectorized_features``.
+    """
+    n = len(closes)
+    sig = np.array([None] * n, dtype=object)
+    if n < 2 * pivot_l + 30:
+        return sig
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    opens = np.asarray(opens, dtype=float)
+    atr_arr = np.asarray(atr_arr, dtype=float)
+    is_ph = np.zeros(n, dtype=bool)
+    is_pl = np.zeros(n, dtype=bool)
+    for i in range(pivot_l, n - pivot_l):
+        left_h = highs[i - pivot_l:i]; right_h = highs[i + 1:i + pivot_l + 1]
+        left_l = lows[i - pivot_l:i]; right_l = lows[i + 1:i + pivot_l + 1]
+        if highs[i] > left_h.max() and highs[i] >= right_h.max():
+            is_ph[i] = True
+        if lows[i] < left_l.min() and lows[i] <= right_l.min():
+            is_pl[i] = True
+    for k in range(2 * pivot_l, n):
+        atr_k = float(atr_arr[k]) if np.isfinite(atr_arr[k]) and atr_arr[k] > 0 else 0.0
+        if atr_k <= 0:
+            continue
+        zone = zone_atr * atr_k
+        latest = k - pivot_l
+        rng = highs[k] - lows[k]
+        for i in range(latest, pivot_l - 1, -1):
+            if k - i > max_age:
+                break
+            if is_ph[i]:
+                H = float(highs[i])
+                # broke above H strictly before k (b in [i+1, k-1])
+                broke = False
+                for b in range(i + 1, k):
+                    if closes[b] > H:
+                        broke = True
+                        break
+                if broke and (H - zone <= lows[k] <= H + zone):
+                    if closes[k] > opens[k] and rng > 0 and (closes[k] - lows[k]) >= 0.5 * rng:
+                        sig[k] = "bullish_breaker"
+                        break
+            if is_pl[i]:
+                L = float(lows[i])
+                broke = False
+                for b in range(i + 1, k):
+                    if closes[b] < L:
+                        broke = True
+                        break
+                if broke and (L - zone <= highs[k] <= L + zone):
+                    if closes[k] < opens[k] and rng > 0 and (highs[k] - closes[k]) >= 0.5 * rng:
+                        sig[k] = "bearish_breaker"
+                        break
+    return sig
+
+
+def _vectorized_features(m5: list[dict[str, Any]], m15: list[dict[str, Any]],
+                         symbol: str | None = None) -> pd.DataFrame:
     """Compute FeatureEngine's per-bar features for EVERY M5 bar in one vectorized
     pass instead of re-running pandas rolling per bar (which is ~145ms/bar —
     unusable on 50k x 14 symbols).
@@ -665,6 +1024,39 @@ def _vectorized_features(m5: list[dict[str, Any]], m15: list[dict[str, Any]]) ->
     m15_aligned_str = m15_aligned.astype(str)
     align = (m5_trend_str == m15_aligned_str)
 
+    # --- Opening Range Breakout (iteration 43; parity with FeatureEngine._orb) ---
+    orb_signal = _vectorized_orb_signal(df["time"], high, low, close, symbol)
+
+    # --- MACD-histogram divergence (arsenal iter-49; parity with
+    # FeatureEngine._macd_divergence) so macd_hist_divergence has replay-veto
+    # parity. None except at the confirmation bar of a divergent pivot. ---
+    macd_divergence = _vectorized_macd_divergence(high, low, close)
+
+    # --- ADX/DMI rising-trend state (arsenal iter-50; parity with
+    # FeatureEngine._adx_trend_state) so adx_di_rising_trend has replay-veto
+    # parity. Uses the Wilder ADX/DI series already computed above. ---
+    adx_trend = _vectorized_adx_trend_state(adx, _plus_di, _minus_di)
+
+    # --- CVD divergence (arsenal iter-51; parity with FeatureEngine._cvd_divergence)
+    # so cvd_divergence_reversal has replay-veto parity. None except at the
+    # confirmation bar of a divergent pivot. ---
+    cvd_divergence = _vectorized_cvd_divergence(df["time"], open_, high, low, close, df["volume"])
+
+    # --- ICT OTE state (arsenal iter-52; parity with FeatureEngine._ote_state) so
+    # ict_ote has replay-veto parity. Uses the ATR series already computed above. ---
+    ote_state = _vectorized_ote_state(high, low, close, atr)
+
+    # --- RSI divergence (arsenal iter-54; parity with FeatureEngine._rsi_divergence)
+    # so rsi_divergence has replay-veto parity. None except at the confirmation
+    # bar of a divergent pivot. Uses the Wilder RSI series already computed above. ---
+    rsi_divergence = _vectorized_rsi_divergence(high, low, close, rsi)
+
+    # --- ICT Breaker Block state (arsenal iter-53; parity with
+    # FeatureEngine._breaker_block_state) so ict_breaker_block has replay-veto
+    # parity. Uses the ATR series already computed above. ---
+    breaker_block = _vectorized_breaker_block_state(
+        high, low, close, open_, atr.to_numpy())
+
     out = pd.DataFrame({
         "time": df["time"].to_numpy(),
         "price": close.to_numpy(),
@@ -714,6 +1106,13 @@ def _vectorized_features(m5: list[dict[str, Any]], m15: list[dict[str, Any]]) ->
         "close_streak": close_streak,
         "order_block": order_block,
         "ha_trend": ha_trend,
+        "orb_signal": orb_signal,
+        "macd_divergence": macd_divergence,
+        "adx_trend": adx_trend,
+        "cvd_divergence": cvd_divergence,
+        "ote_state": ote_state,
+        "rsi_divergence": rsi_divergence,
+        "breaker_block": breaker_block,
         "volume_avg": vol_avg.to_numpy(),
         "volume_ratio": vol_ratio.to_numpy(),
         "support": support.to_numpy(),
@@ -761,7 +1160,7 @@ def replay_symbol(
     cfg = _replay_config(config)
     ee = EvidenceEngine(cfg)
 
-    feats = _vectorized_features(m5, m15)
+    feats = _vectorized_features(m5, m15, symbol)
 
     end = len(m5) - forward_bars  # need forward_bars after the fire bar
     if max_bars is not None:
@@ -834,6 +1233,13 @@ def replay_symbol(
             "close_streak": int(feat.get("close_streak") if feat.get("close_streak") is not None else 0),
             "order_block": feat.get("order_block") or "none",
             "ha_trend": feat.get("ha_trend") or "none",
+            "orb_signal": feat.get("orb_signal"),
+            "macd_divergence": feat.get("macd_divergence"),
+            "adx_trend": feat.get("adx_trend"),
+            "cvd_divergence": feat.get("cvd_divergence"),
+            "ote_state": feat.get("ote_state"),
+            "rsi_divergence": feat.get("rsi_divergence"),
+            "breaker_block": feat.get("breaker_block"),
             "volume_avg": round(float(feat.get("volume_avg") or 0), 2),
             "volume_ratio": round(float(feat.get("volume_ratio") or 1.0), 2),
             "support": round(float(feat.get("support") or price), 5),

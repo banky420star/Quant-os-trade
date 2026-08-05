@@ -13,7 +13,6 @@ from typing import Any
 
 from core.setup_classifier import SetupClassifier
 from core.utils import (
-    fail_safe_missing,
     load_config,
     read_json_state,
     setup_logger,
@@ -24,6 +23,16 @@ from core.utils import (
 REPORT_FILE = "specialized_setup_report.json"
 MAX_SYMBOLS_DEFAULT = 20
 MAX_SETUPS_PER_SYMBOL = 8
+
+
+def fail_safe_missing(filename: str, logger: logging.Logger) -> bool:
+    """Return whether a required snapshot is absent in the current state root.
+
+    Kept as a module-level seam for tests and operators; unlike importing the
+    utility's function directly, this reads through this loop's current
+    ``read_json_state`` binding so redirected/test state cannot go stale.
+    """
+    return read_json_state(filename, default=None) is None
 
 
 def _empty_report(status: str, reason: str, *, symbols_scanned: int = 0) -> dict[str, Any]:

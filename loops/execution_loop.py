@@ -14,7 +14,7 @@ from core.learning_schema import build_decision_event, config_snapshot_hash
 from core.market_hours import clear_backoff, in_backoff, is_market_closed_error, record_market_closed
 from core.mt5_client import MT5Client, format_mt5_connection_error, log_session_alignment
 from core.mt5_connection_manager import MT5ConnectionManager
-from core.mt5_broker import MT5Broker
+from core.mt5_broker import MT5Broker, TradingRefusedError
 from core.paper_broker import PaperBroker
 
 
@@ -94,6 +94,7 @@ from core.trade_tracker import TradeTracker
 from core.state_store import (
     approved_available,
     read_approved_signals,
+    read_evaluated_signals,
     sync_store_from_doc,
 )
 from core.daily_pnl import today_realized_pnl_usd, today_utc_day_stamp
@@ -145,6 +146,56 @@ def _collect_prices(config: dict, logger) -> tuple[dict[str, float], str]:
         client.disconnect()
 
     return prices, source
+
+
+def _intent_to_signal(config: dict, intent: dict, logger) -> dict | None:
+    """Rebuild a broker-ready signal from a fast-tick open intent.
+
+    ``fast_tick_loop`` pushes a SLIM intent (action/symbol/side/signal_id +
+    payload{entry, cache}) rather than the full evaluated signal. The broker
+    needs entry/sl/tp1/tp2/setup_type etc., so we hydrate the evaluated-signals
+    doc by ``signal_id`` and overlay the fast decision (entry mode + anchor +
+    management profile). Returns None when the signal can't be resolved — the
+    caller skips that intent instead of crashing the whole drain.
+
+    2026-08-03 fix: previously the raw intent was passed straight to
+    ``MT5Broker``, so ``_build_order_record`` raised ``KeyError('entry')`` on
+    every drain. That crashed the drain phase and made execution_loop return
+    early EVERY cycle, starving the slow approved-signal path (verified: 7
+    approved signals sat unexecuted while the drain errored).
+    """
+    signal_id = str(intent.get("signal_id") or "").strip()
+    if not signal_id:
+        logger.warning("Intent drain: open intent missing signal_id — skipped")
+        return None
+    doc = read_evaluated_signals(config) or read_json_state("evaluated_signals.json", default={})
+    found: dict | None = None
+    for sig in doc.get("evaluated") or []:
+        if str(sig.get("signal_id") or "") == signal_id:
+            found = dict(sig)
+            break
+    if not found:
+        logger.warning(
+            "Intent drain: no evaluated signal for %s — skipped", signal_id,
+        )
+        return None
+    payload = intent.get("payload") or {}
+    dec = payload.get("entry") or {}
+    cache = payload.get("cache") or {}
+    if isinstance(dec, dict) and dec.get("entry_type"):
+        found["entry_mode"] = str(dec["entry_type"])
+    anchor = float(cache.get("anchor") or (dec.get("anchor") if isinstance(dec, dict) else 0) or 0)
+    if anchor > 0:
+        found["entry"] = anchor
+    mgmt = cache.get("management_profile")
+    if isinstance(mgmt, dict) and mgmt:
+        found["management_profile"] = mgmt
+    found["fast_mode"] = True
+    if intent.get("symbol"):
+        found["symbol"] = intent["symbol"]
+    if intent.get("side"):
+        found["side"] = intent["side"]
+    return found
 
 
 def _drain_intents_phase(config: dict, mode: str, logger) -> dict | None:
@@ -212,11 +263,50 @@ def _drain_intents_phase(config: dict, mode: str, logger) -> dict | None:
         logger.warning("_drain_intents_phase: no broker (%s)", exc)
         return None
     placed_count = 0
+    requeued = 0
     try:
         if opens:
-            approved = [{"signal": it} for it in opens]
-            res = broker.process_approved_signals(approved)
-            placed_count += len(res.get("placed") or [])
+            approved: list[dict] = []
+            for it in opens:
+                sig = _intent_to_signal(config, it, logger)
+                if sig:
+                    approved.append({"signal": sig})
+                else:
+                    logger.info(
+                        "Intent drain: open %s %s skipped (unresolvable signal)",
+                        it.get("symbol"), it.get("side"),
+                    )
+            if approved:
+                # 2026-08-04 — pass the existing order/position state so the
+                # broker's own executed-signal-id + duplicate-position dedupe
+                # applies if a partial failure later requeues an intent that
+                # was already placed.
+                res = broker.process_approved_signals(
+                    approved,
+                    existing_orders=(read_json_state("mt5_orders.json", default={"orders": []}) or {}).get("orders", []),
+                    existing_trades=(read_json_state("mt5_trades.json", default={"trades": []}) or {}).get("trades", []),
+                    existing_positions=(read_json_state("mt5_positions.json", default={"positions": []}) or {}).get("positions", []),
+                )
+                placed_count += len(res.get("placed") or [])
+                # Persist the drain path's order records (normally owned by the
+                # slow path). Without this, a mid-batch failure that requeues
+                # an already-placed LIMIT intent would re-place it: the retry's
+                # executed-signal-id set is built from mt5_orders.json, which
+                # the drain path never wrote, and the duplicate-position gate
+                # only sees filled positions, not pending limit orders.
+                if res.get("orders"):
+                    orders_doc = {
+                        "timestamp": res.get("timestamp"),
+                        "mode": "mt5",
+                        "balance": res.get("balance"),
+                        "account": res.get("account"),
+                        "orders": res.get("orders"),
+                    }
+                    write_json_state("mt5_orders.json", orders_doc)
+                    try:
+                        sync_store_from_doc(config, "orders", orders_doc)
+                    except Exception:  # pragma: no cover — state-store optional
+                        pass
         for cl in closes:
             cr = broker.close_position(
                 int(cl.get("ticket", 0) or 0),
@@ -233,7 +323,55 @@ def _drain_intents_phase(config: dict, mode: str, logger) -> dict | None:
                     cl.get("ticket"), cr.get("error"),
                 )
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("_drain_intents_phase: broker call failed (%s)", exc)
+        if isinstance(exc, TradingRefusedError):
+            # 2026-08-04 — PERMANENT refusal (account-mode mismatch, algo
+            # trading off, trade_allowed=False, package missing). Retrying is
+            # meaningless and requeueing would LIVELOCK (drain -> refuse ->
+            # requeue forever, queue filling with stale intents). Drop loudly
+            # so the refusal surfaces as a clean stop for the operator.
+            logger.error(
+                "_drain_intents_phase: trading refused (%s) — dropping %d intents (not requeued)",
+                exc, len(intents),
+            )
+            return {
+                "timestamp": utc_now_iso(),
+                "mode": mode,
+                "mode_effective": "mt5",
+                "broker_invoked": True,
+                "drained": len(intents),
+                "placed": 0,
+                "requeued": 0,
+                "refused": len(intents),
+            }
+        # 2026-08-04 — TRANSIENT broker failure (e.g. -10004 "No IPC
+        # connection" while another loop cycles its MT5 session): do NOT drop
+        # the drained intents. Previously the except only logged and the
+        # dequeued intents were lost (observed: 14 queued fast entries drained
+        # then dropped; the MT5 audit afterwards showed open=0 pending=0).
+        # Requeue them for the next cycle, capped so a persistently failing
+        # broker cannot pile the queue up forever.
+        logger.warning(
+            "_drain_intents_phase: broker call failed (%s) — requeueing intents for retry",
+            exc,
+        )
+        fresh = [it for it in intents if int(it.get("retry_count") or 0) < 3]
+        stale = [it for it in intents if int(it.get("retry_count") or 0) >= 3]
+        if stale:
+            # Soft cap: only bounds queue growth from a single lingering batch.
+            # A fast-layer signal that keeps re-emitting starts a fresh intent
+            # (no retry_count) on the next cycle, so nothing is permanently
+            # starved.
+            logger.error(
+                "_drain_intents_phase: dropping %d intents after repeated failed retries",
+                len(stale),
+            )
+        try:
+            requeued = mgr.requeue_intents(fresh) if fresh else 0
+        except Exception as _rq_exc:  # pragma: no cover — defensive
+            logger.error(
+                "_drain_intents_phase: requeue failed (%s) — %d intents dropped",
+                _rq_exc, len(fresh),
+            )
     return {
         "timestamp": utc_now_iso(),
         "mode": mode,
@@ -241,6 +379,7 @@ def _drain_intents_phase(config: dict, mode: str, logger) -> dict | None:
         "broker_invoked": True,
         "drained": len(intents),
         "placed": placed_count,
+        "requeued": requeued,
     }
 
 
@@ -474,12 +613,20 @@ def run() -> dict | None:
                             _pos.get("ticket"), _pos.get("symbol"), _bbexc,
                         )
 
-            result = broker.process_approved_signals(
-                approved,
-                orders,
-                existing_trades=trades,
-                existing_positions=positions,
-            )
+            try:
+                result = broker.process_approved_signals(
+                    approved,
+                    orders,
+                    existing_trades=trades,
+                    existing_positions=positions,
+                )
+            except TradingRefusedError as _refused:
+                # 2026-08-04 — permanent refusal (e.g. live profile attached to
+                # a demo account). Log loudly and stop this cycle cleanly
+                # instead of crashing the loop every cycle. `finally` still
+                # disconnects.
+                logger.error("Execution refused: %s", _refused)
+                return None
             orders_doc = {
                 "timestamp": result["timestamp"],
                 "mode": "mt5",
@@ -563,6 +710,16 @@ def run() -> dict | None:
             approved = annotate_paper_validation_signals(approved, config)
         except Exception as exc:
             logger.warning("Adaptive paper validation routing skipped: %s", exc)
+
+        # Paper-only shadow experiment routing. Stamps each signal with its
+        # experiment arm (gate arms filter marginal candidates; weight arms
+        # tag for later scoring). Paper-mode only — never runs in MT5. No-op
+        # when self_learning.shadow_experiments.routing_enabled is false.
+        try:
+            from core.shadow_experiment import annotate_experiment_arm_signals
+            approved = annotate_experiment_arm_signals(approved, config)
+        except Exception as exc:
+            logger.warning("Shadow experiment routing skipped: %s", exc)
 
         broker = PaperBroker(config, logger)
         result = broker.process_approved_signals(approved, prices, orders, positions, trades, balance)

@@ -30,6 +30,7 @@ from core.utils import (
     utc_now_iso,
     write_json_state,
 )
+from core.profile_launcher import active_profile_name, list_profiles, profile_summary
 
 import logging
 _LOG = logging.getLogger("dashboard.pq")
@@ -263,6 +264,7 @@ def _build_live_portfolio(
     mt5_positions: dict,
     mt5_trades: dict,
     features: dict,
+    config: dict | None = None,
 ) -> dict:
     """Live balance, equity, and open-trade PnL — prefer account.json over stale orders.
 
@@ -272,8 +274,20 @@ def _build_live_portfolio(
       3. paper_*.json (written by paper simulation path)
     Returns a ``source`` field indicating which source is driving the display.
     """
-    # Determine which source is driving: prefer mt5_* over paper_* when non-empty.
-    _use_mt5_source = bool((mt5_orders or {}).get("orders")) or bool((mt5_positions or {}).get("positions"))
+    # Select the source from the configured execution mode first. Presence of
+    # rows is not a safe selector: a flat MT5 account has zero positions/orders,
+    # but the dashboard must not silently switch to stale paper state.
+    execution_mode = str(
+        ((config or {}).get("execution") or {}).get("mode") or ""
+    ).strip().lower()
+    _has_mt5_state = (
+        bool((mt5_orders or {}).get("orders"))
+        or bool((mt5_positions or {}).get("positions"))
+        or bool((mt5_trades or {}).get("trades"))
+    )
+    _use_mt5_source = execution_mode == "mt5" or (
+        execution_mode not in {"mt5", "paper"} and _has_mt5_state
+    )
 
     if _use_mt5_source:
         order_acct = (mt5_orders or {}).get("account", {})
@@ -349,8 +363,8 @@ def _build_live_portfolio(
     if _ts_paper:
         _source_timeline["paper_orders.json"] = _ts_paper
 
-    # Stale fallback detection: if account has equity but ALL active sources
-    # are absent, the data is stale account.json.
+    # If no execution ledger is available, make the account fallback explicit
+    # instead of presenting it as a live order source.
     _has_account_equity = bool(account.get("equity"))
     if _has_account_equity and not _use_mt5_source and not paper_orders.get("orders"):
         _live_source = "account.json"
@@ -371,7 +385,13 @@ def _build_live_portfolio(
         "account_server": account.get("server"),
         "source": _live_source,
         "source_timeline": _source_timeline,
-        "updated_at": account.get("timestamp") or _orders_for_source.get("timestamp"),
+        "updated_at": (
+            account.get("timestamp")
+            or _orders_for_source.get("timestamp")
+            or _positions_for_source.get("timestamp")
+            or _trades_for_source.get("timestamp")
+        ),
+        "execution_mode": execution_mode or None,
     }
 
 
@@ -472,6 +492,128 @@ def _strategy_comparison(edge_insights: dict, rankings: dict) -> list[dict]:
             seen.add(key)
             unique.append(r)
     return unique[:12]
+
+
+def _build_strategies_tab(rankings: dict, edge_scores: dict) -> dict:
+    """Build the Strategies-tab payload: the full setup catalog (all strategies
+    in the arsenal) + a per-symbol rating table.
+
+    Catalog merges the two registries:
+      - ``SETUP_LIBRARY`` (metadata: description, regimes, min_confidence)
+      - ``SPECIALIZED_SETUPS`` (the detect callables — what actually EMITS live)
+    A setup is ``live=True`` when it has a detect callable (it emits signals).
+    ``metadata_only`` = defined in the library but no detect (won't emit).
+    ``detect_only`` = emits but has no library metadata (e.g. ORB) -> falls back
+    to the default min_confidence=0.5 floor in setup_classifier.
+
+    Per-symbol ratings come from ``strategy_rankings.json`` (the per-symbol
+    ranker output: each symbol's top setups by score, with win_rate/total/
+    regime/session). Live per-setup win-rate from ``edge_scores.setup_stats.
+    global`` is folded in when memory_loop has populated it.
+    """
+    try:
+        from core.setup_library import SETUP_LIBRARY, list_setups_full, setup_family
+        from core.specialized_setups import SPECIALIZED_SETUPS
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "setup import failed: %s" % exc, "catalog": [], "per_symbol": []}
+
+    detect_names = {s.get("name") for s in SPECIALIZED_SETUPS if s.get("name")}
+    library_names = set(SETUP_LIBRARY.keys())
+
+    # Per-setup live win-rate stats (populated by memory_loop once trades close)
+    global_stats = (
+        (edge_scores.get("setup_stats") or {}).get("global") or {}
+        if isinstance(edge_scores, dict) else {}
+    )
+
+    catalog: list[dict] = []
+    for row in list_setups_full():
+        name = row["name"]
+        gs = global_stats.get(name) or {}
+        catalog.append({
+            "name": name,
+            "display_name": row["display_name"],
+            "description": row["description"],
+            "family": row["family"],
+            "min_confidence": row["min_confidence"],
+            "min_rr": row["min_rr"],
+            "allowed_regimes": row["allowed_regimes"],
+            "entry_hints": row["entry_hints"],
+            "exit_hints": row["exit_hints"],
+            "live": name in detect_names,           # has a detect callable -> emits
+            "metadata_only": name not in detect_names,
+            "win_rate_pct": gs.get("win_rate_pct"),
+            "total": gs.get("total"),
+            "score": gs.get("score"),
+        })
+    # Detect-only setups (emit but not in library, e.g. opening_range_breakout)
+    for name in sorted(detect_names - library_names):
+        catalog.append({
+            "name": name,
+            "display_name": name.replace("_", " ").title(),
+            "description": "",
+            "family": setup_family(name),
+            "min_confidence": None,
+            "min_rr": None,
+            "allowed_regimes": [],
+            "entry_hints": [],
+            "exit_hints": [],
+            "live": True,
+            "metadata_only": False,
+            "detect_only": True,
+            "win_rate_pct": (global_stats.get(name) or {}).get("win_rate_pct"),
+            "total": (global_stats.get(name) or {}).get("total"),
+        })
+
+    # Per-symbol rating from the ranker
+    per_symbol: list[dict] = []
+    rankings_map = (rankings or {}).get("rankings") or {}
+    if isinstance(rankings_map, dict):
+        for sym, ranked in rankings_map.items():
+            if not isinstance(ranked, list) or not ranked:
+                continue
+            top = ranked[0] or {}
+            per_symbol.append({
+                "symbol": sym,
+                "top_setup": top.get("setup_type"),
+                "top_score": top.get("score"),
+                "top_win_rate_pct": top.get("win_rate_pct"),
+                "insufficient_data": bool(top.get("insufficient_data")),
+                "total_trades": int(sum(r.get("total", 0) or 0 for r in ranked)),
+                "ranked": [
+                    {
+                        "setup": r.get("setup_type"),
+                        "score": r.get("score"),
+                        "win_rate_pct": r.get("win_rate_pct"),
+                        "total": r.get("total"),
+                        "avg_rr": r.get("avg_rr"),
+                        "regime": r.get("regime"),
+                        "session": r.get("session"),
+                        "insufficient_data": bool(r.get("insufficient_data")),
+                    }
+                    for r in ranked[:6]
+                ],
+            })
+    per_symbol.sort(key=lambda x: (x.get("top_score") or 0), reverse=True)
+
+    # Group catalog by family for the UI
+    families: dict[str, list[dict]] = {}
+    for c in catalog:
+        families.setdefault(c["family"], []).append(c)
+    family_summary = sorted(
+        ({"family": f, "count": len(rows), "live": sum(1 for r in rows if r.get("live"))}
+         for f, rows in families.items()),
+        key=lambda x: x["family"],
+    )
+
+    return {
+        "total_setups": len(catalog),
+        "live_setups": len(detect_names),
+        "metadata_only_setups": len(library_names - detect_names),
+        "families": family_summary,
+        "catalog": catalog,
+        "per_symbol": per_symbol,
+    }
 
 
 # ----- Exit-reason → flag mapping -----
@@ -1171,6 +1313,42 @@ def _build_research_status(report: dict, validation: dict, candidates: dict, ada
     }
 
 
+def _set_operator_kill_switch(action: str, reason: str | None = None) -> dict:
+    """Set or clear the canonical operator kill switch.
+
+    This is deliberately separate from ``/api/unblock-trades``: the latter
+    resets several learned/risk gates, while this control is a reversible,
+    operator-owned stop that remains sticky across risk-loop cycles until the
+    operator explicitly resumes trading.
+    """
+    action = str(action or "").strip().lower()
+    if action not in {"on", "off"}:
+        raise ValueError("action must be 'on' or 'off'")
+
+    current = read_json_state("kill_switch.json", default={}) or {}
+    now = utc_now_iso()
+    if action == "on":
+        reason_text = str(reason or "Stopped from dashboard")[:240]
+        document = {
+            "kill_switch": True,
+            "reason": reason_text,
+            "source": "operator",
+            "activated_at": current.get("activated_at") or now,
+            "updated_at": now,
+        }
+    else:
+        document = {
+            "kill_switch": False,
+            "reason": None,
+            "source": "operator",
+            "activated_at": None,
+            "cleared_at": now,
+            "updated_at": now,
+        }
+    write_json_state("kill_switch.json", document)
+    return document
+
+
 def _tail_log(lines: int = 40) -> list[str]:
     if not LOG_PATH.exists():
         return []
@@ -1446,11 +1624,28 @@ def _build_daily_pnl_today() -> dict:
             today_realized_pnl_usd,
             today_utc_day_stamp,
         )
+        from core.trade_history import trade_history_filename
         threshold_usd = float(
             (config.get("risk") or {}).get("daily_profit_halt_usd", 0) or 0
         )
-        breakdown = today_realized_pnl_breakdown("paper_trades.json")
-        pnl_today = today_realized_pnl_usd("paper_trades.json")
+        # 2026-08-04 — read the ACTIVE ledger, not a hardcoded paper_trades.json.
+        # In MT5 mode (execution.mode=mt5) closed trades live in mt5_trades.json;
+        # paper_trades.json is empty/stale, so the tracker showed $0 / 0 trades
+        # while the bot was actively closing demo trades. Same plumbing gap that
+        # broke the entry/exit calibration (see build_trade_log.py fix).
+        ledger = trade_history_filename(config)
+        # 2026-08-04 — session-reset cutoff for the DISPLAY only. When the
+        # operator clicks Reset Memory we stamp state/session_reset_at.json;
+        # the daily tracker then shows P&L accumulated since that reset
+        # (matches "reset all figures from that session"). The bot re-syncs
+        # mt5_trades.json from the MT5 terminal every cycle, so wiping the
+        # file never stuck — a timestamp cutoff is the only thing that does.
+        # The halt gate in execution_loop calls these helpers WITHOUT
+        # since_iso, so the guardrail keeps counting the real full-day total.
+        _reset_doc = read_json_state("session_reset_at.json", default={}) or {}
+        _since_iso = _reset_doc.get("reset_at") if isinstance(_reset_doc, dict) else None
+        breakdown = today_realized_pnl_breakdown(ledger, since_iso=_since_iso)
+        pnl_today = today_realized_pnl_usd(ledger, since_iso=_since_iso)
         stamp_today = today_utc_day_stamp()
 
         kill = read_json_state("kill_switch.json", default={}) or {}
@@ -1556,6 +1751,223 @@ def _build_daily_pnl_today() -> dict:
         }
 
 
+def _ledger_trade_stats_today(trades: list[dict], since_iso: str | None = None) -> dict:
+    """Win/loss + payoff stats over the active closed-trade ledger.
+
+    Uses the SAME cutoff as the daily P&L tile (UTC midnight, or the
+    session-reset timestamp) so the performance panel's Win rate / Profit
+    factor / Expectancy cards and the Daily P&L tile read the exact same
+    trades — they previously diverged because the panel derived its stats
+    from equity-curve markers (paper-only, window-sliced) while the tile
+    read the active ledger (mt5_trades.json in MT5 mode).
+    """
+    from datetime import datetime, timezone as _tz
+    from core.daily_pnl import _today_utc_midnight, _parse_iso
+
+    cutoff = _today_utc_midnight()
+    since_dt = _parse_iso(since_iso) if since_iso else None
+    rows: list[dict] = []
+    for entry in trades:
+        if not isinstance(entry, dict):
+            continue
+        ts_raw = entry.get("closed_at") or entry.get("close_ts") or ""
+        if not ts_raw:
+            continue
+        try:
+            closed_dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+            if closed_dt.tzinfo is None:
+                closed_dt = closed_dt.replace(tzinfo=_tz.utc)
+            if closed_dt < cutoff:
+                continue
+            if since_dt is not None and closed_dt < since_dt:
+                continue
+        except (ValueError, TypeError):
+            continue
+        try:
+            pnl = float(entry.get("pnl", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        # Daily P&L and its win/loss counters intentionally omit exact-zero
+        # closes. Keep the fast endpoint's performance cards on the same
+        # population so the displayed trade count and win rate cannot disagree.
+        if pnl == 0:
+            continue
+        rows.append({"pnl": pnl})
+
+    wins = [r for r in rows if r["pnl"] > 0]
+    losses = [r for r in rows if r["pnl"] < 0]
+    gross_profit = sum(r["pnl"] for r in wins)
+    gross_loss = abs(sum(r["pnl"] for r in losses))
+    n = len(rows)
+    net = sum(r["pnl"] for r in rows)
+    profit_factor: float | None = (
+        gross_profit / gross_loss
+        if gross_loss > 0
+        else (float("inf") if gross_profit > 0 else None)
+    )
+    # Clamp at the data layer: bare Infinity is not spec-compliant JSON, so
+    # an all-wins day would otherwise be nulled by the dashboard sanitizer
+    # (or worse, leak as a bare token through any non-sanitized consumer).
+    if profit_factor is not None and not math.isfinite(profit_factor):
+        profit_factor = None
+    return {
+        "trade_count": n,
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(100.0 * len(wins) / n, 1) if n else 0.0,
+        "net_pnl": round(net, 2),
+        "gross_profit": round(gross_profit, 2),
+        "gross_loss": round(gross_loss, 2),
+        "profit_factor": profit_factor,
+        "expectancy": round(net / n, 2) if n else 0.0,
+        "since_utc": cutoff.isoformat(),
+    }
+
+
+# --- /api/live: ultra-light snapshot for fast polling ---------------------
+# The SPA's main poll was /api/summary (~595KB, ~5s) every 2s, which piled
+# up in-flight requests and lagged the trade tracker ~5-12s behind
+# real-time ("insane delay between trade and dashboard"). /api/live returns
+# ONLY the time-critical fields — kill switch, account, open positions,
+# recent closed trades, daily PnL — at ~10-20KB so the trade tracker /
+# status pills / daily-PnL tile update within the poll interval. The
+# expensive daily-PnL block is cached on the active-ledger mtime so repeated
+# calls BETWEEN trade closes are instant (recomputed only when a trade
+# closes and the ledger file mtime bumps). Heavy views (charts, Research,
+# Memory, Strategies tab) stay on the slower /api/summary cadence.
+_LIVE_DAILY_CACHE: dict = {"key": None, "snap": None}
+
+
+def _build_live_snapshot() -> dict:
+    try:
+        from core.utils import STATE_DIR
+        from core.trade_history import trade_history_filename
+
+        config = load_config()
+        ledger_name = trade_history_filename(config)
+        ledger_path = STATE_DIR / ledger_name
+        try:
+            mtime = float(ledger_path.stat().st_mtime)
+        except OSError:
+            mtime = 0.0
+
+        # mtime-keyed cache: only recompute daily PnL when the ledger changes.
+        cache = _LIVE_DAILY_CACHE
+        if cache.get("key") != mtime or cache.get("snap") is None:
+            cache["snap"] = _build_daily_pnl_today()
+            cache["key"] = mtime
+        daily = cache["snap"] or {}
+
+        kill = read_json_state("kill_switch.json", default={}) or {}
+        account = read_json_state("account.json", default={}) or {}
+
+        # Open positions — prefer MT5 positions when present, else paper.
+        mt5_pos = read_json_state("mt5_positions.json", default={}) or {}
+        paper_pos = read_json_state("paper_positions.json", default={}) or {}
+        execution_mode = str(
+            ((config.get("execution") or {}).get("mode") or "")
+        ).strip().lower()
+        use_mt5 = execution_mode == "mt5" or (
+            execution_mode not in {"mt5", "paper"}
+            and bool(mt5_pos.get("positions"))
+        )
+        active_positions_doc = mt5_pos if use_mt5 else paper_pos
+        pos_list = list(active_positions_doc.get("positions") or [])
+        positions = [
+            {
+                "symbol": p.get("symbol"),
+                "side": p.get("side") or p.get("type"),
+                "volume": p.get("volume") if p.get("volume") is not None else p.get("size"),
+                "profit": p.get("profit"),
+                "open_time": p.get("open_time") or p.get("time") or p.get("opened_at"),
+                "entry": p.get("entry") or p.get("open_price"),
+                "sl": p.get("sl"),
+                "tp1": p.get("tp1"),
+                "setup_type": p.get("setup_type"),
+                "ticket": p.get("ticket") or p.get("position_id"),
+            }
+            for p in pos_list
+        ]
+
+        # Recent closed trades (tail) from the active ledger.
+        trades_doc = read_json_state(ledger_name, default={"trades": []}) or {}
+        trades = list(trades_doc.get("trades") or [])
+        recent = [
+            {
+                "trade_id": t.get("trade_id"),
+                "symbol": t.get("symbol"),
+                "setup_type": t.get("setup_type"),
+                "side": t.get("side"),
+                "pnl": t.get("pnl"),
+                "result": t.get("result"),
+                "closed_at": t.get("closed_at"),
+            }
+            for t in trades[-25:]
+        ]
+
+        # Trade-quality stats over the ACTIVE ledger with the same cutoff the
+        # daily P&L tile uses, so the performance panel and the tile agree.
+        _reset_doc = read_json_state("session_reset_at.json", default={}) or {}
+        _since_iso = _reset_doc.get("reset_at") if isinstance(_reset_doc, dict) else None
+        trade_stats = _ledger_trade_stats_today(trades, since_iso=_since_iso)
+
+        try:
+            # active_profile_name reads the canonical state/env selector and
+            # accepts no config argument. Passing config here raised TypeError,
+            # which was swallowed and made /api/live report profile=null.
+            profile = active_profile_name()
+        except Exception:  # noqa: BLE001
+            profile = None
+
+        heartbeat = read_json_state("heartbeat.json", default={}) or {}
+        health = read_json_state("health.json", default={}) or {}
+        return {
+            "daily_pnl": daily,
+            "kill_switch": bool(kill.get("kill_switch")),
+            "kill_reason": kill.get("reason"),
+            "account": {
+                "login": account.get("login"),
+                "balance": account.get("balance"),
+                "equity": account.get("equity"),
+                "server": account.get("server"),
+                "timestamp": account.get("timestamp"),
+            },
+            "open_positions": positions,
+            "open_positions_count": len(positions),
+            "recent_trades": recent,
+            "trade_stats": trade_stats,
+            "total_trades": len(trades),
+            "total_trades_all_time": len(trades),
+            "profile": profile,
+            "execution_mode": execution_mode or None,
+            "source": "mt5" if use_mt5 else "paper",
+            "ledger": ledger_name,
+            "health": health,
+            "data_timestamps": {
+                "account": account.get("timestamp"),
+                "positions": active_positions_doc.get("timestamp"),
+                "trades": trades_doc.get("timestamp"),
+                "heartbeat": heartbeat.get("timestamp"),
+            },
+            "freshness": {
+                "account_timestamp": account.get("timestamp"),
+                "positions_timestamp": active_positions_doc.get("timestamp"),
+                "trades_timestamp": trades_doc.get("timestamp"),
+                "heartbeat_timestamp": heartbeat.get("timestamp"),
+                "health_status": health.get("status"),
+                "degraded": health.get("status") not in (None, "ok"),
+            },
+            "updated_at_iso": utc_now_iso(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("_build_live_snapshot failed: %s", exc)
+        return {
+            "error": "live_unavailable",
+            "message": str(exc)[:200],
+            "updated_at_iso": utc_now_iso(),
+        }
+
+
 def _build_adaptive_exit_tile() -> dict:
     """Compute per-symbol adaptive exit SL/TP for each open position.
 
@@ -1569,7 +1981,12 @@ def _build_adaptive_exit_tile() -> dict:
     """
     config = load_config()
     features = read_json_state("features.json", default={"symbols": {}})
-    positions_data = read_json_state("paper_positions.json", default={"positions": []})
+    execution_mode = str(
+        ((config.get("execution") or {}).get("mode") or "")
+    ).strip().lower()
+    mt5_positions = read_json_state("mt5_positions.json", default={"positions": []}) or {}
+    paper_positions = read_json_state("paper_positions.json", default={"positions": []}) or {}
+    positions_data = mt5_positions if execution_mode == "mt5" else paper_positions
     positions = list(positions_data.get("positions", []))
     feat_symbols = features.get("symbols", {})
 
@@ -2540,6 +2957,41 @@ def _build_trading_status(
     }
 
 
+def _bounded_equity_curve(curve: dict, max_points: int = 1500, max_markers: int = 250) -> dict:
+    """Cap the equity curve served to the dashboard.
+
+    The summary poll is lite (curve capped at ~120 points, no 7d/30d history),
+    which made long-range chart windows show nothing. Building the curve
+    non-lite then bounding it here gives the client real history for the
+    7D/30D range buttons while keeping the payload bounded: points are evenly
+    downsampled (full time span preserved; 1500 pts ≈ 1 pt / 29 min at 30 days
+    — plenty for an equity curve, short windows stay live via the 1.5s
+    /api/live appends) and the per-range copies (``ranges``) are dropped — the
+    client already slices by timestamp itself. Trade markers are capped to the
+    most recent 250 closes (older closes still show on the recent-trades table,
+    which reads the ledger tail).
+    """
+    out = dict(curve or {})
+    pts = list((curve or {}).get("points") or [])
+    if len(pts) > max_points:
+        step = len(pts) / max_points
+        kept = [pts[int(i * step)] for i in range(max_points)]
+        if kept and kept[-1] is not pts[-1]:
+            kept.append(pts[-1])
+        pts = kept
+    out["points"] = pts
+    out["point_count"] = len(pts)
+    markers = list((curve or {}).get("markers") or [])
+    if len(markers) > max_markers:
+        markers = markers[-max_markers:]
+    out["markers"] = markers
+    out["ranges"] = {}
+    if pts:
+        out["current_equity"] = pts[-1].get("equity", out.get("current_equity"))
+        out["current_balance"] = pts[-1].get("cash", pts[-1].get("balance", out.get("current_balance")))
+    return out
+
+
 def aggregate_state(*, lite: bool = False) -> dict:
     config = load_config()
     runtime_mode = dict(runtime_mode_summary(config))
@@ -2582,8 +3034,18 @@ def aggregate_state(*, lite: bool = False) -> dict:
     # Prefer mt5_* positions/trades when MT5 is the active source (non-empty),
     # fall back to paper_* for research/paper mode.
     _has_mt5_positions = bool((payload.get("mt5_positions") or {}).get("positions"))
-    positions_data = payload.get("mt5_positions", {}) if _has_mt5_positions else payload.get("paper_positions", {})
-    trades_for_cards = payload.get("mt5_trades", {}) if _has_mt5_positions else payload.get("paper_trades", {})
+    _execution_mode = str(
+        ((config.get("execution") or {}).get("mode") or "")
+    ).strip().lower()
+    _use_mt5_data = _execution_mode == "mt5" or (
+        _execution_mode not in {"mt5", "paper"}
+        and (
+            bool((payload.get("mt5_positions") or {}).get("positions"))
+            or bool((payload.get("mt5_trades") or {}).get("trades"))
+        )
+    )
+    positions_data = payload.get("mt5_positions", {}) if _use_mt5_data else payload.get("paper_positions", {})
+    trades_for_cards = payload.get("mt5_trades", {}) if _use_mt5_data else payload.get("paper_trades", {})
 
     payload["symbols"] = features_data.get("symbols", {})
     payload["symbol_cards"] = _build_symbol_cards(
@@ -2601,6 +3063,7 @@ def aggregate_state(*, lite: bool = False) -> dict:
         payload.get("mt5_positions", {}),
         payload.get("mt5_trades", {}),
         features_data,
+        config,
     )
     payload["watchlist"] = _build_watchlist(candidates, features_data, market_ctx_data)
     if not payload["watchlist"] and payload["symbol_cards"]:
@@ -2637,14 +3100,29 @@ def aggregate_state(*, lite: bool = False) -> dict:
         payload["edge_insights"],
         payload.get("strategy_rankings", {}),
     )
+    payload["strategies_tab"] = _build_strategies_tab(
+        payload.get("strategy_rankings", {}),
+        payload.get("edge_scores", {}),
+    )
     payload["ai_decision"] = _build_ai_decision(top_signal, top_explain, payload["edge_insights"])
-    payload["equity_curve"] = build_equity_curve(
-        payload.get("paper_orders", {}) if lite else payload.get("paper_orders"),
-        payload.get("paper_trades"),
+    # Equity-curve trade reconstruction must read the ACTIVE closed-trade ledger.
+    # In MT5 mode paper_trades is empty and the real closes live in mt5_trades;
+    # passing paper_trades here detached the curve from reality (pnl_total wrong).
+    _mt5_trades_doc = payload.get("mt5_trades", {})
+    _active_closed_trades = (
+        _mt5_trades_doc
+        if _execution_mode == "mt5"
+        else payload.get("paper_trades", {})
+    )
+    # Build the curve NON-lite (full history so 7D/30D chart windows have
+    # data) and bound it for the dashboard payload — see _bounded_equity_curve.
+    payload["equity_curve"] = _bounded_equity_curve(build_equity_curve(
+        payload.get("paper_orders"),
+        _active_closed_trades,
         payload.get("account"),
         payload.get("risk_state"),
-        lite=lite,
-    )
+        lite=False,
+    ))
     payload["trading_status"] = _build_trading_status(
         payload.get("kill_switch", {}),
         payload.get("risk_state", {}),
@@ -3038,26 +3516,59 @@ def _handle_sse_profit_quality(handler):
         _ProfitQualityBroadcaster.unsubscribe(q)
 
 
+def _mutation_request_allowed(handler: BaseHTTPRequestHandler) -> bool:
+    """Allow dashboard mutations only from the dashboard origin or localhost.
+
+    The dashboard may be exposed through Tailscale, so browser requests carry
+    an Origin matching Host. Requests without Origin are accepted only from a
+    loopback client, which keeps curl/local automation useful without allowing
+    a cross-site browser form to toggle trading remotely.
+    """
+    origin = str(handler.headers.get("Origin") or "").strip()
+    client_host = str(handler.client_address[0] or "")
+    if not origin:
+        return client_host in {"127.0.0.1", "::1", "localhost"}
+    if origin.lower() == "null":
+        return False
+    try:
+        origin_host = urlparse(origin).netloc.lower()
+        request_host = str(handler.headers.get("Host") or "").lower()
+        return bool(origin_host and request_host and origin_host == request_host)
+    except (TypeError, ValueError):
+        return False
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data: dict, status: int = 200) -> None:
         body = json.dumps(_sanitize_json(data), default=str).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            # 2026-08-04 — client disconnected mid-response (browser tab close /
+            # back button / network drop). Swallow silently: BaseHTTPRequestHandler
+            # would otherwise print a full ConnectionAbortedError traceback per
+            # request (observed flooding system.log with WinError 10053 blocks).
+            pass
 
     def _send_html(self) -> None:
         body = HTML_PATH.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            # Same client-disconnect guard as _send_json.
+            pass
 
     def _read_json_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
@@ -3086,6 +3597,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "pid": os.getpid(),
                 "timestamp": utc_now_iso(),
             })
+        elif path == "/api/profiles":
+            try:
+                profiles = []
+                for name in list_profiles():
+                    try:
+                        profiles.append(profile_summary(name))
+                    except Exception as exc:  # noqa: BLE001
+                        _LOG.warning("Profile summary failed for %s: %s", name, exc)
+                        profiles.append({
+                            "name": name,
+                            "label": name,
+                            "description": "Profile metadata unavailable.",
+                            "symbols": [],
+                        })
+                self._send_json({
+                    "ok": True,
+                    "active": active_profile_name(),
+                    "profiles": profiles,
+                    "updated_at": utc_now_iso(),
+                })
+            except Exception as exc:  # noqa: BLE001
+                _LOG.warning("/api/profiles failed: %s", exc)
+                self._send_json({
+                    "ok": False,
+                    "message": str(exc)[:240],
+                    "profiles": [],
+                }, 500)
         elif path in ("/api/state", "/api/summary"):
             query = parse_qs(urlparse(self.path).query)
             lite = path == "/api/summary" or query.get("lite", ["0"])[0] in ("1", "true", "yes")
@@ -3178,6 +3716,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "message": str(exc)[:240],
                     "updated_at": utc_now_iso(),
                 })
+        elif path == "/api/live":
+            # Ultra-light snapshot for fast polling (~10-20KB, <200ms between
+            # trade closes). See _build_live_snapshot. SPA polls this every
+            # ~1.5s for the trade tracker / status pills / daily-PnL tile so
+            # the dashboard reflects closes within the poll interval instead
+            # of lagging behind the heavy /api/summary response.
+            self._send_json(_build_live_snapshot())
         elif path == "/api/daily_pnl":
             # Daily-profit-halt snapshot: today's closed-trade realized PnL,
             # threshold (config.risk.daily_profit_halt_usd), progress %, halt
@@ -3200,7 +3745,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/living_params":
             self._send_json(_build_living_params())
         elif path == "/api/verdict":
-            verdict_path = ROOT / "VERDICT.md"
+            # Canonical home is docs/research/VERDICT.md; fall back to a root
+            # copy if one is later added. The root-only lookup caused the panel
+            # to 404 (present:false) when the file lives under docs/research/.
+            verdict_path = ROOT / "docs" / "research" / "VERDICT.md"
+            if not verdict_path.exists():
+                verdict_path = ROOT / "VERDICT.md"
             if verdict_path.exists():
                 self._send_json({
                     "present": True,
@@ -3213,6 +3763,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/kill-switch" and not _mutation_request_allowed(self):
+            self._send_json({
+                "ok": False,
+                "message": "Kill-switch changes require a same-origin dashboard request",
+            }, 403)
+            return
         if path == "/api/reset-session":
             try:
                 from scripts.reset_session_memory import reset_session_memory
@@ -3225,13 +3781,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/kill-switch":
+            try:
+                body = self._read_json_body()
+                action = str(body.get("action") or "").strip().lower()
+                if action not in {"on", "off"}:
+                    self._send_json({
+                        "ok": False,
+                        "message": "action must be 'on' or 'off'",
+                    }, 400)
+                    return
+
+                document = _set_operator_kill_switch(
+                    action,
+                    reason=body.get("reason"),
+                )
+                self._send_json({
+                    "ok": True,
+                    "action": action,
+                    "kill_switch": bool(document.get("kill_switch")),
+                    "message": (
+                        "Trading stopped — kill switch is ON"
+                        if action == "on"
+                        else "Trading resumed — kill switch is OFF"
+                    ),
+                    "timestamp": document.get("updated_at"),
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/unblock-trades":
             try:
                 # Clear all blocking gates so trades can flow immediately:
                 # 1. Kill switch -> off (trading enabled)
+                current_kill = read_json_state("kill_switch.json", default={}) or {}
                 write_json_state("kill_switch.json", {
                     "kill_switch": False,
                     "reason": None,
+                    "source": "operator" if current_kill.get("source") == "operator" else None,
                     "activated_at": None,
                     "cleared_at": utc_now_iso(),
                 })
@@ -3322,17 +3908,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
             ).start()
             self._send_json({"ok": True, "message": f"Replay started: {symbol} x {max_bars} bars"})
         elif path == "/api/switch_profile":
+            if not _mutation_request_allowed(self):
+                self._send_json({
+                    "ok": False,
+                    "message": "Profile changes require a same-origin dashboard request",
+                }, 403)
+                return
             try:
                 body = self._read_json_body()
-                profile = str(body.get("profile") or "").strip()
+                profile = str(body.get("profile") or "").strip().lower()
                 if not profile:
                     self._send_json({"ok": False, "message": "Profile name required"}, 400)
                     return
-                # Validate the profile file exists
-                profile_path = ROOT / "profiles" / f"{profile}.yaml"
-                if not profile_path.exists():
+                # Validate by the canonical profile catalog before constructing
+                # a path; this prevents traversal and accepts only YAML profiles.
+                if profile not in set(list_profiles()):
                     self._send_json({"ok": False, "message": f"Profile '{profile}' not found"}, 400)
                     return
+                profile_path = ROOT / "profiles" / f"{profile}.yaml"
                 # Write switch request — start.py's supervisor checks this file
                 write_json_state("profile_switch.json", {
                     "profile": profile,
@@ -3372,32 +3965,135 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/reset_memory":
             try:
-                # Reset learning state files
+                # Reset ALL session figures shown on the dashboard, not just the
+                # learning tiles. Previously this only cleared 3 learning files, so
+                # the daily-PnL tile, profit-quality meter, trade journal, equity
+                # chart, edge scoreboard, and adaptive-gate counters all kept
+                # showing stale numbers after "Reset Memory". Now wipes every
+                # figure-bearing ledger/state while PRESERVING:
+                #   - kill_switch.json  (operator's call, not ours — guardrail)
+                #   - account.json / mt5_baseline.json  (live account snapshot)
+                #   - position_management.json  (bot's OPEN positions — wiping
+                #     it would make the bot lose track of live trades)
+                #   - latest_candles/features/broker_symbols/history (live market)
+                # The bot's close handler + trade_log_loop re-populate the trade
+                # ledgers from fresh closes after the reset.
+                now = utc_now_iso()
+                config = load_config()
+                mode = (config.get("execution") or {}).get("mode", "paper")
+                _by = "dashboard_memory_reset"
+
+                # --- Session-reset cutoff (daily-PnL display) ---
+                # Stamp NOW as the session boundary. _build_daily_pnl_today
+                # reads this and only counts closed trades AFTER it, so the
+                # daily tracker zeros out and accumulates from the reset
+                # onward. Without this the bot's MT5 re-sync repopulates
+                # mt5_trades.json within ~15s and the tracker bounces back.
+                write_json_state("session_reset_at.json", {
+                    "reset_at": now, "reset_by": _by,
+                })
+
+                # --- Learning + calibration state (original scope) ---
                 write_json_state("learning_config_overrides.json", {
-                    "patches": [],
-                    "rollbacks": [],
-                    "updated_at": utc_now_iso(),
-                    "reset_by": "dashboard_memory_reset",
+                    "patches": [], "rollbacks": [], "updated_at": now, "reset_by": _by,
                 })
                 write_json_state("learning_state.json", {
-                    "reviewed_count": 0,
-                    "win_rate": 0.0,
-                    "expectancy": 0.0,
-                    "active_proposals": 0,
-                    "applied_patches": 0,
-                    "mistake_counts": {},
-                    "reset_at": utc_now_iso(),
-                    "reset_by": "dashboard_memory_reset",
+                    "reviewed_count": 0, "win_rate": 0.0, "expectancy": 0.0,
+                    "active_proposals": 0, "applied_patches": 0, "mistake_counts": {},
+                    "reset_at": now, "reset_by": _by,
                 })
-                write_json_state("trade_log.json", {
-                    "trades": [],
-                    "reset_at": utc_now_iso(),
-                    "reset_by": "dashboard_memory_reset",
+
+                # --- Cumulative trade history + edge learning: PRESERVED ---
+                # These are NOT wiped. They are the data source for the Memory
+                # tab (edge_scores.setup_stats -> best/worst setups) and the
+                # Research section (edge_database aggregates -> patterns), plus
+                # SL/TP + BE/trail calibration (trade_log + mt5_excursion_cache).
+                # Wiping them empties those tabs — the exact complaint — and the
+                # rich trade labels (setup_type/market_context/r_multiple) cannot
+                # be reconstructed from MT5 deal history alone (the terminal
+                # manager only re-pulls the last 60s of deals, see
+                # mt5_terminal_manager.py:360). The daily-PnL tile resets via
+                # the session_reset_at cutoff above instead of via a file wipe.
+                # PRESERVED: mt5_trades.json, paper_trades.json, trade_log.json,
+                #   mt5_excursion_cache.json, memory.json, edge_scores.json,
+                #   edge_database.json, strategy_rankings.json, strategy_arena.json
+                _ = mode  # mode kept for reference; ledger files are preserved
+
+                # --- Adaptive-gate figures (recent win-rate / net PnL / loss
+                # streak). Reset to the same neutral baseline as
+                # /api/unblock-trades so the gates stay functional but the
+                # figure counters zero. Bot re-evaluates next cycle. ---
+                write_json_state("adaptive_gates.json", {
+                    "timestamp": now, "enabled": True, "tier": "normal",
+                    "min_policy_score": 35.0, "min_confidence": 50.0,
+                    "blocked_symbols": [], "lookback_n": 0,
+                    "recent_win_rate_pct": 50.0, "recent_net_pnl": 0.0,
+                    "consecutive_losses": 0, "reason": "dashboard_memory_reset",
                 })
+                write_json_state("trade_manager.json", {
+                    "timestamp": now, "reset_by": _by,
+                })
+
+                # --- Equity curve + daily-growth tracker (rebaseline to the
+                # current live account equity so the chart restarts here, not
+                # at 0). ---
+                _acct = read_json_state("account.json", default={}) or {}
+                _equity = float(_acct.get("equity", 0) or 0)
+                _cash = float(_acct.get("balance", 0) or 0)
+                write_json_state("equity_history.json", {
+                    "timestamp": now, "count": 1,
+                    "starting_equity": _equity, "latest_equity": _equity,
+                    "points": [{
+                        "ts": now, "equity": _equity, "cash": _cash,
+                        "balance": _cash, "unrealized_pnl": 0.0,
+                        "source": _by, "drawdown": 0.0,
+                        "open_positions": 0, "exposure_used_pct": 0.0,
+                    }],
+                    "reset_by": _by,
+                })
+                _growth = (config.get("practice") or {}).get("growth") or {}
+                write_json_state("daily_growth.json", {
+                    "enabled": False,
+                    "login": int(_acct["login"]) if _acct.get("login") else None,
+                    "day": now[:10],
+                    "day_start_equity": _equity, "current_equity": _equity,
+                    "daily_pnl": 0.0, "daily_pnl_pct": 0.0,
+                    "target_pct": float(_growth.get("daily_target_pct", 20)),
+                    "remaining_pct": float(_growth.get("daily_target_pct", 20)),
+                    "target_hit": False,
+                    "max_daily_loss_pct": float(_growth.get("max_daily_loss_pct", 10)),
+                    "trading_paused": False, "pause_reason": None,
+                    "updated_at": now, "reset_by": _by,
+                })
+
+                # --- Edge / memory / strategy scoreboards: PRESERVED ---
+                # memory.json, edge_scores.json, edge_database.json,
+                # strategy_rankings.json, strategy_arena.json are cumulative
+                # learning (see the PRESERVED block above) — kept intact so the
+                # Memory + Research + strategy-comparison tabs stay populated.
+
+                # --- Signal pipelines (figure counts) ---
+                write_json_state("candidate_signals.json", {"timestamp": now, "candidates": []})
+                write_json_state("approved_signals.json", {"timestamp": now, "approved": []})
+                write_json_state("rejected_signals.json", {"timestamp": now, "rejected": []})
+
+                # --- Append-only calibration ledgers: PRESERVED ---
+                # position_mgmt_archive.jsonl (MAE/MFE for BE/trail calibration)
+                # and specialized_shadow_ledger.jsonl (per-setup shadow counts)
+                # are cumulative learning — kept intact (same rationale as the
+                # edge DB above).
+
                 self._send_json({
                     "ok": True,
-                    "message": "Learning memory reset — trade log, config patches, and learning state cleared",
-                    "timestamp": utc_now_iso(),
+                    "message": (
+                        "Session figures reset — daily-PnL view, equity curve, "
+                        "today's signals, adaptive-gate counters, and session "
+                        "learning counters cleared. Cumulative trade history, "
+                        "edge memory, and calibration data are PRESERVED so the "
+                        "Memory + Research tabs stay populated. Kill switch, "
+                        "account baseline, and open positions preserved."
+                    ),
+                    "timestamp": now,
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)

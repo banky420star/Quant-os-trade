@@ -50,19 +50,29 @@ def _get_mt5_connection(config: dict, logger) -> MT5ConnectionManager | None:
     if _MT5_CONN_LOCK is None:
         _MT5_CONN_LOCK = threading.Lock()
     with _MT5_CONN_LOCK:
-        if _MT5_CONN is not None and _MT5_CONN.connected:
-            try:
-                ping = _MT5_CONN.ping()
-                if ping.get("alive") and ping.get("logged_in"):
-                    return _MT5_CONN
-            except Exception:
-                pass
-            # Connection died — disconnect cleanly before recreating
-            try:
-                _MT5_CONN.disconnect()
-            except Exception:
-                pass
-            _MT5_CONN = None
+        if _MT5_CONN is not None:
+            if not _MT5_CONN.connected:
+                # Cached facade was released (e.g. _tick_prices disconnected on
+                # a read failure). Recreate instead of returning the stale
+                # facade forever — otherwise live ticks never recover.
+                _MT5_CONN = None
+            else:
+                try:
+                    ping = _MT5_CONN.ping()
+                    if ping.get("alive") and ping.get("logged_in"):
+                        return _MT5_CONN
+                except Exception:
+                    pass
+                # Session died — the shared MT5Owner re-establishes it
+                # (owner-owned shutdown + re-init). Never per-worker disconnect:
+                # disconnect() is a reference release that does NOT re-initialize
+                # a dead session.
+                try:
+                    if _MT5_CONN.reconnect():
+                        return _MT5_CONN
+                except Exception:
+                    pass
+                _MT5_CONN = None
 
         if _MT5_CONN is None:
             conn = MT5ConnectionManager(config, logger)
@@ -200,6 +210,19 @@ def run(config: dict | None = None) -> dict | None:
     prices = observation_prices if target == observation_target else _tick_prices(config, target, logger)
     features = observation_features
     state = read_fast_state()
+    # 2026-08-05 — merge the mt5_orders ledger into the fast state's executed
+    # set once per tick, so slow-pipeline-executed signals are also deduped by
+    # evaluate_entry (no per-symbol file read) and stop the FAST LIVE entry
+    # spam / duplicate re-attempts.
+    try:
+        _orders_doc = read_json_state("mt5_orders.json", default={"orders": []})
+        _exec_sig = set(state.get("executed_signals") or [])
+        for _o in (_orders_doc.get("orders") or []):
+            if _o.get("status") in ("filled", "pending", "placed") and _o.get("signal_id"):
+                _exec_sig.add(_o["signal_id"])
+        state["executed_signals"] = sorted(_exec_sig)
+    except Exception as _merge_exc:
+        logger.debug("executed-signal merge skipped: %s", _merge_exc)
     decisions: list[dict] = []
 
     for sym in target:
@@ -227,31 +250,15 @@ def run(config: dict | None = None) -> dict | None:
         )
         if dec.get("action", "").startswith("enter"):
             from core.fast_live_executor import execute_fast_entry
-            try:
-                from core.mt5_terminal_manager import MT5TerminalManager
-                _mgr = MT5TerminalManager(config, logger)
-                _side = (
-                    dec.get("side")
-                    or (entry.get("side") if isinstance(entry, dict) else None)
-                    or "BUY"
-                )
-                _mgr.push_intent({
-                    "action": "open",
-                    "symbol": sym,
-                    "side": _side,
-                    "signal_id": (
-                        entry.get("signal_id")
-                        if isinstance(entry, dict)
-                        else f"fast-{sym}"
-                    ),
-                    "payload": {
-                        "entry": dec,
-                        "cache": entry,
-                    },
-                })
-            except Exception as _push_exc:
-                logger.debug("push_intent skipped (non-fatal): %s", _push_exc)
 
+            # 2026-08-05 — single-producer fix: the direct execute_fast_entry
+            # path is authoritative (verifier approval, kill switch, executed-
+            # id dedupe, ledger persistence, trade-entry recording). The old
+            # push_intent here queued a SECOND order that execution_loop's
+            # drain phase placed ~35s later — the same signal was opened twice
+            # (30 duplicate groups in trade_log.json). Intents are only for
+            # non-fast producers now (web API / guard ratchets); the fast layer
+            # executes synchronously.
             exec_result = execute_fast_entry(
                 dec,
                 entry,

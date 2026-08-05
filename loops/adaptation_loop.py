@@ -45,6 +45,7 @@ def _adaptation_cfg(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(cfg.get("enabled", True)),
         "calibrate_be_trail": bool(cfg.get("calibrate_be_trail", True)),
+        "calibrate_sltp": bool(cfg.get("calibrate_sltp", True)),
         "rebuild_trade_log": bool(cfg.get("rebuild_trade_log", True)),
         "refresh_positive_evolution": bool(cfg.get("refresh_positive_evolution", True)),
         "refresh_regime_evolution": bool(
@@ -141,7 +142,15 @@ def run() -> dict[str, Any]:
             from scripts.calibrate_be_trail import calibrate
             with open(ROOT / "config.yaml", "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
-            out = calibrate(cfg, logger)
+            # PASS-19 data-blip guard: pass the existing live file so calibrate()
+            # can carry forward trusted overrides that can't be re-evaluated under
+            # a truncated trade log (mt5_trades.json ledger can lose its history on
+            # a restart -> trade_log.json rebuilds to ~today's trades only ->
+            # n<APPLY_MIN_N for every symbol). Without this the auto-scheduled run
+            # would write 0 trusted and silently disable the 4 live BE/trail
+            # overrides -- the ONE CI95+ profitability lever.
+            existing = read_json_state("symbol_be_trail_live.json", default={}) or {}
+            out = calibrate(cfg, logger, existing=existing)
             out["updated_at"] = utc_now_iso()
             write_json_state("symbol_be_trail_live.json", out)
             logger.info(
@@ -151,6 +160,27 @@ def run() -> dict[str, Any]:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("BE/trail calibration skipped: %s", exc)
+
+    # SL/TP calibration — twin of the BE/trail block above. Reads trade_log.json,
+    # writes symbol_sltp_live.json (consumed by strategy_entry._sltp_cfg on every
+    # entry). Without this block the live SL/TP overrides go stale after every
+    # batch of new closes; the BTCUSDm trusted override never auto-refreshes.
+    if acfg["calibrate_sltp"]:
+        try:
+            import yaml
+            from scripts.calibrate_sltp import calibrate as calibrate_sltp
+            with open(ROOT / "config.yaml", "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+            out = calibrate_sltp(cfg, logger)
+            out["updated_at"] = utc_now_iso()
+            write_json_state("symbol_sltp_live.json", out)
+            logger.info(
+                "SL/TP calibration: %d symbols, %d trusted",
+                len(out.get("symbols") or {}),
+                sum(1 for v in (out.get("symbols") or {}).values() if v.get("trusted")),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SL/TP calibration skipped: %s", exc)
 
     new_policy = read_json_state("symbol_policy_live.json", default={}) or {}
     new_be_trail = read_json_state("symbol_be_trail_live.json", default={}) or {}

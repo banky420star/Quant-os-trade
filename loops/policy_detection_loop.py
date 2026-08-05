@@ -11,8 +11,8 @@ if str(ROOT) not in sys.path:
 
 from core.policy_detection import detect_policies, policy_detection_enabled, policy_detection_mode
 from core.state_store import read_evaluated_signals, sync_store_from_doc
+from core.trade_history import trade_history_filename
 from core.utils import (
-    fail_safe_missing,
     load_config,
     read_json_state,
     setup_logger,
@@ -28,16 +28,20 @@ def run() -> dict | None:
         logger.info("Policy detection disabled — skip")
         return None
 
-    if fail_safe_missing("features.json", logger):
+    features = read_json_state("features.json", default=None)
+    if not isinstance(features, dict):
+        logger.error("Required input missing or invalid: features.json")
         return None
 
-    trades = read_json_state("paper_trades.json", default={"trades": []})
-    evaluated_doc = read_evaluated_signals(config) or read_json_state(
-        "evaluated_signals.json",
-        default={"evaluated": []},
-    )
-    features = read_json_state("features.json", default={})
-
+    trades = read_json_state(trade_history_filename(config), default={"trades": []})
+    # JSON is the hot-loop mirror and follows the current utils.STATE_DIR
+    # binding (including isolated workers). Prefer it before the optional
+    # SQLite read path, whose store may have been initialized in another
+    # process/state root; SQLite remains the fallback for deployments that
+    # disable the JSON mirror.
+    evaluated_doc = read_json_state("evaluated_signals.json", default=None)
+    if not isinstance(evaluated_doc, dict):
+        evaluated_doc = read_evaluated_signals(config) or {"evaluated": []}
     doc = detect_policies(trades, evaluated_doc, features, config)
     write_json_state("policy_scores.json", doc)
     sync_store_from_doc(config, "policy_scores", doc)

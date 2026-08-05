@@ -70,6 +70,7 @@ def calc_executable_volume(
     symbol_spec: dict[str, float],
     open_positions: list[dict[str, Any]] | None = None,
     stamp_kelly: bool = False,
+    symbol_specs: dict[str, dict[str, float]] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """
     Mirror MT5 broker lot sizing including min-lot bump, exposure caps, and
@@ -137,7 +138,10 @@ def calc_executable_volume(
         configured_pct = float(risk_cfg_eq.get("max_risk_per_trade_pct", 5.0))
     except (TypeError, ValueError):
         configured_pct = 5.0
-    max_risk_pct = min(5.0, configured_pct) if configured_pct > 0 else 5.0
+    allow_full_kelly = bool(risk_cfg_eq.get("allow_full_kelly", False))
+    max_risk_pct = configured_pct if allow_full_kelly and configured_pct > 0 else (
+        min(5.0, configured_pct) if configured_pct > 0 else 5.0
+    )
     equity_risk_cap = float(equity) * (max_risk_pct / 100.0)
     equity_cap_enabled = bool(risk_cfg_eq.get("enforce_equity_risk_cap", True))
     hard_cap_usd = (
@@ -209,6 +213,11 @@ def calc_executable_volume(
     else:
         _ls_info = None
 
+    # 2026-08-03 — forward the FULL symbol-spec map (when the caller has one)
+    # so open positions on OTHER symbols are also measured in SL-risk USD
+    # instead of falling back to notional. Without this, a 0.25-lot US30m
+    # open position counted as ~$13,301 notional inside the exposure cap and
+    # every index-CFD candidate was rejected with exposure_cap_below_min_lot.
     capped, allowed = cap_size_to_exposure_limits(
         ideal,
         entry,
@@ -218,6 +227,7 @@ def calc_executable_volume(
         min_size=vmin,
         sl=sl,
         symbol_spec=symbol_spec,
+        symbol_specs=symbol_specs,
     )
     details: dict[str, Any] = {
         "ideal_size": round(ideal, 4),

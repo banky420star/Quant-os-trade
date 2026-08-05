@@ -35,6 +35,7 @@ from core.strategy_policy import (  # noqa: E402
     culturing_cell_from_trade,
     normalize_setup_type,
 )
+from core.trade_history import trade_history_filename  # noqa: E402
 from core.utils import load_config, read_json_state, setup_logger, utc_now_iso, write_json_state  # noqa: E402
 
 
@@ -278,7 +279,7 @@ def run() -> dict:
     logger = setup_logger("forward_test_loop", "forward_test_loop.log")
     cconf = _culturing_config(config)
 
-    trades_data = read_json_state("paper_trades.json", default={"trades": []})
+    trades_data = read_json_state(trade_history_filename(config), default={"trades": []})
     trades = trades_data.get("trades", []) if isinstance(trades_data, dict) else []
 
     ledger = build_ledger(trades, cconf, config)

@@ -37,20 +37,26 @@ adaptation:
     enabled: true
     lookback: 15
     min_sample: 5
-    cautious_win_rate: 40
-    defensive_win_rate: 28
-    defensive_consecutive: 4
-    cautious_net_pnl: -5
-    defensive_net_pnl: -15
-    symbol_net_block_pnl: -8
+    # 2026-08-03 — relaxed: defensive tier previously re-tripped on a $1000
+    # micro account's small absolute losses and blocked XAUUSDm's 92.5-score
+    # candidates. Triggers now require genuinely bad performance: WR floor
+    # lowered, net-PnL floor made deeper, consecutive-loss bar raised, and
+    # per-symbol auto-block made less twitchy. Score/confidence tightening
+    # when defensive is also reduced so approved candidates still clear gates.
+    cautious_win_rate: 30
+    defensive_win_rate: 15
+    defensive_consecutive: 6
+    cautious_net_pnl: -10
+    defensive_net_pnl: -30
+    symbol_net_block_pnl: -15
     symbol_net_block_min_n: 5
-    auto_block_streak: 6
-    weak_payoff_ratio: 0.6
-    defensive_payoff_ratio: 0.4
-    tighten_cautious_score: 10
-    tighten_defensive_score: 20
-    tighten_cautious_conf: 5
-    tighten_defensive_conf: 10
+    auto_block_streak: 8
+    weak_payoff_ratio: 0.5
+    defensive_payoff_ratio: 0.3
+    tighten_cautious_score: 5
+    tighten_defensive_score: 10
+    tighten_cautious_conf: 3
+    tighten_defensive_conf: 5
   regime_evolution:
     enabled: true
     min_n: 6
@@ -61,6 +67,14 @@ state_store:
   dual_write_json: true
   read_from_sqlite: true
   db_path: quant_os.db
+# Paper-only opportunity ledger. Filtered candidates are stored and labeled
+# against later M5 candles; this never relaxes gates or writes MT5 state.
+forward_labeling:
+  enabled: false
+  timeframe: M5
+  horizon_bars: 48
+  max_pending: 10000
+  max_labeled: 50000
 evaluation:
   enabled: true
   mode: shadow
@@ -86,11 +100,15 @@ policy_optimizer:
 # risk-on entries against a strong bearish macro-news backdrop (and vice versa).
 # Research found NO tradeable news edge at 30bps — this is risk hygiene, not alpha.
 news:
-  enabled: false
+  enabled: true
   sentiment_gate: false
   source: rss
   sentiment: auto
   ollama_model: kimi-k2.5:cloud
+  # 2026-08-04 — enabled: true + sentiment_gate: false = shadow mode.
+  # News sentiment is fetched and displayed on the dashboard but NEVER
+  # blocks trades. This is risk hygiene (observability), not alpha.
+  # refresh_interval_seconds defaults to 900 (15 min).
   lookback_hours: 24
   max_items_per_theme: 10
   themes: ["inflation", "employment", "taxes", "war"]
@@ -177,6 +195,10 @@ fast_mode:
   max_spread_mult: 1.2
   min_tick_momentum_score: 55
   cancel_stale_seconds: 60
+  # 2026-08-05 — after an exposure refusal (exposure_limit_exceeded /
+  # exposure_cap_below_min_lot) the fast layer backs off re-attempting the
+  # same signal for this many seconds instead of spamming every tick.
+  exposure_backoff_seconds: 60
   max_open_positions: 2
   max_trades_per_symbol_per_hour: 4
   max_consecutive_losses_per_symbol: 2
@@ -657,6 +679,12 @@ trading:
     activation_profit_usd: 20
     activation_atr_mult: 1.15
     trail_points: 500
+    # 2026-08-05 — cap the trailing offset at this many R-multiples of risk.
+    # trail_points 350-500 is ~1.7-2.5R on FX, so an armed trail sat below
+    # entry at modest MFE and the capital-protection clamp pinned it to BE —
+    # winners gave back everything. Capping the offset locks profit above
+    # entry once trailing arms (0.6R = max 0.6R give-back from the peak).
+    trail_max_r: 0.6
     per_symbol:
       EURUSDm:
         activation_profit_usd: 15
@@ -718,7 +746,10 @@ trading:
         activation_atr_mult: 1.0
         trail_points_atr_mult: 0.6
 filters:
-  min_volume_ratio: 0.35
+  # 2026-08-03 — quiet-market volume gate: 0.35 was rejecting most candidates
+  # during low-tick-volume hours. Lowered to 0.25 as requested. (Growth profile
+  # overrides to 0.08 and its aggressive_mode already bypasses volume_safe.)
+  min_volume_ratio: 0.25
   spread_mult: 3.5
   # 2026-07-21 emergency: rolled back 0.0001 -> 0.0002 after the $90 bleed.
   # 0.0001 was effectively "always pass" and admitted flat-market losing setups.
@@ -1054,9 +1085,9 @@ practice:
     risk_percent_per_trade: 2.5
     max_symbol_exposure_fraction: 0.85
     max_total_exposure_fraction: 4.0
-    max_lot: 0.25
+    max_lot: 0.5
     loop_interval_seconds: 30
-    strategy_ranking_enabled: false
+    strategy_ranking_enabled: true
     session_scoring_enabled: false
     aggressive_mode: true
     min_confidence: 38
@@ -1127,7 +1158,19 @@ signals:
   # setups: [] = all specialized setups; set e.g. ["silver_bullet"] to opt in
   # one setup at a time as the hourly loop accumulates culturing evidence.
   specialized_setups:
-    enabled: false
+    # 2026-08-04 — flipped enabled=true per explicit user sign-off ("turn it on
+    # right now as you add them they will be wired in and get ratings" + "since we
+    # are testing... if they don't [do well] who cares"). Demo account only
+    # (account_mode=demo). All 80 catalog setups / 34 entry models now emit
+    # candidates into the live order path on top of the main strategy. Existing
+    # risk gates still BIND: per_symbol_max_lot (0.01-0.03), exposure cap,
+    # conviction floor, confidence_floor verifier (new pos >= strongest open conf).
+    # apply_replay_veto stays OFF (user wants to see ALL of them run, losers
+    # included). shadow stays true (fires still logged to shadow ledger for
+    # culturing ratings). No-edge setups WILL lose demo money by design here;
+    # that is the accepted cost of live forward scoring. Kill switch is the
+    # user's backstop (not touched by me).
+    enabled: true
     symbols: []
     setups: []
     # 2026-07-31 iteration 6 — per-symbol-per-setup granular allowlist. When a
@@ -1322,9 +1365,14 @@ execution:
   mode: mt5
   mt5_trading_enabled: true
   allow_live_account: true
+  # 2026-08-04 — safety guard (reverse of allow_live_account): when
+  # mt5.account_mode is real/live but the connected MT5 account is a demo
+  # trial, the bot REFUSES to trade (the "LIVE" banner would be a lie). Set
+  # this to true ONLY to run demo orders under a live profile on purpose.
+  allow_demo_when_live_config: false
   live_trading_enabled: true
   default_lot: 0.01
-  max_lot: 0.25
+  max_lot: 0.5
   magic_number: 20250625
   deviation: 20
   starting_cash: 100
@@ -1526,6 +1574,13 @@ self_learning:
     enabled: true
     mode: shadow
     tick_sample_seconds: 5
+  # Bounded paper-only forward experiments. Signals are deterministically split
+  # between a control sample and candidate arms; tags flow into paper_trades.json
+  # for scoring. This never routes MT5/live orders and stays off unless explicitly
+  # enabled for paper validation.
+  shadow_experiments:
+    routing_enabled: false
+    control_fraction: 0.50
     lookback: 200
     min_trades: 20
     max_risk_multiplier_up: 1.10

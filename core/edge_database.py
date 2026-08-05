@@ -124,7 +124,10 @@ class EdgeDatabase:
             filtered = [r for r in filtered if r.get("volatility") == volatility]
 
         total = len(filtered)
-        if total < min_samples:
+        # ``min_samples=0`` is used by broad data-lab ranking passes. An empty
+        # slice is still insufficient; otherwise the win-rate calculation below
+        # divides by zero and aborts candidate generation for the symbol.
+        if total == 0 or total < min_samples:
             return {"total": total, "wins": 0, "losses": 0, "win_rate_pct": 0, "avg_rr": 0, "avg_pnl": 0, "insufficient": True}
 
         wins = sum(1 for r in filtered if r.get("result") == "win")

@@ -37,11 +37,10 @@ from core.utils import (  # noqa: E402
     read_json_state,
     write_json_state,
 )
+from core.trade_history import trade_history_filename, trade_orders_filename  # noqa: E402
 from scripts.build_trade_log import build_log  # noqa: E402
 
 STATE = ROOT / "state"
-PAPER_TRADES = STATE / "paper_trades.json"
-PAPER_ORDERS = STATE / "paper_orders.json"
 
 
 def _mtime(path: Path) -> float:
@@ -59,19 +58,20 @@ def main(argv: list[str] | None = None) -> int:
 
     logger = setup_logger("rebuild_trade_log", "rebuild_trade_log.log")
 
-    trades_m = _mtime(PAPER_TRADES)
-    orders_m = _mtime(PAPER_ORDERS)
-    logger.info(
-        "Force rebuild initiated. paper_trades.json mtime=%.0f paper_orders.json mtime=%.0f days=%d",
-        trades_m, orders_m, args.days,
-    )
-
     try:
-        from core.utils import load_config  # local import for lazy config + late binding
+        from core.utils import load_config
         config = load_config()
     except Exception as cfg_exc:  # noqa: BLE001
         logger.error("load_config failed: %s", cfg_exc)
         config = {}
+    trades_path = STATE / trade_history_filename(config)
+    orders_path = STATE / trade_orders_filename(config)
+    trades_m = _mtime(trades_path)
+    orders_m = _mtime(orders_path)
+    logger.info(
+        "Force rebuild initiated. %s mtime=%.0f %s mtime=%.0f days=%d",
+        trades_path.name, trades_m, orders_path.name, orders_m, args.days,
+    )
 
     try:
         payload = build_log(config, days=args.days, log=logger)
@@ -99,8 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         write_json_state("trade_log.json", payload)
         write_json_state("trade_log_meta.json", {
-            "paper_trades_mtime": trades_m,
-            "paper_orders_mtime": orders_m,
+            "trades_file": trades_path.name,
+            "orders_file": orders_path.name,
+            "trades_mtime": trades_m,
+            "orders_mtime": orders_m,
             "forced_rebuild_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "source": "scripts/rebuild_trade_log.py",
             "trade_count": n,
