@@ -302,6 +302,235 @@ def survival_detail(
     return rows
 
 
+# ── cluster definitions ─────────────────────────────────────────────────────
+
+CLUSTERS: dict[str, list[str]] = {
+    "equity_indices": ["US500m", "US30m", "NAS100m", "UK100m", "FR40m", "JP225m"],
+    "fx_usd_majors": ["EURUSDm", "GBPUSDm", "AUDUSDm", "USDCHFm", "USDJPYm"],
+    "metals": ["XAUUSDm"],
+    "energy": ["USOILm"],
+    "crypto": ["BTCUSDm"],
+}
+
+CLUSTER_CAPS: dict[str, float] = {
+    "equity_indices": 0.35,
+    "fx_usd_majors": 0.35,
+    "metals": 0.15,
+    "energy": 0.15,
+    "crypto": 0.10,
+}
+
+SINGLE_SYMBOL_CAP: float = 0.15
+VOL_TARGET: float = 0.15
+VOL_LOOKBACK: int = 63
+
+
+def _symbol_cluster(symbol: str) -> str:
+    for name, members in CLUSTERS.items():
+        if symbol in members:
+            return name
+    return "other"
+
+
+# ── portfolio construction ──────────────────────────────────────────────────
+
+
+def _per_symbol_returns(
+    close: pd.Series,
+    signal: pd.Series,
+    symbol: str,
+    *,
+    cost_mult: float = 1.0,
+) -> pd.Series:
+    """Compute net daily returns for one symbol given a signal series."""
+    ret = close.pct_change()
+    gross = (ret * signal.shift(1)).fillna(0)
+
+    tc_bps = cost_per_trade_bps(symbol) * cost_mult
+    tc_decimal = tc_bps / 10_000
+    swap_bps = daily_swap_bps(symbol) * cost_mult / 10_000
+
+    cost_series = pd.Series(0.0, index=gross.index)
+    sig_vals = signal.values if isinstance(signal, pd.Series) else signal
+    for i in range(1, len(signal)):
+        if sig_vals[i] != sig_vals[i - 1]:
+            idx = signal.index[i]
+            if idx in cost_series.index:
+                cost_series.loc[idx] = tc_decimal
+
+    swap_daily = signal.abs().shift(1).fillna(0) * swap_bps
+    swap_daily = swap_daily.reindex(cost_series.index).fillna(0)
+
+    return gross - cost_series - swap_daily
+
+
+def build_portfolio(
+    all_results: dict[str, dict[str, Any]],
+    model: str,
+    *,
+    cost_mult: float = 1.0,
+) -> dict[str, Any]:
+    """Build a vol-scaled, cluster-capped portfolio from per-symbol signals.
+
+    Steps:
+      1. Recompute per-symbol signals and net daily returns.
+      2. Compute rolling annualised vol for each symbol.
+      3. Vol-scale each symbol to contribute equal risk (vol_target / vol_i).
+      4. Apply cluster caps (35% equity, 35% FX, 15% others).
+      5. Cap single-symbol weight at 15%.
+      6. Combine into portfolio equity curve.
+    """
+    tf = all_results.get(list(all_results.keys())[0], {}).get("timeframe", "D1")
+
+    # Step 1: recompute signals and net returns for all symbols
+    sym_returns: dict[str, pd.Series] = {}
+    sym_vols: dict[str, float] = {}
+    sym_weights_final: dict[str, float] = {}
+
+    for key, data in all_results.items():
+        sym = data.get("symbol", "")
+        if not sym or "error" in data:
+            continue
+
+        try:
+            daily = _read_ohlc(sym, tf)
+        except FileNotFoundError:
+            continue
+        close = daily["close"]
+        if len(close) < 252:
+            continue
+
+        # Recompute signal
+        if model == "ma_200":
+            sig = moving_average_signal(close, period=min(200, len(close) // 2))
+        elif model == "mom_3m":
+            lookback = {"D1": 63, "H4": 90}.get(tf, 63)
+            sig = time_series_momentum_signal(close, lookback=lookback)
+        elif model == "blended":
+            horizons = {"D1": (21, 63, 126, 252), "H4": (30, 90, 180, 360)}.get(tf, (21, 63, 126, 252))
+            sig = blended_momentum_signal(close, horizons=horizons, threshold=0.0)
+        else:
+            continue
+
+        net_ret = _per_symbol_returns(close, sig, sym, cost_mult=cost_mult)
+        sym_returns[sym] = net_ret
+
+        # Rolling annualised vol (last VOL_LOOKBACK days)
+        if len(net_ret) >= VOL_LOOKBACK:
+            sym_vols[sym] = float(net_ret.tail(VOL_LOOKBACK).std() * np.sqrt(252))
+        else:
+            sym_vols[sym] = float(net_ret.std() * np.sqrt(252))
+
+    if not sym_returns:
+        return {"error": "no valid symbols for portfolio"}
+
+    # Align to common date index
+    common_dates = sorted(set.intersection(*[set(r.index) for r in sym_returns.values()]))
+    if len(common_dates) < 60:
+        return {"error": f"only {len(common_dates)} common dates"}
+
+    aligned: dict[str, pd.Series] = {
+        sym: r.reindex(common_dates).fillna(0)
+        for sym, r in sym_returns.items()
+    }
+
+    # Step 2-3: vol-scale weights
+    raw_weights: dict[str, float] = {}
+    for sym in aligned:
+        vol = sym_vols.get(sym, 0)
+        if vol > 0:
+            raw_weights[sym] = VOL_TARGET / vol
+        else:
+            raw_weights[sym] = 0.0
+
+    # Normalize so total raw weight = 1.0
+    total_raw = sum(raw_weights.values())
+    if total_raw > 0:
+        raw_weights = {s: w / total_raw for s, w in raw_weights.items()}
+
+    # Step 4-5: apply single-symbol cap, then cluster caps
+    weights = dict(raw_weights)
+
+    # Single-symbol cap
+    for sym in weights:
+        if weights[sym] > SINGLE_SYMBOL_CAP:
+            weights[sym] = SINGLE_SYMBOL_CAP
+
+    # Cluster caps — process symbols in descending weight order
+    cluster_totals: dict[str, float] = {c: 0.0 for c in CLUSTERS}
+    cluster_totals["other"] = 0.0
+
+    for sym in sorted(weights, key=lambda s: -weights[s]):
+        cluster = _symbol_cluster(sym)
+        cap = CLUSTER_CAPS.get(cluster, SINGLE_SYMBOL_CAP)
+        if cluster_totals[cluster] + weights[sym] > cap:
+            weights[sym] = max(0.0, cap - cluster_totals[cluster])
+        cluster_totals[cluster] += weights[sym]
+
+    # Do NOT re-normalize after caps — clipping trims exposure,
+    # it should not inflate other weights back above their caps.
+    # The portfolio may be less than 100% invested; that's correct.
+    sym_weights_final = dict(weights)
+
+    # Step 6: combined daily return
+    combined = pd.Series(0.0, index=common_dates)
+    for sym, w in weights.items():
+        if w > 0 and sym in aligned:
+            combined += w * aligned[sym]
+
+    # Portfolio metrics
+    metrics = portfolio_report(combined)
+
+    # Cluster exposure breakdown
+    cluster_exposure: dict[str, float] = {}
+    for sym, w in weights.items():
+        c = _symbol_cluster(sym)
+        cluster_exposure[c] = cluster_exposure.get(c, 0.0) + w
+
+    # Per-symbol final weights (top-level)
+    symbol_weights = {s: round(w, 4) for s, w in sorted(weights.items(), key=lambda x: -x[1])}
+
+    return {
+        **metrics,
+        "model": model,
+        "cost_mult": cost_mult,
+        "n_symbols": len(aligned),
+        "vol_target": VOL_TARGET,
+        "cluster_exposure": {c: round(w, 4) for c, w in sorted(cluster_exposure.items(), key=lambda x: -x[1])},
+        "symbol_weights": symbol_weights,
+        "cluster_caps_applied": CLUSTER_CAPS,
+        "single_symbol_cap": SINGLE_SYMBOL_CAP,
+        "equity_curve": [round(float(x), 6) for x in (1 + combined).cumprod()],
+    }
+
+
+def portfolio_report(
+    portfolio_series: pd.Series,
+) -> dict[str, Any]:
+    """Report Sharpe, MaxDD, annual return from a daily return series."""
+    if len(portfolio_series) < 20:
+        return {"error": f"only {len(portfolio_series)} daily returns"}
+
+    cum = (1 + portfolio_series).cumprod()
+    total = float(cum.iloc[-1] - 1)
+    dd = (cum / cum.cummax() - 1).min()
+    ann = float((1 + total) ** (252 / len(portfolio_series)) - 1)
+    sharpe = float(portfolio_series.mean() / portfolio_series.std() * np.sqrt(252)) if portfolio_series.std() > 0 else 0
+    win_days = float((portfolio_series > 0).mean())
+
+    return {
+        "n_days": len(portfolio_series),
+        "total_return": round(total, 6),
+        "annual_return": round(ann, 6),
+        "sharpe": round(sharpe, 4),
+        "max_drawdown": round(float(dd), 4),
+        "win_day_pct": round(win_days, 4),
+        "avg_daily_return": round(float(portfolio_series.mean()), 8),
+        "vol_daily": round(float(portfolio_series.std()), 6),
+        "vol_annual": round(float(portfolio_series.std() * np.sqrt(252)), 4),
+    }
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
@@ -397,6 +626,48 @@ def main() -> int:
             f"{row['net_3x']:>8.4f} {surv2x:>7s}"
         )
 
+    # ── portfolio section ─────────────────────────────────────────────────
+    print(f"\n{'='*80}")
+    print("  COMBINED PORTFOLIO (vol-scaled + cluster-capped, 1x costs)")
+    print(f"{'='*80}")
+    header_pf = f"{'Model':12s} {'#Sym':>5s} {'AnnRet':>8s} {'Sharpe':>8s} {'MaxDD':>8s} {'WinDay%':>7s} {'VolAnn':>8s}"
+    print(header_pf)
+    print("-" * 65)
+
+    portfolios: dict[str, dict[str, Any]] = {}
+    for model in ["ma_200", "mom_3m", "blended"]:
+        pf = build_portfolio(all_results, model, cost_mult=1.0)
+        portfolios[model] = pf
+        if "error" in pf:
+            print(f"  {model:12s}  ERROR: {pf['error'][:50]}")
+            continue
+        print(
+            f"  {model:12s} {pf['n_symbols']:>5d} "
+            f"{pf['annual_return']:>8.4f} {pf['sharpe']:>8.4f} {pf['max_drawdown']:>8.4f} "
+            f"{pf['win_day_pct']:>7.4f} {pf['vol_annual']:>8.4f}"
+        )
+
+    # ── cluster exposure breakdown ────────────────────────────────────────
+    for model, pf in portfolios.items():
+        if "error" in pf:
+            continue
+        print(f"\n  {model} cluster exposure:")
+        for cluster, w in pf.get("cluster_exposure", {}).items():
+            cap = CLUSTER_CAPS.get(cluster, SINGLE_SYMBOL_CAP)
+            bar_in = int(w * 40)
+            bar_out = int(cap * 40)
+            print(f"    {cluster:20s} {w:>6.2%} / cap {cap:>5.0%}  [{'#' * bar_in}{'.' * max(0, bar_out - bar_in)}]")
+
+    # ── per-symbol weights (top 8) ────────────────────────────────────────
+    for model, pf in portfolios.items():
+        if "error" in pf:
+            continue
+        syms = list(pf.get("symbol_weights", {}).items())[:8]
+        print(f"\n  {model} top-8 symbol weights:")
+        for sym, w in syms:
+            bar = int(w * 50)
+            print(f"    {sym:12s} {w:>6.2%}  [{'#' * bar}]")
+
     # ── write report ─────────────────────────────────────────────────────
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -411,6 +682,7 @@ def main() -> int:
         "survival_d1": surv,
         "ma200_detail_d1": detail,
         "blended_detail_d1": detail_b,
+        "portfolio": portfolios,
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
