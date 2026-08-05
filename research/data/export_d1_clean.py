@@ -79,6 +79,41 @@ def export_one(symbol: str) -> dict[str, Any] | None:
     # Add metadata column
     df["exported_at"] = EXPORTED_AT
 
+    # -- derived columns -------------------------------------------------------
+    dt = df["time"]
+
+    # day_of_week: 0=Mon .. 6=Sun
+    df["day_of_week"] = dt.dt.dayofweek
+
+    # is_holiday: volume collapses + range tightens vs median
+    has_vol = "volume" in df.columns
+    if has_vol:
+        med_vol = df["volume"].median()
+        df["range"] = df["high"] - df["low"]
+        med_range = df["range"].median()
+        vol_collapse = df["volume"] < med_vol * 0.2
+        range_tight = df["range"] < med_range * 0.3
+        df["is_holiday"] = (vol_collapse & range_tight) if med_vol > 0 else False
+        df.drop(columns=["range"], inplace=True)
+    else:
+        df["is_holiday"] = False
+
+    # trading_session: label based on day_of_week + holiday flag
+    def _session_label(row):
+        dow = row["day_of_week"]
+        holiday = row["is_holiday"]
+        if holiday:
+            return "thin"
+        if dow == 6:  # Sunday (BTC or data anomaly)
+            return "weekend"
+        if dow == 4:  # Friday
+            return "pre_weekend"
+        if dow == 5:  # Saturday
+            return "weekend"
+        return "regular"  # Mon-Thu
+
+    df["trading_session"] = df.apply(_session_label, axis=1)
+
     df.to_parquet(dst, index=False)
 
     # Build metadata
@@ -142,6 +177,12 @@ def export_one(symbol: str) -> dict[str, Any] | None:
         and not info["stale"]
     )
 
+    # Calendar stats from derived columns
+    info["holiday_bars"] = int(df["is_holiday"].sum())
+    info["session_counts"] = df["trading_session"].value_counts().to_dict()
+    for k in ["regular", "pre_weekend", "weekend", "thin"]:
+        info["session_counts"].setdefault(k, 0)
+
     return info
 
 
@@ -182,8 +223,14 @@ def main() -> int:
     total_dupes = sum(e["duplicate_timestamps"] for e in entries)
     quality_pass = sum(1 for e in entries if e["quality_pass"])
     stale_count = sum(1 for e in entries if e.get("stale"))
+    total_holidays = sum(e.get("holiday_bars", 0) for e in entries)
+    total_regular = sum(e.get("session_counts", {}).get("regular", 0) for e in entries)
+    total_pre_wknd = sum(e.get("session_counts", {}).get("pre_weekend", 0) for e in entries)
+    total_weekend = sum(e.get("session_counts", {}).get("weekend", 0) for e in entries)
+    total_thin = sum(e.get("session_counts", {}).get("thin", 0) for e in entries)
     print(f"  Total: {len(entries)} files, {total_rows:,} rows")
-    print(f"  Gaps: {total_gaps}  Dupes: {total_dupes}  Stale: {stale_count}")
+    print(f"  Gaps: {total_gaps}  Dupes: {total_dupes}  Stale: {stale_count}  Holidays: {total_holidays}")
+    print(f"  Sessions: regular={total_regular} pre_weekend={total_pre_wknd} weekend={total_weekend} thin={total_thin}")
     print(f"  Quality: {quality_pass}/{len(entries)} pass")
 
     # -- cross-symbol alignment ------------------------------------------------

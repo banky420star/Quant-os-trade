@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0.0",
-  "generated_at": "2026-08-05T22:17:51.466221+00:00",
+  "generated_at": "2026-08-05T22:38:04.946813+00:00",
   "source": "MT5 D1 history via loops/history_loop.py",
   "source_dir": "C:\\Users\\Administrator\\Desktop\\new task\\data\\history",
   "output_dir": "research\\data",
@@ -51,13 +51,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-31T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "fe2edec198a6822e8758c87aed30528a6833542ebf33512bc888bb4969a1cae2",
-      "size_bytes": 29719,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "948a8e79676dd5764b25ed368939d60c3d285b4585714d9f6e440915109c943a",
+      "size_bytes": 31513,
       "bars_vs_expected": 1.203,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -65,7 +68,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 22,
+      "session_counts": {
+        "regular": 331,
+        "pre_weekend": 83,
+        "weekend": 64,
+        "thin": 22
+      }
     },
     "BTCUSDm": {
       "symbol": "BTCUSDm",
@@ -79,13 +89,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2025-03-24T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "841fc741e46814a258a4dda3e8bd95cfbc4eb0a552c472f147272a9264798ffe",
-      "size_bytes": 25599,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "46f7eb83d2ea3b239861c786907deb3ee6a0f1e166c4222198a1122459a3cec2",
+      "size_bytes": 27317,
       "bars_vs_expected": 1.403,
       "gaps": [],
       "weekend_gaps_skipped": 0,
@@ -93,7 +106,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 0,
+      "session_counts": {
+        "regular": 287,
+        "weekend": 142,
+        "pre_weekend": 71,
+        "thin": 0
+      }
     },
     "EURUSDm": {
       "symbol": "EURUSDm",
@@ -107,13 +127,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-31T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "2f9f53f0619c7839f3ce1d674fc4ace702ddb8dd3b845dc053c7b1752d6b2c48",
-      "size_bytes": 29803,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "b3d3354500995e2e005eec977f08a776d69d8f91b3166a24af478a87754ddf7c",
+      "size_bytes": 31619,
       "bars_vs_expected": 1.203,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -121,7 +144,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 48,
+      "session_counts": {
+        "regular": 331,
+        "pre_weekend": 83,
+        "thin": 48,
+        "weekend": 38
+      }
     },
     "FR40m": {
       "symbol": "FR40m",
@@ -135,13 +165,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-11T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "306ea45a821917d1d49cd96b5086809da11f2ee83c3861329b92df191c8a4a86",
-      "size_bytes": 24536,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "7e6b2fb5ed9d6a6ba5d7d15a2dda4054c45eeba6a0accd61623eceeadecb1432",
+      "size_bytes": 26405,
       "bars_vs_expected": 1.163,
       "gaps": [],
       "weekend_gaps_skipped": 90,
@@ -149,7 +182,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 46,
+      "session_counts": {
+        "regular": 337,
+        "pre_weekend": 82,
+        "thin": 46,
+        "weekend": 35
+      }
     },
     "GBPUSDm": {
       "symbol": "GBPUSDm",
@@ -163,13 +203,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-31T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "75c9610425c8fb07ea992c6e887eb47561abd8413007499006ecedb63232f3c1",
-      "size_bytes": 29532,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "71215c0b354bd40736d0bc9445694f266ba2ebb66e8f7ab237e16292fbdb000f",
+      "size_bytes": 31343,
       "bars_vs_expected": 1.203,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -177,7 +220,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 30,
+      "session_counts": {
+        "regular": 331,
+        "pre_weekend": 83,
+        "weekend": 56,
+        "thin": 30
+      }
     },
     "JP225m": {
       "symbol": "JP225m",
@@ -191,13 +241,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-30T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "5ff482a652a10d2912a482b8ceead12e636df874998cc10f8a08188e82313a94",
-      "size_bytes": 24488,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "609dddee4cdaa1debf3e798dcd114b96dc3988782c385d1a8d5950d31f16b809",
+      "size_bytes": 26307,
       "bars_vs_expected": 1.201,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -205,7 +258,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 2,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 30,
+      "session_counts": {
+        "regular": 332,
+        "pre_weekend": 82,
+        "weekend": 56,
+        "thin": 30
+      }
     },
     "NAS100m": {
       "symbol": "NAS100m",
@@ -219,13 +279,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2025-06-15T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "540709d4076026fb0f87577037d172837fc517e4b93b43fc3b67afda5faa6817",
-      "size_bytes": 19564,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "cb682c8e4edc4458e93b245c41acb18c11d35c26fd5922abc46c233539630ad4",
+      "size_bytes": 21342,
       "bars_vs_expected": 1.205,
       "gaps": [],
       "weekend_gaps_skipped": 59,
@@ -233,7 +296,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 29,
+      "session_counts": {
+        "regular": 237,
+        "pre_weekend": 59,
+        "weekend": 33,
+        "thin": 29
+      }
     },
     "UK100m": {
       "symbol": "UK100m",
@@ -247,13 +317,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-02T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "e7f536d846a781c2d9ee0a5b413d107da02e6cf9355e7fca6376f5709edc6312",
-      "size_bytes": 24755,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "f0ad6b43b6376bc4f62ebe4e9aeab33cf4e68deeece385a817ac0e8009ff69c4",
+      "size_bytes": 26664,
       "bars_vs_expected": 1.146,
       "gaps": [],
       "weekend_gaps_skipped": 90,
@@ -261,7 +334,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 37,
+      "session_counts": {
+        "regular": 339,
+        "pre_weekend": 84,
+        "weekend": 40,
+        "thin": 37
+      }
     },
     "US30m": {
       "symbol": "US30m",
@@ -275,13 +355,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-30T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "0bb3be00a0aef4ee64402d183b03b2f3b875664ce52bdc1bb595a46f3134bed7",
-      "size_bytes": 24296,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "464eeada80fe37554f4bf301fc1b8057bf4da5fff348aebdccae521ec4695f17",
+      "size_bytes": 26149,
       "bars_vs_expected": 1.201,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -289,7 +372,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 57,
+      "session_counts": {
+        "regular": 331,
+        "pre_weekend": 82,
+        "thin": 57,
+        "weekend": 30
+      }
     },
     "US500m": {
       "symbol": "US500m",
@@ -303,13 +393,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-30T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "11d5da3c8d97274f20e6d710ca20e07435dc2df1d538ae254eadd3ccefc074f6",
-      "size_bytes": 24783,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "7bf8ed743e1a4ecdd5716b5b03d2930fedaf08b8b37248c5fc2e0970c48741a2",
+      "size_bytes": 26640,
       "bars_vs_expected": 1.201,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -317,7 +410,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 45,
+      "session_counts": {
+        "regular": 331,
+        "pre_weekend": 82,
+        "thin": 45,
+        "weekend": 42
+      }
     },
     "USDCHFm": {
       "symbol": "USDCHFm",
@@ -331,13 +431,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-31T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "4ce8232b24604f2a4c486d0adc1255321e6a8546ddf91300ce0024c555a4612e",
-      "size_bytes": 29518,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "90bf66df156d6daa9d61e4f245b0d3792b3b3facd914a2ef08b089d9058b5067",
+      "size_bytes": 31262,
       "bars_vs_expected": 1.203,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -345,7 +448,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 4,
+      "session_counts": {
+        "regular": 333,
+        "pre_weekend": 83,
+        "weekend": 80,
+        "thin": 4
+      }
     },
     "USDJPYm": {
       "symbol": "USDJPYm",
@@ -359,13 +469,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-31T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "3ad526a992078901e43673c62a9ba459d6ac9598fb8ae745892e847ef0e30240",
-      "size_bytes": 24951,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "2eec47f2a0890b79bbdbb6c7e75ea64bacc022fec5d30ce0d1ea841ad56d214f",
+      "size_bytes": 26725,
       "bars_vs_expected": 1.203,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -373,7 +486,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 14,
+      "session_counts": {
+        "regular": 334,
+        "pre_weekend": 83,
+        "weekend": 69,
+        "thin": 14
+      }
     },
     "USOILm": {
       "symbol": "USOILm",
@@ -387,13 +507,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-29T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "0883c1bbdce924bc583ed399c066e83555808ba4cefaf36e4bfde5f5191c2792",
-      "size_bytes": 25525,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "c666b8cc928d3cb4b5175d407e6dac42f85bb4d2d5b9ed6d65aaa056b41e3f44",
+      "size_bytes": 27355,
       "bars_vs_expected": 1.199,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -401,7 +524,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 1,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 51,
+      "session_counts": {
+        "regular": 332,
+        "pre_weekend": 81,
+        "thin": 51,
+        "weekend": 36
+      }
     },
     "XAUUSDm": {
       "symbol": "XAUUSDm",
@@ -415,13 +545,16 @@
         "low",
         "close",
         "volume",
-        "exported_at"
+        "exported_at",
+        "day_of_week",
+        "is_holiday",
+        "trading_session"
       ],
       "start": "2024-12-29T00:00:00+00:00",
       "end": "2026-08-05T00:00:00+00:00",
-      "exported_at": "2026-08-05T22:17:51.466221+00:00",
-      "sha256": "f724a198b877b6d738a670f54d1e1584aa8874a3201107448309c7dabc57c4ea",
-      "size_bytes": 27128,
+      "exported_at": "2026-08-05T22:38:04.946813+00:00",
+      "sha256": "a4db6802a4527de0c11473a7f084a286fdb5fd28a4a9067c597e53ed80c610b5",
+      "size_bytes": 28963,
       "bars_vs_expected": 1.199,
       "gaps": [],
       "weekend_gaps_skipped": 83,
@@ -429,7 +562,14 @@
       "stale": false,
       "zero_volume_bars": 0,
       "anomaly_volume_bars": 0,
-      "quality_pass": true
+      "quality_pass": true,
+      "holiday_bars": 41,
+      "session_counts": {
+        "regular": 333,
+        "pre_weekend": 81,
+        "weekend": 45,
+        "thin": 41
+      }
     }
   },
   "errors": null
