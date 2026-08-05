@@ -41,17 +41,35 @@ def _expected_delta(timeframe: str) -> timedelta:
     }.get(timeframe, timedelta(days=1))
 
 
+def _trading_day_gap_threshold(timeframe: str) -> timedelta:
+    """Max acceptable gap for trading-day-aware timeframes.
+
+    For D1 bars, weekends create 3-day gaps; holiday weekends can be
+    4-5 days.  Gaps beyond this are flagged as suspicious.
+    """
+    return {
+        "D1": timedelta(days=5),
+        "H4": timedelta(hours=12),
+        "H1": timedelta(hours=3),
+    }.get(timeframe, None)
+
+
 def run_quality_checks(
     df: pd.DataFrame,
     symbol: str,
     timeframe: str,
     *,
     volume_anomaly_multiple: float = 10.0,
+    trading_day_aware: bool = True,
 ) -> QualityReport:
     """Run the full battery of quality checks on a history DataFrame.
 
     *df* must have a DatetimeIndex and columns ``open, high, low, close``
     plus optionally ``tick_volume`` / ``real_volume``.
+
+    *trading_day_aware*: if True, D1/H4/H1 gaps smaller than weekend
+    + holiday allowance are not flagged.  Set False for strict bar-by-bar
+    checking (e.g. tick or intraday data).
     """
     report = QualityReport(symbol=symbol, timeframe=timeframe)
     report.total_rows = len(df)
@@ -74,7 +92,14 @@ def run_quality_checks(
     # -- gaps -----------------------------------------------------------------
     expected = _expected_delta(timeframe)
     diffs = df.index.to_series().diff()
-    gap_mask = diffs > expected * 1.5
+
+    # Trading-day-aware threshold: weekends + holidays for D1/H4/H1
+    td_threshold = _trading_day_gap_threshold(timeframe) if trading_day_aware else None
+    if td_threshold is not None:
+        gap_mask = diffs > td_threshold
+    else:
+        gap_mask = diffs > expected * 1.5
+
     for ts, diff in diffs[gap_mask].items():
         report.gaps.append(
             {"after": ts.isoformat(), "gap": str(diff), "gap_bars": int(diff / expected)}
@@ -112,8 +137,11 @@ def quality_summary(reports: list[QualityReport]) -> str:
         status = "PASS" if r.passes else "FAIL"
         detail = (
             f"gaps={len(r.gaps)} stale={r.stale_bars} dupes={r.duplicate_timestamps}"
-            f" zero_vol={r.zero_volume_bars}"
+            f" zero_vol={r.zero_volume_bars} ooo={r.out_of_order}"
         )
         lines.append(f"  {r.symbol:12s} {r.timeframe:4s} {status:5s} {r.total_rows:6d} rows  {detail}")
-    lines.append(f"\n{len(reports) - len(failed)}/{len(reports)} passed")
+    if failed:
+        lines.append(f"\n{len(reports) - len(failed)}/{len(reports)} passed ({len(failed)} failed)")
+    else:
+        lines.append(f"\n{len(reports)}/{len(reports)} passed")
     return "\n".join(lines)
