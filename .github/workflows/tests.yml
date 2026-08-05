@@ -26,17 +26,7 @@ jobs:
           pip install pytest psutil
 
       - name: Run unit tests (exclude runtime/replay/flaky)
-        run: |
-          python -m pytest tests/ -q \
-            --ignore=tests/test_end_to_end.py \
-            --ignore=tests/test_performance_benchmark.py \
-            --ignore=tests/test_performance_projection.py \
-            --ignore=tests/test_platform.py \
-            --ignore=tests/test_system.py \
-            --ignore=tests/test_replay_lookahead.py \
-            --ignore=tests/test_news_sentiment.py \
-            --ignore=tests/test_walk_forward_microtest.py \
-            --tb=short
+        run: python -m pytest tests/ -q --ignore=tests/test_end_to_end.py --ignore=tests/test_performance_benchmark.py --ignore=tests/test_performance_projection.py --ignore=tests/test_platform.py --ignore=tests/test_system.py --ignore=tests/test_replay_lookahead.py --ignore=tests/test_news_sentiment.py --ignore=tests/test_walk_forward_microtest.py --tb=short
 
   safety:
     runs-on: windows-latest
@@ -59,11 +49,4 @@ jobs:
           pip install pytest
 
       - name: Critical safety tests
-        run: |
-          python -m pytest \
-            tests/test_mt5_owner.py \
-            tests/test_exposure.py \
-            tests/test_kelly_sizing.py \
-            tests/test_account_mode.py \
-            tests/test_fast_mode.py \
-            -q --tb=short
+        run: python -m pytest tests/test_mt5_owner.py tests/test_exposure.py tests/test_kelly_sizing.py tests/test_account_mode.py tests/test_fast_mode.py -q --tb=short
