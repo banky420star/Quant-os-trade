@@ -45,12 +45,13 @@ def _trading_day_gap_threshold(timeframe: str) -> timedelta:
     """Max acceptable gap for trading-day-aware timeframes.
 
     For D1 bars, weekends create 3-day gaps; holiday weekends can be
-    4-5 days.  Gaps beyond this are flagged as suspicious.
+    4-5 days.  For H4, a weekend (Fri 20h -> Mon 00h) is ~52 hours;
+    we allow up to 60h to skip normal weekends.  H1 same logic.
     """
     return {
         "D1": timedelta(days=5),
-        "H4": timedelta(hours=12),
-        "H1": timedelta(hours=3),
+        "H4": timedelta(hours=60),
+        "H1": timedelta(hours=60),
     }.get(timeframe, None)
 
 
