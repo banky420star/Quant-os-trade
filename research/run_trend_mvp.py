@@ -535,7 +535,7 @@ def portfolio_report(
 
 
 def main() -> int:
-    timeframes = ["D1"]
+    timeframes = ["D1", "H4"]
     all_results: dict[str, dict[str, Any]] = {}
 
     for tf in timeframes:
@@ -576,59 +576,99 @@ def main() -> int:
                 f"{surv:>5s}  {latest_str}"
             )
 
-    # ── survival summary ──────────────────────────────────────────────────
-    print(f"\n{'='*80}")
-    print("  DOUBLE-COST SURVIVAL (D1)")
-    print(f"{'='*80}")
+    # ── per-tf survival summary ────────────────────────────────────────────
+    surv_by_tf: dict[str, Any] = {}
+    detail_by_tf: dict[str, Any] = {}
 
-    surv = survival_table(all_results, "D1")
-    cost_labels = ["0x (gross)", "1x cost", "2x cost", "3x cost"]
-    header2 = f"{'Model':12s} " + " ".join(f"{l:>12s}" for l in cost_labels)
-    print(header2)
-    print("-" * 65)
+    for tf in timeframes:
+        print(f"\n{'='*80}")
+        print(f"  DOUBLE-COST SURVIVAL ({tf})")
+        print(f"{'='*80}")
 
-    for model in ["ma_200", "mom_3m", "blended"]:
-        counts = surv[model]
-        row = f"{model:12s} " + " ".join(f"{counts[l]:>12d}" for l in cost_labels)
-        print(row)
+        surv = survival_table(all_results, tf)
+        surv_by_tf[tf] = surv
+        cost_labels = ["0x (gross)", "1x cost", "2x cost", "3x cost"]
+        header2 = f"{'Model':12s} " + " ".join(f"{l:>12s}" for l in cost_labels)
+        print(header2)
+        print("-" * 65)
 
-    # ── per-symbol detail (MA200, best model) ─────────────────────────────
-    print(f"\n{'='*80}")
-    print("  MA200 PER-SYMBOL COST STRESS (D1)")
-    print(f"{'='*80}")
-    detail = survival_detail(all_results, "D1", "ma_200")
-    detail_header = (
-        f"{'Symbol':12s} {'Flips':>5s} {'Cost bp':>7s} "
-        f"{'Gross':>8s} {'1x':>8s} {'2x':>8s} {'3x':>8s} {'Surv2x':>7s}"
-    )
-    print(detail_header)
-    print("-" * 80)
-    for row in detail:
-        surv2x = "YES" if row["survives_2x"] else "no"
-        print(
-            f"  {row['symbol']:10s} {row['flips']:>5d} {row['cost_bps_rt']:>7.2f} "
-            f"{row['gross']:>8.4f} {row['net_1x']:>8.4f} {row['net_2x']:>8.4f} "
-            f"{row['net_3x']:>8.4f} {surv2x:>7s}"
+        for model in ["ma_200", "mom_3m", "blended"]:
+            counts = surv[model]
+            row = f"{model:12s} " + " ".join(f"{counts[l]:>12d}" for l in cost_labels)
+            print(row)
+
+        # per-symbol MA200 detail
+        print(f"\n  MA200 PER-SYMBOL COST STRESS ({tf})")
+        detail = survival_detail(all_results, tf, "ma_200")
+        detail_by_tf.setdefault("ma_200", {})[tf] = detail
+        detail_header = (
+            f"  {'Symbol':10s} {'Flips':>5s} {'Cost bp':>7s} "
+            f"{'Gross':>8s} {'1x':>8s} {'2x':>8s} {'3x':>8s} {'Surv2x':>7s}"
         )
+        print(detail_header)
+        print("  " + "-" * 70)
+        for row in detail:
+            surv2x = "YES" if row["survives_2x"] else "no"
+            print(
+                f"  {row['symbol']:10s} {row['flips']:>5d} {row['cost_bps_rt']:>7.2f} "
+                f"{row['gross']:>8.4f} {row['net_1x']:>8.4f} {row['net_2x']:>8.4f} "
+                f"{row['net_3x']:>8.4f} {surv2x:>7s}"
+            )
 
-    # ── blended detail ────────────────────────────────────────────────────
-    print(f"\n{'='*80}")
-    print("  BLENDED PER-SYMBOL COST STRESS (D1)")
-    print(f"{'='*80}")
-    detail_b = survival_detail(all_results, "D1", "blended")
-    print(detail_header)
-    print("-" * 80)
-    for row in detail_b:
-        surv2x = "YES" if row["survives_2x"] else "no"
-        print(
-            f"  {row['symbol']:10s} {row['flips']:>5d} {row['cost_bps_rt']:>7.2f} "
-            f"{row['gross']:>8.4f} {row['net_1x']:>8.4f} {row['net_2x']:>8.4f} "
-            f"{row['net_3x']:>8.4f} {surv2x:>7s}"
+    # ── D1 vs H4 COMPARISON ──────────────────────────────────────────────
+    if len(timeframes) >= 2:
+        print(f"\n{'='*80}")
+        print("  D1 vs H4 COMPARISON — 2x COST SURVIVAL")
+        print(f"{'='*80}")
+        comp_header = (
+            f"  {'Symbol':10s} {'D1 Flips':>8s} {'H4 Flips':>9s} "
+            f"{'D1 2x':>8s} {'H4 2x':>8s} {'Winner':>7s}"
         )
+        print(comp_header)
+        print("  " + "-" * 60)
 
-    # ── portfolio section ─────────────────────────────────────────────────
+        d1_detail = detail_by_tf.get("ma_200", {}).get("D1", [])
+        h4_detail = detail_by_tf.get("ma_200", {}).get("H4", [])
+        d1_map = {r["symbol"]: r for r in d1_detail}
+        h4_map = {r["symbol"]: r for r in h4_detail}
+
+        d1_wins = 0
+        h4_wins = 0
+        both_survive = 0
+        both_die = 0
+
+        for sym in RESEARCH_UNIVERSE:
+            d1 = d1_map.get(sym, {})
+            h4 = h4_map.get(sym, {})
+            d1_2x = d1.get("net_2x", 0)
+            h4_2x = h4.get("net_2x", 0)
+            d1_flips = d1.get("flips", 0)
+            h4_flips = h4.get("flips", 0)
+
+            if d1_2x > h4_2x:
+                winner = "D1"
+                d1_wins += 1
+            elif h4_2x > d1_2x:
+                winner = "H4"
+                h4_wins += 1
+            else:
+                winner = "tie"
+
+            if d1_2x > 0 and h4_2x > 0:
+                both_survive += 1
+            elif d1_2x <= 0 and h4_2x <= 0:
+                both_die += 1
+
+            print(
+                f"  {sym:10s} {d1_flips:>8d} {h4_flips:>9d} "
+                f"{d1_2x:>8.4f} {h4_2x:>8.4f} {winner:>7s}"
+            )
+
+        print(f"\n  D1 wins: {d1_wins}  H4 wins: {h4_wins}  Both survive: {both_survive}  Both die: {both_die}")
+
+    # ── portfolio section (D1 only — H4 portfolio needs compatible dates) ─
     print(f"\n{'='*80}")
-    print("  COMBINED PORTFOLIO (vol-scaled + cluster-capped, 1x costs)")
+    print("  COMBINED PORTFOLIO (D1, vol-scaled + cluster-capped, 1x costs)")
     print(f"{'='*80}")
     header_pf = f"{'Model':12s} {'#Sym':>5s} {'AnnRet':>8s} {'Sharpe':>8s} {'MaxDD':>8s} {'WinDay%':>7s} {'VolAnn':>8s}"
     print(header_pf)
@@ -671,17 +711,17 @@ def main() -> int:
     # ── write report ─────────────────────────────────────────────────────
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_tf": "D1_real",  # real D1 from MT5, M15 fallback if missing
-        "target_tfs": ["D1"],
+        "source_tf": "D1+H4_real",  # real D1/H4 from MT5, M15 fallback if missing
+        "target_tfs": timeframes,
         "cost_model": {
             "slippage_bps": SLIPPAGE_BPS,
             "spread_bps_by_symbol": COST_BPS,
             "swap_bps_daily_by_symbol": SWAP_BPS_DAILY,
         },
         "results": all_results,
-        "survival_d1": surv,
-        "ma200_detail_d1": detail,
-        "blended_detail_d1": detail_b,
+        "survival_by_tf": surv_by_tf,
+        "ma200_detail_by_tf": detail_by_tf.get("ma_200", {}),
+        "blended_detail_by_tf": detail_by_tf.get("blended", {}),
         "portfolio": portfolios,
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
