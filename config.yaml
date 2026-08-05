@@ -166,7 +166,7 @@ trade_manager:
   - tight_control
 fast_mode:
   enabled: true
-  live_enabled: true
+  live_enabled: false
   tick_interval_ms: 1000
   symbols:
   - XAUUSDm
@@ -1170,7 +1170,7 @@ signals:
     # culturing ratings). No-edge setups WILL lose demo money by design here;
     # that is the accepted cost of live forward scoring. Kill switch is the
     # user's backstop (not touched by me).
-    enabled: true
+    enabled: false
     symbols: []
     setups: []
     # 2026-07-31 iteration 6 — per-symbol-per-setup granular allowlist. When a

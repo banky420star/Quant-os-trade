@@ -47,7 +47,7 @@ def test_sync_practice_gates_applies_growth_risk(growth_config):
         assert cfg["signals"]["default_risk_percent"] == 1.0
         assert cfg["practice"]["growth"]["enabled"] is True
     else:
-        assert cfg["signals"]["default_risk_percent"] == 2.5
+        assert cfg["signals"]["default_risk_percent"] == 0.50
         assert cfg["quant"]["strategy_ranking_enabled"] is False
         assert cfg["trading"]["aggressive_mode"] is True
         assert cfg["session_scoring"]["enabled"] is False

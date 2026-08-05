@@ -144,8 +144,8 @@ def run() -> dict | None:
     try:
         dec = engine.generate_candidates(features, context_data, edge_scores)
         for c in dec:
-            annotate_candidate_for_risk_parity(c, config)
             c.setdefault("source", "decision_engine")
+            annotate_candidate_for_risk_parity(c, config)
         raw_candidates.extend(dec)
     except Exception as exc:
         logger.warning("DecisionEngine stream failed: %s", exc)
@@ -157,8 +157,8 @@ def run() -> dict | None:
         try:
             bb = generate_bankbot_signals(config, logger=logger)
             for c in bb:
-                annotate_candidate_for_risk_parity(c, config)
                 c.setdefault("source", "bankbot")
+                annotate_candidate_for_risk_parity(c, config)
             if bb:
                 logger.info("Bankbot added %d candidate signals", len(bb))
             raw_candidates.extend(bb)

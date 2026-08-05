@@ -11,9 +11,9 @@ practice:
     # loss tolerance and 0.35 min RR was a negative-expectancy churn config —
     # at WR~31% and payoff 0.63 every extra trade admitted below 1R lost money.
     daily_target_pct: 20
-    max_daily_loss_pct: 10
+    max_daily_loss_pct: 3
     min_confidence: 30
-    min_risk_reward: 0.7
+    min_risk_reward: 1.20
     min_trade_score: 12
     aggressive_mode: true
     relax_consensus: true
@@ -26,17 +26,17 @@ practice:
     # first losing trade. 8 absorbs normal variance streaks (P(8 straight
     # losses | WR=31%) ≈ 5%) while still halting a real bleed.
     max_consecutive_losses: 8
-    max_drawdown_pct: 20
+    max_drawdown_pct: 10
     max_lot: 0.25
-    risk_percent_per_trade: 2.5
+    risk_percent_per_trade: 0.50
     strategy_ranking_enabled: true
     session_scoring_enabled: false
     continuous_through_campaign: true
     lock_profit_when_target_hit: false
 trading:
   allow_pyramiding: false
-  max_open_per_symbol: 3
-  max_total_open_positions: 6
+  max_open_per_symbol: 1
+  max_total_open_positions: 3
   max_session_trades_per_symbol: 24
   signal_reversal_early_close:
     enabled: true
@@ -69,7 +69,7 @@ evaluation:
   recent_cold_skip_min_n: 12
 signals:
   min_confidence: 30
-  min_risk_reward: 0.7
+  min_risk_reward: 1.20
   symbol_rules:
     XAUUSDm:
       preferred_setups: [trend_continuation, pullback, breakout, ma_crossover]
