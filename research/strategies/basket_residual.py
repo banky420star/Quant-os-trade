@@ -1,16 +1,12 @@
-"""Basket residual research — PCA residuals and replicating baskets.
-
-Phase 4 extension: instead of one-to-one pairs, test whether a
-multi-instrument replicating basket produces a more stable residual.
-"""
+"""Basket residual research using PCA reconstruction and multivariate OLS."""
 
 from __future__ import annotations
-
-from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
+
+from .pairs import residual_zscore
 
 
 def pca_residual(
@@ -19,38 +15,27 @@ def pca_residual(
     n_components: int = 2,
     window: int = 252,
 ) -> pd.DataFrame:
-    """
-    Compute rolling principal-component scores for a basket of instrument returns.
-    
-    Parameters:
-    	returns (pd.DataFrame): Instrument returns indexed by date.
-    	n_components (int): Number of principal components to calculate.
-    	window (int): Number of observations in each rolling window.
-    
-    Returns:
-    	pd.DataFrame: Principal-component scores indexed like `returns`, with columns named `pc1_score`, `pc2_score`, and so on. Values remain missing where a valid score cannot be calculated.
-    """
-    if len(returns) < window:
-        return pd.DataFrame(index=returns.index)
+    """Return rolling PCA reconstruction residuals for a stable column universe."""
+    columns = list(returns.columns)
+    result = pd.DataFrame(
+        np.nan,
+        index=returns.index,
+        columns=[f"residual_{column}" for column in columns],
+    )
+    if len(returns) < window or len(columns) < 2:
+        return result
 
-    residuals = pd.DataFrame(index=returns.index)
-    pca = PCA(n_components=n_components)
-
-    for i in range(window - 1, len(returns)):
-        window_data = returns.iloc[i - window + 1 : i + 1].dropna(axis=1)
-        if window_data.shape[1] < 2:
+    components = min(n_components, len(columns) - 1)
+    for position in range(window - 1, len(returns)):
+        sample = returns.iloc[position - window + 1 : position + 1][columns]
+        if sample.isna().any().any():
             continue
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            scores = pca.fit_transform(window_data)
-
-        if i - window + 1 + scores.shape[0] - 1 < len(residuals):
-            idx = returns.index[i]
-            for j in range(min(n_components, scores.shape[1])):
-                residuals.loc[idx, f"pc{j+1}_score"] = scores[-1, j]
-
-    return residuals
+        model = PCA(n_components=components)
+        scores = model.fit_transform(sample.to_numpy(dtype=float))
+        reconstructed = model.inverse_transform(scores)
+        residual = sample.to_numpy(dtype=float)[-1] - reconstructed[-1]
+        result.iloc[position] = residual
+    return result
 
 
 def basket_residual_zscore(
@@ -61,55 +46,34 @@ def basket_residual_zscore(
     entry_z: float = 2.0,
     exit_z: float = 0.5,
 ) -> pd.DataFrame:
-    """
-    Compute basket-relative residual z-scores and trading signals.
-    
-    Parameters:
-        target (pd.Series): Price series for the target instrument.
-        basket (pd.DataFrame): Price series for the basket constituents.
-        window (int): Number of common return observations used for rolling estimation and z-score calculation.
-        entry_z (float): Absolute z-score threshold for entering a signal.
-        exit_z (float): Absolute z-score threshold below which the signal is neutral.
-    
-    Returns:
-        pd.DataFrame: DataFrame indexed by common return dates with `residual`, `zscore`, and `signal` columns. Signals are `-1` above `entry_z`, `1` below `-entry_z`, and `0` when the absolute z-score is below `exit_z`.
-    """
-    ret_target = target.pct_change().dropna()
-    ret_basket = basket.pct_change().dropna()
+    """Return residual, z-score, and signal from rolling multivariate regression."""
+    target_returns = target.pct_change()
+    basket_returns = basket.pct_change()
+    joint = pd.concat(
+        {"target": target_returns, **{column: basket_returns[column] for column in basket_returns}},
+        axis=1,
+    ).dropna()
+    if len(joint) < window or basket.empty:
+        return pd.DataFrame(index=joint.index)
 
-    common_idx = ret_target.index.intersection(ret_basket.index)
-    if len(common_idx) < window:
-        return pd.DataFrame(index=common_idx)
-
-    ret_target = ret_target.reindex(common_idx)
-    ret_basket = ret_basket.reindex(common_idx)
-
-    # Rolling OLS: target_return = alpha + betas * basket_returns
-    residuals = pd.Series(np.nan, index=common_idx)
-
-    for i in range(window - 1, len(common_idx)):
-        yi = ret_target.iloc[i - window + 1 : i + 1].values
-        xi = ret_basket.iloc[i - window + 1 : i + 1].values
-        if xi.shape[1] == 0:
-            continue
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            from scipy import stats as _stats
-            betas, intercept, _, _, _ = _stats.linregress(
-                xi if xi.ndim == 1 else xi.mean(axis=1), yi
-            )
-        pred = intercept + np.dot(xi[-1] if xi.ndim == 1 else xi[-1].mean(), betas)
-        residuals.iloc[i] = yi[-1] - pred
+    residuals = pd.Series(np.nan, index=joint.index, dtype=float)
+    feature_columns = [column for column in joint.columns if column != "target"]
+    for position in range(window - 1, len(joint)):
+        sample = joint.iloc[position - window + 1 : position + 1]
+        design = np.column_stack(
+            [np.ones(len(sample)), sample[feature_columns].to_numpy(dtype=float)]
+        )
+        response = sample["target"].to_numpy(dtype=float)
+        coefficients, *_ = np.linalg.lstsq(design, response, rcond=None)
+        latest = np.r_[1.0, sample[feature_columns].iloc[-1].to_numpy(dtype=float)]
+        residuals.iloc[position] = response[-1] - float(latest @ coefficients)
 
     zscore = residual_zscore(residuals, window=window)
-    signal = pd.Series(0, index=common_idx)
+    signal = pd.Series(0, index=joint.index, dtype=int)
     signal[zscore > entry_z] = -1
     signal[zscore < -entry_z] = 1
     signal[zscore.abs() < exit_z] = 0
-
-    return pd.DataFrame({"residual": residuals, "zscore": zscore, "signal": signal}, index=common_idx)
-
-
-# re-use from pairs module
-from .pairs import residual_zscore  # noqa: E402
-import warnings  # noqa: E402
+    return pd.DataFrame(
+        {"residual": residuals, "zscore": zscore, "signal": signal},
+        index=joint.index,
+    )
