@@ -1453,9 +1453,106 @@
         });
       }
     })();
-  </script>
+  
+// === Phase 0 Safety Header ===============================================
+function updateSafetyHeader(sh) {
+  if (!sh) return;
+  var S = function(id, val, color) {
+    var el = document.getElementById(id); if (!el) return;
+    el.textContent = val; if (color) el.style.color = color;
+  };
+  S("shAccount", (sh.account_mode||"?").toUpperCase(), "var(--green)");
+  S("shProfile", sh.profile||"?", "var(--blue)");
+  S("shExecution", sh.execution_allowed ? "ARMED" : "DISARMED", sh.execution_allowed ? "var(--red)" : "var(--green)");
+  S("shFast", sh.fast_mode||"?", sh.fast_mode==="LIVE" ? "var(--red)" : "var(--muted)");
+  S("shAdapt", sh.adaptation||"?", sh.adaptation==="ON" ? "var(--orange)" : "var(--muted)");
+  S("shHealth", (sh.health||"?").toUpperCase(), sh.health==="ok" ? "var(--green)" : sh.health==="critical" ? "var(--red)" : "var(--orange)");
+  var ac = sh.data_freshness==="stale" ? "var(--red)" : sh.data_freshness==="aging" ? "var(--orange)" : "var(--green)";
+  S("shDataAge", (sh.data_age_seconds>=0?sh.data_age_seconds+"s":"?")+" "+(sh.data_freshness||"?"), ac);
+  S("shPositions", sh.open_positions||"0", (sh.open_positions||0)>0?"var(--orange)":"var(--muted)");
+  S("shRisk", "$"+(sh.open_risk||0).toFixed(2), (sh.open_risk||0)>0?"var(--orange)":"var(--muted)");
+  var hdr = document.getElementById("safetyHeader");
+  if (hdr) {
+    if (sh.data_freshness==="stale" && sh.execution_allowed) hdr.style.background="rgba(255,69,58,.12)";
+    else if (sh.health==="critical") hdr.style.background="rgba(255,69,58,.08)";
+    else hdr.style.background="var(--bg2)";
+  }
+}
+
+// Hook into poll
+(function() {
+  var o = window.updateLiveFromPoll || window._updateLiveFromPoll || function(){};
+  var h = function(d) { o(d); if (d && d.safety_header) { window._lastSH = d.safety_header; updateSafetyHeader(d.safety_header); } };
+  if (typeof window._updateLiveFromPoll !== "undefined") window._updateLiveFromPoll = h;
+  else if (typeof window.updateLiveFromPoll !== "undefined") window.updateLiveFromPoll = h;
+})();
+
+// === Phase 0 Asymmetric Resume ============================================
+var _resumeCode = "";
+function showResumeModal() {
+  _resumeCode = "RESUME " + ((window._lastSH||{}).account_mode||"DEMO").toUpperCase();
+  document.getElementById("resumeExpected").textContent = _resumeCode;
+  document.getElementById("resumeModal").style.display = "flex";
+}
+async function doResume() {
+  var v = document.getElementById("resumeInput").value.trim();
+  var s = document.getElementById("resumeStatus");
+  if (v.toUpperCase() !== _resumeCode.toUpperCase()) { s.textContent="Mismatch"; s.style.color="var(--red)"; return; }
+  s.textContent = "Verifying...";
+  try {
+    var r = await fetch("/api/resume", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:v,expected:_resumeCode})});
+    var j = await r.json();
+    if (j.ok) { s.textContent="Resumed! Reloading..."; s.style.color="var(--green)"; setTimeout(function(){location.reload()},1500); }
+    else { s.textContent=j.message||"Failed"; s.style.color="var(--red)"; }
+  } catch(e) { s.textContent="Error"; s.style.color="var(--red)"; }
+}
+
+// === Phase 0 Profile Switch Preview =======================================
+async function switchProfileSafe(profile) {
+  try {
+    var r = await fetch("/api/switch_profile_preview", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({profile:profile})});
+    var p = await r.json();
+    if (!p.ok) { alert("Cannot switch: "+p.message); return; }
+    var d = p.diff;
+    var m = ["Profile change:","From: "+d.current,"To:   "+d.proposed,"","Execution: "+d.execution_mode,"Fast: "+d.fast_mode,"Adaptation: "+d.adaptation,"Learning: "+d.learning,"Opt-in: "+d.explicit_opt_in];
+    (p.warnings||[]).filter(Boolean).forEach(function(w){m.push("WARN: "+w)});
+    if (p.has_open_exposure) { alert(m.join("
+")+"
+
+BLOCKED: "+p.block_reason); return; }
+    if (!confirm(m.join("
+")+"
+
+Switch and restart?")) return;
+    var sw = await fetch("/api/switch_profile", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({profile:profile})});
+    var o = await sw.json();
+    if (o.ok) { setTimeout(function(){location.reload()},3000); } else { alert("Failed: "+o.message); }
+  } catch(e) { alert("Error: "+e.message); }
+}
+// Re-wire profile buttons to use safe switch with preview
+document.addEventListener("DOMContentLoaded",function(){
+  setTimeout(function(){
+    document.querySelectorAll(".profile-switch-btn").forEach(function(b){
+      b.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();switchProfileSafe(b.dataset.profile)},{once:true});
+    });
+  },800);
+});
+</script>
 
   <div class="app-root" id="appRoot">
+
+<!-- Phase 0: Permanent safety header -->
+<div id="safetyHeader" style="background:var(--bg2);border-bottom:1px solid rgba(255,255,255,.06);padding:6px 16px;font-size:11px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-family:monospace;overflow-x:auto">
+  <span style="color:var(--muted);white-space:nowrap">ACCT <b id="shAccount" style="color:var(--green)">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">PROFILE <b id="shProfile" style="color:var(--blue)">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">EXEC <b id="shExecution">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">FAST <b id="shFast">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">ADAPT <b id="shAdapt">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">HLTH <b id="shHealth">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">DATA <b id="shDataAge">---</b></span>
+  <span style="color:var(--muted);white-space:nowrap">POS <b id="shPositions">0</b></span>
+  <span style="color:var(--muted);white-space:nowrap">RISK <b id="shRisk">$0</b></span>
+</div>
 
   <header class="topbar">
     <div class="brand">
@@ -5642,5 +5739,20 @@
       });
     })();
     </script>
+<!-- Phase 0: Resume Trading modal -->
+<div id="resumeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:480px;width:90%">
+    <h3 style="margin:0 0 16px;color:var(--orange)">Resume Trading</h3>
+    <p style="font-size:13px;color:var(--text);line-height:1.5;margin:0 0 16px">Stopping is instant. <strong>Resuming requires explicit verification.</strong><br><br>Type the confirmation code:</p>
+    <div id="resumeExpected" style="background:var(--bg2);padding:12px;border-radius:6px;font-family:monospace;font-size:14px;text-align:center;margin:0 0 16px;color:var(--green)"></div>
+    <input id="resumeInput" placeholder="Type confirmation code..." style="width:100%;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin:0 0 16px;box-sizing:border-box" />
+    <div id="resumeStatus" style="font-size:12px;color:var(--muted);margin:0 0 16px"></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="doResume()" style="flex:1;padding:10px;background:var(--orange);color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer">RESUME</button>
+      <button onclick="document.getElementById('resumeModal').style.display='none'" style="flex:1;padding:10px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

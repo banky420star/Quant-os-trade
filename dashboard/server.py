@@ -31,6 +31,7 @@ from core.utils import (
     write_json_state,
 )
 from core.profile_launcher import active_profile_name, list_profiles, profile_summary
+from dashboard.safety import build_safety_header  # Phase 0
 
 import logging
 _LOG = logging.getLogger("dashboard.pq")
@@ -3057,6 +3058,14 @@ def aggregate_state(*, lite: bool = False) -> dict:
         features_data,
         config,
     )
+    payload["safety_header"] = build_safety_header(
+        payload.get("account", {}),
+        config,
+        payload["live_portfolio"],
+        payload.get("health", {}),
+        payload.get("kill_switch", {}),
+        active_profile_name_fn=active_profile_name,
+    )
     payload["watchlist"] = _build_watchlist(candidates, features_data, market_ctx_data)
     if not payload["watchlist"] and payload["symbol_cards"]:
         payload["watchlist"] = [
@@ -3780,11 +3789,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 body = self._read_json_body()
                 action = str(body.get("action") or "").strip().lower()
-                if action not in {"on", "off"}:
-                    self._send_json({
-                        "ok": False,
-                        "message": "action must be 'on' or 'off'",
-                    }, 400)
+                if action not in {"on"}:  # Phase 0: STOP only; resume via /api/resume
+                    if action == "off":
+                        self._send_json({"ok": False, "message": "Use /api/resume to restart. STOP is instant, RESUME requires verification."}, 403)
+                        return
+                    self._send_json({"ok": False, "message": "action must be 'on' (stop only)"}, 400)
                     return
 
                 document = _set_operator_kill_switch(
@@ -3804,6 +3813,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
+        elif path == "/api/resume":
+            """Phase 0: asymmetric resume -- requires explicit verification."""
+            try:
+                body = self._read_json_body()
+                typed = str(body.get("confirmation") or "").strip()
+                expected = str(body.get("expected") or "RESUME DEMO").strip()
+                if typed.upper() != expected.upper():
+                    self._send_json({"ok": False, "message": f"Confirmation mismatch. Type {expected!r} to confirm resume."}, 403)
+                    return
+                config = load_config()
+                ok = bool((config.get("execution") or {}).get("explicit_opt_in_danger_zone"))
+                if not ok:
+                    self._send_json({"ok": False, "message": "Profile not opted in for execution"}, 403)
+                    return
+                document = _set_operator_kill_switch("off", reason=f"Resume confirmed: {typed}")
+                write_json_state("resume_audit.json", {"timestamp": utc_now_iso(), "action": "resume", "confirmation": typed})
+                self._send_json({"ok": True, "message": "Trading resumed", "timestamp": document.get("updated_at")})
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+
         elif path == "/api/unblock-trades":
             # Phase 0 safety: UNBLOCK ALL TRADES removed.
             self._send_json({"ok": False, "message": "UNBLOCK ALL TRADES removed per Phase 0 safety. Clear each gate individually."}, 403)
@@ -3901,6 +3930,64 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 daemon=True,
             ).start()
             self._send_json({"ok": True, "message": f"Replay started: {symbol} x {max_bars} bars"})
+        elif path == "/api/switch_profile_preview":
+            """Phase 0: structured diff before profile switch."""
+            try:
+                body = self._read_json_body()
+                target = str(body.get("profile") or "").strip().lower()
+                if not target:
+                    self._send_json({"ok": False, "message": "Profile name required"}, 400)
+                    return
+                if target not in set(list_profiles()):
+                    self._send_json({"ok": False, "message": f"Profile {target!r} not found"}, 400)
+                    return
+                current_name = active_profile_name() or "base"
+                current_cfg = load_config()
+                try:
+                    import yaml
+                    target_path = ROOT / "profiles" / f"{target}.yaml"
+                    target_raw = yaml.safe_load(target_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    target_raw = {}
+                curr_exec = current_cfg.get("execution") or {}
+                tgt_exec = target_raw.get("execution") or {}
+                curr_fast = current_cfg.get("fast_mode") or {}
+                tgt_fast = target_raw.get("fast_mode") or {}
+                curr_adapt = current_cfg.get("adaptation") or {}
+                tgt_adapt = target_raw.get("adaptation") or {}
+                curr_learn = current_cfg.get("learning") or {}
+                tgt_learn = target_raw.get("learning") or {}
+                mt5_positions = read_json_state("mt5_positions.json", default={}) or {}
+                open_positions = (mt5_positions.get("positions") or [])
+                has_open_exposure = len(open_positions) > 0
+                is_real = bool(tgt_exec.get("mode") == "mt5" or target_raw.get("account_mode") == "real" or (target_raw.get("mt5") or {}).get("account_mode") == "real")
+                diff = {
+                    "current": current_name,
+                    "proposed": target,
+                    "execution_mode": f"{curr_exec.get('mode', 'paper')} -> {tgt_exec.get('mode', 'paper')}",
+                    "explicit_opt_in": f"{bool(curr_exec.get('explicit_opt_in_danger_zone'))} -> {bool(tgt_exec.get('explicit_opt_in_danger_zone'))}",
+                    "fast_mode": f"{'LIVE' if curr_fast.get('live_enabled') else ('observe' if curr_fast.get('enabled') else 'OFF')} -> {'LIVE' if tgt_fast.get('live_enabled') else ('observe' if tgt_fast.get('enabled') else 'OFF')}",
+                    "adaptation": f"{'ON' if curr_adapt.get('enabled') else 'OFF'} -> {'ON' if tgt_adapt.get('enabled') else 'OFF'}",
+                    "learning": f"{curr_learn.get('mode', 'observe_only')} -> {tgt_learn.get('mode', 'observe_only')}",
+                    "symbols_change": "review profile YAML for full symbol list",
+                }
+                warnings = []
+                if is_real:
+                    warnings.append("Real account profile -- verify manually")
+                if curr_exec.get("mode") != tgt_exec.get("mode"):
+                    warnings.append("Execution mode changes -- verify positions are managed")
+                self._send_json({
+                    "ok": True,
+                    "diff": diff,
+                    "has_open_exposure": has_open_exposure,
+                    "is_real_target": is_real,
+                    "can_switch": not has_open_exposure,
+                    "block_reason": "Open MT5 positions exist -- close or manage them before switching" if has_open_exposure else None,
+                    "warnings": warnings,
+                })
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+
         elif path == "/api/switch_profile":
             if not _mutation_request_allowed(self):
                 self._send_json({
@@ -3919,6 +4006,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if profile not in set(list_profiles()):
                     self._send_json({"ok": False, "message": f"Profile '{profile}' not found"}, 400)
                     return
+                # Phase 0: block switching with open MT5 positions
+                mt5_pos = read_json_state("mt5_positions.json", default={}) or {}
+                open_pos = (mt5_pos.get("positions") or [])
+                if open_pos:
+                    self._send_json({
+                        "ok": False,
+                        "message": f"Cannot switch profiles: {len(open_pos)} MT5 position(s) open. Close or manage them first, then retry.",
+                        "open_positions": len(open_pos),
+                        "symbols": list({p.get("symbol", "?") for p in open_pos}),
+                    }, 409)
+                    return
+
                 profile_path = ROOT / "profiles" / f"{profile}.yaml"
                 # Write switch request — start.py's supervisor checks this file
                 write_json_state("profile_switch.json", {
