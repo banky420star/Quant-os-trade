@@ -46,7 +46,7 @@ try:
         fromlist=["compute_payoff_paradox_meter", "write_payoff_paradox_proposal"],
     )
     _ppm_compute = _PPM.compute_payoff_paradox_meter
-    _ppm_write = _PPM.write_payoff_paradox_proposal
+    _ppm_write = None  # Phase 0 safety: dashboard must not write strategy state
     _LOG.debug("payoff_paradox_meter imported at module level")
 except Exception as _ppm_import_err:
     _ppm_compute = None
@@ -1047,17 +1047,9 @@ def _build_profit_quality(
         # of dashboard/server.py so SSE ticks don't re-parse the import.
         _meter_floor = _resolve_current_min_r_floor()
         _meter = _ppm_compute(enriched, current_floor=_meter_floor)
-        try:
-            _ppm_written = _ppm_write(
-                _meter, current_floor=_meter_floor,
-            )
-            _meter["proposal_written"] = bool(_ppm_written)
-            _meter["proposal_id"] = (
-                (_ppm_written or {}).get("proposal_id") if isinstance(_ppm_written, dict) else None
-            )
-        except Exception as _proposal_err:
-            _meter["proposal_written"] = False
-            _meter["proposal_error"] = str(_proposal_err)[:120]
+        # Phase 0 safety: dashboard is read-only regarding strategy state.
+        _meter["proposal_written"] = False
+        _meter["proposal_note"] = "Proposal writes deferred to learning pipeline (Phase 0 safety)"
         _meter["current_floor_resolved"] = _meter_floor
 
         # Stoploss hit rate KPI — pct of trades that exited via stop_loss
@@ -3770,6 +3762,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             }, 403)
             return
         if path == "/api/reset-session":
+            if not _mutation_request_allowed(self):
+                self._send_json({"ok": False, "message": "Session reset requires a same-origin dashboard request"}, 403)
+                return
             try:
                 from scripts.reset_session_memory import reset_session_memory
 
@@ -3810,8 +3805,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/unblock-trades":
+            # Phase 0 safety: UNBLOCK ALL TRADES removed.
+            self._send_json({"ok": False, "message": "UNBLOCK ALL TRADES removed per Phase 0 safety. Clear each gate individually."}, 403)
+            return
+        elif path == "/api/_disabled_unblock":
             try:
-                # Clear all blocking gates so trades can flow immediately:
+                # DISABLED
                 # 1. Kill switch -> off (trading enabled)
                 current_kill = read_json_state("kill_switch.json", default={}) or {}
                 write_json_state("kill_switch.json", {
@@ -3853,10 +3852,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/fast-mode":
+            # Phase 0 safety: only off/observe allowed from dashboard.
             try:
                 from core.fast_mode_runtime import (
-                    FAST_MODE_PRESETS,
-                    apply_overrides,
                     apply_preset,
                     clear_runtime,
                     read_runtime,
@@ -3867,32 +3865,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if action == "clear":
                     clear_runtime()
                     doc = read_runtime()
-                elif action == "overrides":
-                    overrides = dict(body.get("overrides") or {})
-                    if not overrides:
-                        self._send_json({"ok": False, "message": "overrides required"}, 400)
-                        return
-                    doc = apply_overrides(overrides, preset_id=body.get("preset"))
                 else:
                     preset = str(body.get("preset") or "").lower()
-                    if preset not in FAST_MODE_PRESETS:
+                    if preset not in {"off", "observe"}:
                         self._send_json({
                             "ok": False,
-                            "message": f"Unknown preset. Choose: {', '.join(FAST_MODE_PRESETS)}",
-                        }, 400)
+                            "message": "Phase 0 safety: only 'off' and 'observe' presets available from dashboard. Live-capable presets require out-of-band deployment change.",
+                        }, 403)
                         return
                     doc = apply_preset(preset, extra=body.get("extra"))
                 self._send_json({
                     "ok": True,
                     "preset": doc.get("preset"),
                     "label": doc.get("label"),
-                    "overrides": doc.get("overrides"),
                     "timestamp": doc.get("timestamp"),
-                    "note": "Tick interval changes need a bot restart to take effect on the supervisor.",
+                    "note": "Phase 0: only off/observe allowed. Safe/aggressive/sprint require deployment change.",
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/replay":
+            if not _mutation_request_allowed(self):
+                self._send_json({"ok": False, "message": "Replay requires a same-origin dashboard request"}, 403)
+                return
             body = self._read_json_body()
             config = load_config()
             symbol = body.get("symbol") or config.get("replay", {}).get("symbol")
@@ -3964,6 +3958,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/reset_memory":
+            if not _mutation_request_allowed(self):
+                self._send_json({"ok": False, "message": "Memory reset requires a same-origin dashboard request"}, 403)
+                return
             try:
                 # Reset ALL session figures shown on the dashboard, not just the
                 # learning tiles. Previously this only cleared 3 learning files, so
@@ -4115,15 +4112,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def run(host: str | None = None, port: int | None = None) -> None:
-    # Bind 0.0.0.0 by default so the dashboard is reachable over Tailscale/LAN.
-    # The prior 127.0.0.1-only default meant ONLY localhost-on-the-server could
-    # load it; phones over Tailscale hit the slow in-process bot on 0.0.0.0:8080
+    # Phase 0 safety: bind 127.0.0.1 by default. Remote access requires explicit DASH_HOST=0.0.0.0.
+    # Set DASH_HOST=0.0.0.0 to expose over Tailscale/LAN (at your own risk).
+    # The localhost default is intentionally restrictive per Phase 0 safety review.
     # instead and hung on the loading screen. Override via DASH_HOST/DASH_PORT
     # env or --host/--port CLI.
     import os as _os
 
     if host is None:
-        host = _os.environ.get("DASH_HOST", "0.0.0.0")
+        host = _os.environ.get("DASH_HOST", "127.0.0.1")
     if port is None:
         port = int(_os.environ.get("DASH_PORT", "8082"))
     # Start the Profit Quality SSE broadcaster daemon once at server boot so a
