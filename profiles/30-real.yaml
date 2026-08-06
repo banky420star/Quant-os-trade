@@ -147,33 +147,14 @@ culturing:
   promote_min_win_rate_pct: 0
   promote_min_expectancy_r: 0.03
 adaptation:
-  enabled: true
-  calibrate_be_trail: true
+  enabled: false
+  calibrate_be_trail: false
+  calibrate_sltp: false
   rebuild_trade_log: true
-  refresh_positive_evolution: true
-  auto_evolve_cells: true
-  evolve_symbols:
-  - XAUUSDm
-  - USOILm
-  - UK100m
-  seed_edge_cells:
-  - symbol: XAUUSDm
-    setup: pullback
-    sessions:
-    - rollover
-    - tokyo
-  - symbol: USOILm
-    setup: pullback
-    sessions:
-    - tokyo
-  - symbol: UK100m
-    setup: trend_continuation
-    sessions:
-    - london_open
-  - symbol: UK100m
-    setup: pullback
-    sessions:
-    - london_open
+  refresh_positive_evolution: false
+  auto_evolve_cells: false
+  evolve_symbols: []
+  seed_edge_cells: []
 quant:
   positive_evolution_enabled: true
   positive_evolution:
@@ -252,7 +233,7 @@ filters:
   - '14:30'
   - '15:00'
 fast_mode:
-  enabled: true
+  enabled: false
   live_enabled: false
   tick_interval_ms: 1000
   symbols:
@@ -293,6 +274,13 @@ evaluation:
 execution:
   live_trading_enabled: true
   mt5_trading_enabled: true
+  # Hard gate: fast_mode_runtime.json presets cannot override these.
+  fast_mode_enabled: false
+  allow_fast_mode_runtime_enable: false
+  allow_fast_mode_runtime_live: false
+
+learning:
+  mode: observe_only
 strategy_arena:
   enabled: false
 research:

@@ -13,29 +13,62 @@ from core.microstructure import price_in_zone, spread_ok, tick_momentum_score
 @pytest.fixture
 def fast_config(monkeypatch):
     monkeypatch.setenv("MT5_QUANT_PROFILE", "30-real")
+    # Block runtime overrides from disk during tests.
+    monkeypatch.setattr(
+        "core.fast_mode_runtime.read_json_state",
+        lambda name, default=None: (
+            {}
+            if name == "fast_mode_runtime.json"
+            else default
+        ),
+    )
     from core.utils import load_config
     return load_config()
 
 
 @pytest.fixture
 def fast_live_config(fast_config):
-    """30-real ships live_enabled: false (observe-only on the real account);
-    force the live path on so the live-blocking mechanisms stay covered."""
+    """30-real ships with execution.fast_mode_enabled=false (hard gate)
+    and fast_mode.live_enabled=false (observe-only on the real account).
+    Force the live path on so the live-blocking mechanisms stay covered."""
     import copy
     cfg = copy.deepcopy(fast_config)
+    # Lift the hard gate so fast_mode_settings proceeds to merging.
+    cfg.setdefault("execution", {})["fast_mode_enabled"] = True
+    # Enable fast mode and allow runtime live override.
+    cfg.setdefault("fast_mode", {})["enabled"] = True
     cfg.setdefault("fast_mode", {})["live_enabled"] = True
     return cfg
 
 
-def test_fast_mode_enabled_on_micro_profile(fast_config):
-    assert fast_mode_enabled(fast_config) is True
-    # 30-real deliberately keeps the fast layer observe-only on the real
-    # account (profiles/30-real.yaml: live_enabled: false).
+@pytest.fixture
+def fast_observe_config(fast_config):
+    """30-real has fast_mode fully disabled by the hard gate.
+    This fixture re-enables observe-only mode for tests that need it."""
+    import copy
+    cfg = copy.deepcopy(fast_config)
+    # Lift the hard gate.
+    cfg.setdefault("execution", {})["fast_mode_enabled"] = True
+    # Enable fast mode collection but keep live execution locked.
+    cfg.setdefault("fast_mode", {})["enabled"] = True
+    cfg.setdefault("fast_mode", {})["live_enabled"] = False
+    return cfg
+
+
+def test_fast_mode_disabled_on_30_real(fast_config):
+    """30-real hard-disables fast mode via execution.fast_mode_enabled=false."""
+    assert fast_mode_enabled(fast_config) is False
     assert fast_mode_live(fast_config) is False
     syms = fast_mode_symbols(fast_config)
+    assert syms == []
+
+
+def test_fast_mode_observe_on_observe_config(fast_observe_config):
+    """With hard gate lifted and live_enabled=false, observe mode works."""
+    assert fast_mode_enabled(fast_observe_config) is True
+    assert fast_mode_live(fast_observe_config) is False
+    syms = fast_mode_symbols(fast_observe_config)
     assert "XAUUSDm" in syms
-    assert "USOILm" not in syms
-    assert "US500m" not in syms
 
 
 def test_spread_ok_blocks_spike():
@@ -157,6 +190,108 @@ def test_runtime_preset_overrides_profile(fast_config, tmp_path, monkeypatch):
     assert fast_mode_live(fast_config) is False
 
 
+def test_runtime_live_preset_cannot_override_profile_lock(
+    fast_config, monkeypatch,
+):
+    """An aggressive/safe/sprint runtime preset must NOT re-enable live
+    execution when the profile locks fast_mode.live_enabled=false and
+    does not opt into allow_fast_mode_runtime_live."""
+    from core.fast_mode import fast_mode_live, fast_mode_settings
+
+    monkeypatch.setattr(
+        "core.fast_mode_runtime.read_json_state",
+        lambda name, default=None: (
+            {
+                "preset": "aggressive",
+                "overrides": {
+                    "enabled": True,
+                    "live_enabled": True,
+                },
+            }
+            if name == "fast_mode_runtime.json"
+            else default
+        ),
+    )
+
+    settings = fast_mode_settings(fast_config)
+    assert settings.get("live_enabled") is False, (
+        "Runtime aggressive preset MUST NOT override profile live_enabled=false"
+    )
+    assert fast_mode_live(fast_config) is False, (
+        "fast_mode_live must stay False when profile locks live_enabled"
+    )
+
+
+def test_runtime_preset_can_enable_when_profile_opts_in(fast_config, monkeypatch):
+    """When the profile sets allow_fast_mode_runtime_live=true, a runtime
+    preset MAY promote live_enabled back to true."""
+    import copy
+    from core.fast_mode import fast_mode_live, fast_mode_settings
+
+    cfg = copy.deepcopy(fast_config)
+    # Lift the hard gate so fast_mode_settings proceeds past the early return.
+    cfg.setdefault("execution", {})["fast_mode_enabled"] = True
+    cfg.setdefault("execution", {})["allow_fast_mode_runtime_enable"] = True
+    cfg.setdefault("execution", {})["allow_fast_mode_runtime_live"] = True
+    # Profile says enabled=false, live_enabled=false but opts into runtime override.
+    cfg.setdefault("fast_mode", {})["enabled"] = False
+    cfg.setdefault("fast_mode", {})["live_enabled"] = False
+
+    monkeypatch.setattr(
+        "core.fast_mode_runtime.read_json_state",
+        lambda name, default=None: (
+            {
+                "preset": "safe",
+                "overrides": {
+                    "enabled": True,
+                    "live_enabled": True,
+                },
+            }
+            if name == "fast_mode_runtime.json"
+            else default
+        ),
+    )
+
+    settings = fast_mode_settings(cfg)
+    assert settings.get("live_enabled") is True, (
+        "Runtime preset SHOULD promote live_enabled when profile opts in"
+    )
+    assert fast_mode_live(cfg) is True
+
+
+def test_hard_gate_bypasses_runtime_when_fast_mode_enabled_false(
+    fast_config, monkeypatch,
+):
+    """execution.fast_mode_enabled=false must return disabled even when
+    runtime says aggressive + live."""
+    import copy
+    from core.fast_mode import fast_mode_live, fast_mode_settings
+
+    cfg = copy.deepcopy(fast_config)
+    cfg.setdefault("execution", {})["fast_mode_enabled"] = False
+
+    monkeypatch.setattr(
+        "core.fast_mode_runtime.read_json_state",
+        lambda name, default=None: (
+            {
+                "preset": "aggressive",
+                "overrides": {
+                    "enabled": True,
+                    "live_enabled": True,
+                },
+            }
+            if name == "fast_mode_runtime.json"
+            else default
+        ),
+    )
+
+    settings = fast_mode_settings(cfg)
+    assert settings["enabled"] is False
+    assert settings["live_enabled"] is False
+    assert settings["symbols"] == []
+    assert fast_mode_live(cfg) is False
+
+
 def test_apply_preset_observe(tmp_path, monkeypatch):
     from core import fast_mode_runtime
 
@@ -230,12 +365,12 @@ def test_evaluate_entry_blocked_by_kill_switch(fast_config, monkeypatch):
     )
     assert dec["action"] == "blocked"
 
-def test_refresh_cache_from_approved_unwraps_verifier_record(fast_config, tmp_path, monkeypatch):
+def test_refresh_cache_from_approved_unwraps_verifier_record(fast_observe_config, tmp_path, monkeypatch):
     monkeypatch.setattr("core.utils.STATE_DIR", tmp_path)
     tmp_path.mkdir(parents=True, exist_ok=True)
-    cfg = dict(fast_config)
+    cfg = dict(fast_observe_config)
     cfg["state_store"] = {"enabled": False}
-    cfg["fast_mode"] = dict(fast_config.get("fast_mode") or {})
+    cfg["fast_mode"] = dict(fast_observe_config.get("fast_mode") or {})
     cfg["fast_mode"]["require_evaluated_signal"] = False
 
     (tmp_path / "features.json").write_text(
@@ -289,11 +424,11 @@ def test_fast_live_blocked_entry_does_not_increment_trade_counter(fast_live_conf
     assert state.get("trades_hour", {}) == {}
 
 
-def test_fast_guard_can_run_trail_only(fast_config):
+def test_fast_guard_can_run_trail_only(fast_observe_config):
     from loops.fast_position_guard import _guard_actions
 
-    cfg = dict(fast_config)
-    cfg["fast_mode"] = dict(fast_config.get("fast_mode") or {})
+    cfg = dict(fast_observe_config)
+    cfg["fast_mode"] = dict(fast_observe_config.get("fast_mode") or {})
     cfg["fast_mode"]["break_even_fast"] = {"enabled": False, "trigger_r": 0.25}
     cfg["fast_mode"]["trail_fast"] = {"enabled": True, "start_r": 0.45, "atr_mult": 0.35}
     cfg["fast_mode"]["emergency_exit"] = {"enabled": False}
@@ -308,11 +443,11 @@ def test_fast_guard_can_run_trail_only(fast_config):
     assert "would_move_be" not in names
 
 
-def test_fast_guard_emergency_uses_feature_price(fast_config):
+def test_fast_guard_emergency_uses_feature_price(fast_observe_config):
     from loops.fast_position_guard import _guard_actions
 
-    cfg = dict(fast_config)
-    cfg["fast_mode"] = dict(fast_config.get("fast_mode") or {})
+    cfg = dict(fast_observe_config)
+    cfg["fast_mode"] = dict(fast_observe_config.get("fast_mode") or {})
     cfg["fast_mode"]["break_even_fast"] = {"enabled": False}
     cfg["fast_mode"]["trail_fast"] = {"enabled": False}
     cfg["fast_mode"]["emergency_exit"] = {"enabled": True, "adverse_tick_move_atr": 0.25}
@@ -404,7 +539,7 @@ def test_mt5_pending_limit_record_counts_as_submitted():
 
 
 
-def test_fast_entry_respects_max_trades_per_10min(fast_config, monkeypatch):
+def test_fast_entry_respects_max_trades_per_10min(fast_observe_config, monkeypatch):
     """Sprint preset's 10-minute trade cap must block a third entry in the window."""
     from core.fast_entry_executor import evaluate_entry
 
@@ -420,8 +555,8 @@ def test_fast_entry_respects_max_trades_per_10min(fast_config, monkeypatch):
             else default
         ),
     )
-    cfg = dict(fast_config)
-    cfg["fast_mode"] = dict(fast_config.get("fast_mode") or {})
+    cfg = dict(fast_observe_config)
+    cfg["fast_mode"] = dict(fast_observe_config.get("fast_mode") or {})
     cfg["fast_mode"]["max_trades_per_10min"] = 2
     cfg["fast_mode"]["max_trades_per_symbol_per_hour"] = 99
     cfg["fast_mode"]["max_consecutive_losses_per_symbol"] = 99

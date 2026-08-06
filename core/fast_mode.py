@@ -9,12 +9,43 @@ from core.micro_profile import micro_profile_enabled, micro_settings
 
 
 def fast_mode_settings(config: dict[str, Any]) -> dict[str, Any]:
-    # Data-lab's fixed-exit experiment has a single order producer. Do not let
-    # fast_mode_runtime.json or a global fast-mode preset re-enable the
-    # secondary live entry/SL-management service for this profile.
-    if bool(config.get("execution", {}).get("fast_mode_enabled", True)) is False:
+    """Resolve effective fast_mode with runtime overrides, gated by profile locks.
+
+    The profile-level fast_mode block is authoritative for 'enabled' and
+    'live_enabled'.  A fast_mode_runtime.json preset may OBSERVE a disabled
+    profile (collect signals without acting) but may NEVER elevate a profile
+    that explicitly set enabled=false or live_enabled=false back to true
+    unless the profile also sets the opt-in flags:
+
+        execution:
+          allow_fast_mode_runtime_enable: true
+          allow_fast_mode_runtime_live: true
+
+    The emergency gate execution.fast_mode_enabled=false still bypasses all
+    merging and returns disabled immediately.
+    """
+    execution = config.get("execution") or {}
+
+    # Hard gate: execution.fast_mode_enabled=False disables everything.
+    if execution.get("fast_mode_enabled") is False:
         return {"enabled": False, "live_enabled": False, "symbols": []}
-    return merge_fast_mode(config.get("fast_mode") or {})
+
+    base = dict(config.get("fast_mode") or {})
+    merged = merge_fast_mode(base)
+
+    # Profile-level false is sticky — runtime can observe but not re-enable
+    # unless the profile explicitly opts in.
+    allow_enable = bool(execution.get("allow_fast_mode_runtime_enable", False))
+    allow_live = bool(execution.get("allow_fast_mode_runtime_live", False))
+
+    if base.get("enabled") is False and not allow_enable:
+        merged["enabled"] = False
+        merged["live_enabled"] = False  # can't be live if not enabled
+
+    if base.get("live_enabled") is False and not allow_live:
+        merged["live_enabled"] = False
+
+    return merged
 
 
 def fast_mode_enabled(config: dict[str, Any]) -> bool:
