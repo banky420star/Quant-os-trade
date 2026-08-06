@@ -96,7 +96,13 @@ def _diversification_enabled(config) -> bool:
 
 
 def run() -> dict | None:
-    """Create evidence-based candidate signals — no verification or execution."""
+    """
+    Generate, refine, rank, and persist evidence-based candidate trading signals.
+    
+    Returns:
+    	dict | None: The generated signal output, or `None` when required market
+    	data files are unavailable.
+    """
     config = load_config()
     logger = setup_logger("signal_loop", "signal_loop.log")
     logger.info("=== Decision Loop starting (evidence-first) ===")
@@ -144,8 +150,8 @@ def run() -> dict | None:
     try:
         dec = engine.generate_candidates(features, context_data, edge_scores)
         for c in dec:
-            annotate_candidate_for_risk_parity(c, config)
             c.setdefault("source", "decision_engine")
+            annotate_candidate_for_risk_parity(c, config)
         raw_candidates.extend(dec)
     except Exception as exc:
         logger.warning("DecisionEngine stream failed: %s", exc)
@@ -157,8 +163,8 @@ def run() -> dict | None:
         try:
             bb = generate_bankbot_signals(config, logger=logger)
             for c in bb:
-                annotate_candidate_for_risk_parity(c, config)
                 c.setdefault("source", "bankbot")
+                annotate_candidate_for_risk_parity(c, config)
             if bb:
                 logger.info("Bankbot added %d candidate signals", len(bb))
             raw_candidates.extend(bb)

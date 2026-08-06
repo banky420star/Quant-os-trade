@@ -220,7 +220,13 @@ def test_session_scorer_boosts_expanded_symbols():
 
 def test_strategy_ranker_allow_setup(config):
     config["quant"]["strategy_ranking_enabled"] = True
+    config["signals"]["symbol_rules"] = {}
     ranker = StrategyRanker(config)
+    # Mock rankings so the test doesn't depend on real edge-database state.
+    ranker.rank_for_symbol = lambda *args, **kwargs: [
+        {"setup_type": "trend_continuation", "score": 72.7, "win_rate_pct": 72.7,
+         "total": 44, "rank": 1, "insufficient_data": False},
+    ]
     ctx = {"session": "London", "market_regime": {"primary": "strong_trend"}}
     allowed, info = ranker.allow_setup("trend_continuation", "XAUUSDm", ctx, {})
     assert allowed is True
@@ -345,6 +351,7 @@ def test_ranking_flex_strict_when_leader_is_strong(config):
     config["quant"]["ranking_flex_min_samples"] = 10
     # Keep the strict branch independent of profile-specific symbol overrides.
     config["quant"]["per_symbol"]["XAUUSDm"] = {}
+    config["signals"]["symbol_rules"] = {}
 
     ranker = StrategyRanker(config)
     rankings = [
