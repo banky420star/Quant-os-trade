@@ -1,7 +1,7 @@
 """Label construction for supervised rankers.
 
-Labels are forward-looking and must be computed with point-in-time
-rigor.  No future data may leak into feature computation.
+Labels are forward-looking and must be computed with point-in-time rigor. No
+future data may leak into feature computation.
 """
 
 from __future__ import annotations
@@ -16,17 +16,7 @@ def future_vol_adjusted_return(
     horizon: int = 5,
     vol_lookback: int = 20,
 ) -> pd.Series:
-    """
-    Compute a future return adjusted by annualized rolling volatility.
-    
-    Parameters:
-        close (pd.Series): Closing prices.
-        horizon (int): Number of periods used to measure the future return.
-        vol_lookback (int): Number of periods used to estimate historical volatility.
-    
-    Returns:
-        pd.Series: Future return divided by annualized volatility, with zero-volatility values represented as missing.
-    """
+    """Compute future return divided by annualized historical volatility."""
     ret = close.pct_change(periods=horizon).shift(-horizon)
     vol = (
         close.pct_change()
@@ -47,42 +37,43 @@ def prob_target_before_stop(
     lookahead: int = 20,
     multiplier: float = 1.5,
 ) -> pd.Series:
-    """
-    Determine whether an ATR-based profit target or stop is reached first within the lookahead window.
-    
-    Parameters:
-    	high (pd.Series): High prices used to evaluate target and stop hits.
-    	low (pd.Series): Low prices used to evaluate target and stop hits.
-    	close (pd.Series): Closing prices used as the default entry price.
-    	entry (float | None): Fixed entry price applied to each observation; when omitted, uses each observation's closing price.
-    	lookahead (int): Number of future bars to inspect.
-    	multiplier (float): ATR multiplier used to set the stop distance.
-    
-    Returns:
-    	pd.Series: A series containing `1.0` when the target is reached first, `0.0` when the stop is reached first, and `NaN` when neither is reached or insufficient data is available.
+    """Label whether a long-only target is reached before its stop.
+
+    The target and stop are inspected over the next ``lookahead`` bars. When a
+    bar touches both levels, the stop wins, which is the conservative intrabar
+    tie-break. The result is ``1.0`` for target first, ``0.0`` for stop first,
+    and missing when neither level is reached or the inputs are incomplete.
     """
     atr = (high - low).rolling(14, min_periods=5).mean()
-    stop_dist = atr * multiplier
-    target_dist = atr * (multiplier + 1.0)  # asymmetric RR
+    stop_dist = (atr * multiplier).to_numpy(dtype=float)
+    target_dist = (atr * (multiplier + 1.0)).to_numpy(dtype=float)
+    high_values = high.to_numpy(dtype=float)
+    low_values = low.to_numpy(dtype=float)
+    close_values = close.to_numpy(dtype=float)
+    result_values = np.full(len(close), np.nan, dtype=float)
 
-    result = pd.Series(np.nan, index=close.index)
+    fixed_entry = float(entry) if entry is not None else None
+    for i in range(max(0, len(close) - lookahead)):
+        entry_price = fixed_entry if fixed_entry is not None else close_values[i]
+        if not (
+            np.isfinite(entry_price)
+            and np.isfinite(stop_dist[i])
+            and np.isfinite(target_dist[i])
+        ):
+            continue
 
-    for i in range(len(close) - lookahead):
-        entry_price = entry or float(close.iloc[i])
-        stop_level = entry_price - stop_dist.iloc[i]
-        target_level = entry_price + target_dist.iloc[i]
-
-        for j in range(1, lookahead + 1):
-            if i + j >= len(high):
+        stop_level = entry_price - stop_dist[i]
+        target_level = entry_price + target_dist[i]
+        end = min(i + lookahead + 1, len(close))
+        for j in range(i + 1, end):
+            if np.isfinite(low_values[j]) and low_values[j] <= stop_level:
+                result_values[i] = 0.0
                 break
-            if low.iloc[i + j] <= stop_level:
-                result.iloc[i] = 0.0
-                break
-            if high.iloc[i + j] >= target_level:
-                result.iloc[i] = 1.0
+            if np.isfinite(high_values[j]) and high_values[j] >= target_level:
+                result_values[i] = 1.0
                 break
 
-    return result
+    return pd.Series(result_values, index=close.index)
 
 
 def expected_realized_r(
@@ -93,36 +84,35 @@ def expected_realized_r(
     lookahead: int = 20,
     stop_atr_mult: float = 2.0,
 ) -> pd.Series:
-    """
-    Calculate future realized return in risk units using an ATR-based stop.
-    
-    Parameters:
-        lookahead (int): Number of periods to evaluate before exiting at the future close.
-        stop_atr_mult (float): ATR multiplier used to determine the stop distance.
-    
-    Returns:
-        pd.Series: Realized return divided by initial risk, with missing values where
-            risk is invalid or the full lookahead period is unavailable.
+    """Calculate long-only realized return in initial-risk units.
+
+    A position exits at its ATR-based stop when touched, otherwise at the close
+    after ``lookahead`` bars. The ``high`` series participates in the ATR range
+    estimate; no profit target is applied by this label.
     """
     atr = (high - low).rolling(14, min_periods=5).mean()
-    stop_dist = atr * stop_atr_mult
-    result = pd.Series(np.nan, index=close.index)
+    stop_dist = (atr * stop_atr_mult).to_numpy(dtype=float)
+    close_values = close.to_numpy(dtype=float)
+    low_values = low.to_numpy(dtype=float)
+    result_values = np.full(len(close), np.nan, dtype=float)
 
-    for i in range(len(close) - lookahead):
-        entry_price = float(close.iloc[i])
-        stop_level = entry_price - stop_dist.iloc[i]
-        risk = entry_price - stop_level
-        if risk <= 0:
+    for i in range(max(0, len(close) - lookahead)):
+        entry_price = close_values[i]
+        distance = stop_dist[i]
+        if not (np.isfinite(entry_price) and np.isfinite(distance) and distance > 0):
             continue
 
-        exit_price = float(close.iloc[i + lookahead])
-        for j in range(1, lookahead + 1):
-            if i + j >= len(low):
-                break
-            if low.iloc[i + j] <= stop_level:
+        stop_level = entry_price - distance
+        exit_price = close_values[i + lookahead]
+        if not np.isfinite(exit_price):
+            continue
+
+        end = min(i + lookahead + 1, len(close))
+        for j in range(i + 1, end):
+            if np.isfinite(low_values[j]) and low_values[j] <= stop_level:
                 exit_price = stop_level
                 break
 
-        result.iloc[i] = (exit_price - entry_price) / risk
+        result_values[i] = (exit_price - entry_price) / distance
 
-    return result
+    return pd.Series(result_values, index=close.index)
