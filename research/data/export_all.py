@@ -64,7 +64,15 @@ def _hash_file(path: Path) -> str:
 
 
 def _preview_parquet(path: Path) -> dict[str, Any] | None:
-    """Extract per-file metadata: rows, start, end, columns, dtypes."""
+    """
+    Extract metadata from a Parquet history file.
+    
+    Parameters:
+        path (Path): Parquet file whose metadata should be inspected.
+    
+    Returns:
+        dict[str, Any] | None: File metadata including row count, column names, UTC date range, and estimated bars per day; `None` if the file is missing or unreadable.
+    """
     if not path.exists():
         return None
     try:
@@ -87,6 +95,14 @@ def _preview_parquet(path: Path) -> dict[str, Any] | None:
 
 
 def _all_same(items: list[Any]) -> bool:
+    """Determine whether all values in a list are identical.
+    
+    Parameters:
+    	items (list[Any]): Values to compare.
+    
+    Returns:
+    	bool: `true` if the list contains at most one distinct value, `false` otherwise.
+    """
     return len(set(items)) <= 1
 
 
@@ -97,7 +113,16 @@ def export_parquet(
     symbols: list[str],
     timeframes: list[str],
 ) -> dict[str, Path]:
-    """Flat-copy Parquet files to the export directory."""
+    """
+    Copy available Parquet history files to the export directory.
+    
+    Parameters:
+    	symbols (list[str]): Symbols whose history files should be exported.
+    	timeframes (list[str]): Timeframes whose history files should be exported.
+    
+    Returns:
+    	dict[str, Path]: Mapping of symbol-timeframe keys to copied export paths.
+    """
     PARQUET_OUT.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
 
@@ -117,7 +142,16 @@ def export_csv(
     symbols: list[str],
     timeframes: list[str],
 ) -> dict[str, Path]:
-    """Export Parquet to CSV (includes time index)."""
+    """
+    Export available history files as CSV files with their time index included.
+    
+    Parameters:
+    	symbols (list[str]): Symbols whose history files should be exported.
+    	timeframes (list[str]): Timeframes whose history files should be exported.
+    
+    Returns:
+    	dict[str, Path]: Mapping of symbol-timeframe identifiers to written CSV paths.
+    """
     CSV_OUT.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
 
@@ -140,7 +174,18 @@ def build_manifest(
     symbols: list[str],
     timeframes: list[str],
 ) -> dict[str, Any]:
-    """Build a comprehensive manifest with per-file metadata and summaries."""
+    """
+    Build a manifest containing exported file metadata, aggregate summaries, and cross-symbol consistency information.
+    
+    Parameters:
+        written_parquet (dict[str, Path]): Exported Parquet files keyed by symbol and timeframe.
+        written_csv (dict[str, Path]): Exported CSV files keyed by symbol and timeframe.
+        symbols (list[str]): Symbols included in the manifest.
+        timeframes (list[str]): Timeframes included in the manifest.
+    
+    Returns:
+        dict[str, Any]: Manifest containing export details, file metadata, row summaries, date ranges, and consistency statistics.
+    """
     files: dict[str, Any] = {}
     per_symbol: dict[str, Any] = {}
     per_timeframe: dict[str, Any] = {}
@@ -244,7 +289,18 @@ def export_all(
     parquet: bool = True,
     csv: bool = True,
 ) -> Path:
-    """Run the full export pipeline.  Returns path to ``manifest.json``."""
+    """
+    Run the complete history export pipeline and write the export manifest.
+    
+    Parameters:
+        symbols (list[str] | None): Symbols to export; all discovered symbols when omitted.
+        timeframes (list[str] | None): Timeframes to export; all discovered timeframes when omitted.
+        parquet (bool): Whether to export Parquet files.
+        csv (bool): Whether to export CSV files.
+    
+    Returns:
+        Path: Path to the generated ``manifest.json`` file.
+    """
     symbols = symbols or ALL_SYMBOLS
     timeframes = timeframes or ALL_TIMEFRAMES
 
@@ -285,6 +341,11 @@ def export_all(
 
 
 def main() -> None:
+    """
+    Run the command-line export pipeline using the selected symbols, timeframes, and output formats.
+    
+    Command-line options control symbol and timeframe filters and whether Parquet or CSV files are exported.
+    """
     parser = argparse.ArgumentParser(
         description="Export MT5 history to research/data/exports/",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -46,10 +46,17 @@ def parquet_path(symbol: str, timeframe: str) -> Path:
 
 
 def read_parquet(symbol: str, timeframe: str) -> pd.DataFrame:
-    """Read history for one symbol/timeframe into a DataFrame.
-
-    Columns expected: ``time``, ``open``, ``high``, ``low``, ``close``,
-    ``tick_volume``, ``spread``, ``real_volume``.
+    """
+    Load historical data for a symbol and timeframe.
+    
+    The ``time`` column is converted to UTC timestamps, set as the index, and
+    the rows are ordered chronologically.
+    
+    Returns:
+    	pd.DataFrame: The historical market data indexed by UTC timestamps.
+    
+    Raises:
+    	FileNotFoundError: If the corresponding Parquet file does not exist.
     """
     path = parquet_path(symbol, timeframe)
     if not path.exists():
@@ -82,7 +89,12 @@ def available_timeframes(symbol: str) -> list[str]:
 
 
 def symbol_file_hash(symbol: str, timeframe: str) -> str:
-    """SHA-256 of the Parquet file for reproducibility tracking."""
+    """
+    Compute the SHA-256 hash of a symbol's Parquet history file.
+    
+    Returns:
+        The hexadecimal SHA-256 digest, or an empty string if the file is missing.
+    """
     path = parquet_path(symbol, timeframe)
     if not path.exists():
         return ""
@@ -93,12 +105,16 @@ def build_catalog(
     symbols: list[str] | None = None,
     timeframes: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build (or rebuild) the data catalog and persist to ``data/catalog.json``.
-
-    Returns a dict keyed by symbol, each containing:
-        - ``timeframes``: dict of timeframe -> {rows, start, end, hash}
-        - ``earliest_common``: latest start across all timeframes
-        - ``latest_common``: earliest end across all timeframes
+    """
+    Builds a point-in-time catalog of available market history and saves it to the catalog path.
+    
+    Parameters:
+        symbols (list[str] | None): Symbols to include; defaults to available symbols.
+        timeframes (list[str] | None): Timeframes to inspect; defaults to all supported timeframes.
+    
+    Returns:
+        dict[str, Any]: Catalog containing metadata for each symbol, including timeframe coverage,
+        row counts, file hashes, and the common date range.
     """
     symbols = symbols or available_symbols()
     timeframes = timeframes or TIMEFRAMES
@@ -151,11 +167,17 @@ def train_test_split_date(
     train_cutoff: str,
     test_start: str | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-    """Split history into train / test by date.
-
-    ``train_cutoff`` is ISO date string (e.g. ``\"2026-07-31\"``).
-    ``test_start`` optionally adds a gap between train and test
-    (temporal buffer for walk-forward purging).
+    """
+    Split historical data into training and test datasets using UTC date boundaries.
+    
+    Parameters:
+    	symbols (list[str]): Symbols whose histories should be split.
+    	timeframes (list[str]): Timeframes whose histories should be split.
+    	train_cutoff (str): ISO date marking the end of the training period.
+    	test_start (str | None): Optional ISO date marking the start of the test period.
+    
+    Returns:
+    	tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]: Training and test datasets keyed by symbol and timeframe. Missing histories are omitted.
     """
     cutoff = pd.Timestamp(train_cutoff, tz="utc")
     gap_start = pd.Timestamp(test_start, tz="utc") if test_start else cutoff

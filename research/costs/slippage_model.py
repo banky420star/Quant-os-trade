@@ -12,16 +12,17 @@ def estimate_fill_drift(
     *,
     p95_only: bool = False,
 ) -> dict[str, float]:
-    """Estimate fill drift from a list of closed-trade records.
-
-    Each trade dict should contain:
-        - ``planned_entry`` (float)
-        - ``actual_fill`` (float or None)
-        - ``symbol`` (str)
-        - ``atr`` (float | None) — for R-relative drift
-
-    Returns ``{mean_drift, p95_drift, mean_drift_R, p95_drift_R}``
-    or a subset if *p95_only* is True.
+    """
+    Estimate absolute entry-price drift and optional ATR-relative drift from trade records.
+    
+    Parameters:
+        trades (list[dict[str, Any]]): Trade records containing planned and actual entry
+            prices, with an optional ATR value.
+        p95_only (bool): Whether to include only 95th-percentile metrics.
+    
+    Returns:
+        dict[str, float]: Mean and 95th-percentile drift metrics, including ATR-relative
+        values when applicable. Returns an empty dictionary when no valid drift exists.
     """
     drifts: list[float] = []
     drifts_r: list[float] = []

@@ -18,7 +18,16 @@ def compute_momentum_features(
     horizons: tuple[int, ...] = (5, 20, 60, 120),
     high_col: str = "high",
 ) -> pd.DataFrame:
-    """Return, distance-from-high, and rate-of-change for each horizon."""
+    """
+    Build momentum features for the requested lookback horizons.
+    
+    Parameters:
+    	horizons (tuple[int, ...]): Lookback periods used to calculate close-price returns.
+    	high_col (str): Column containing high prices used to calculate distance from the rolling 252-bar high.
+    
+    Returns:
+    	pd.DataFrame: An index-aligned DataFrame containing return columns for eligible horizons and the distance from the rolling 252-bar high.
+    """
     close = df["close"]
     high = df[high_col]
     out = pd.DataFrame(index=df.index)
@@ -40,7 +49,17 @@ def compute_risk_features(
     vol_lookback: int = 20,
     dd_lookback: int = 252,
 ) -> pd.DataFrame:
-    """Volatility, downside vol, drawdown, gap frequency."""
+    """
+    Compute volatility, downside volatility, drawdown, and price-gap frequency features.
+    
+    Parameters:
+        vol_lookback (int): Window used for volatility and gap-frequency calculations.
+        dd_lookback (int): Window used to determine the rolling maximum close for drawdown.
+    
+    Returns:
+        pd.DataFrame: DataFrame indexed like ``df`` with columns for volatility, downside
+            volatility, current drawdown, and gap frequency.
+    """
     close = df["close"]
     rets = close.pct_change()
     out = pd.DataFrame(index=df.index)
@@ -60,7 +79,12 @@ def compute_risk_features(
 # ── trend features ───────────────────────────────────────────────────────────
 
 def compute_trend_features(df: pd.DataFrame) -> pd.DataFrame:
-    """ADX proxy, MA slope, breakout distance."""
+    """
+    Compute moving-average trend and breakout-distance features from OHLC data.
+    
+    Returns:
+    	pd.DataFrame: Index-aligned features containing relative 50- and 200-period moving-average slopes, a trend-agreement indicator, and close distance from the 20-period high normalized by its high-low range.
+    """
     close = df["close"]
     high = df["high"]
     low = df["low"]
@@ -90,7 +114,18 @@ def compute_cost_features(
     spread_col: str = "spread",
     point: float | None = None,
 ) -> pd.DataFrame:
-    """Current spread vs ATR, session average spread, estimated fill drift."""
+    """
+    Compute trading-cost features from the high-low range and optional spread data.
+    
+    Parameters:
+        spread_col (str): Name of the column containing spread values.
+        point (float | None): Optional multiplier used to convert spread values into price units.
+    
+    Returns:
+        pd.DataFrame: An index-aligned DataFrame containing spread relative to the
+            14-period average high-low range and the 20-period average spread when
+            the spread column is available.
+    """
     out = pd.DataFrame(index=df.index)
     atr = (df["high"] - df["low"]).rolling(14, min_periods=5).mean()
 
@@ -110,7 +145,16 @@ def compute_cross_market_features(
     prices: dict[str, pd.DataFrame],
     target_symbol: str,
 ) -> pd.DataFrame:
-    """Rolling correlation, cluster momentum, USD proxy for *target_symbol*."""
+    """
+    Compute rolling close-return correlations between the target symbol and other symbols.
+    
+    Parameters:
+        prices (dict[str, pd.DataFrame]): Price data keyed by symbol.
+        target_symbol (str): Symbol whose correlations are computed.
+    
+    Returns:
+        pd.DataFrame: Target-indexed columns containing 20-period rolling correlations for symbols with at least 20 overlapping timestamps.
+    """
     target_close = prices[target_symbol]["close"]
     out = pd.DataFrame(index=target_close.index)
 
@@ -138,7 +182,20 @@ def feature_dataframe(
     with_trend: bool = True,
     with_cost: bool = True,
 ) -> pd.DataFrame:
-    """Compute the full feature matrix for a single symbol."""
+    """
+    Assemble the selected feature groups into a single feature matrix for one symbol.
+    
+    Parameters:
+        df (pd.DataFrame): Input market data indexed by timestamp.
+        with_momentum (bool): Whether to include momentum features.
+        with_risk (bool): Whether to include risk features.
+        with_trend (bool): Whether to include trend features.
+        with_cost (bool): Whether to include trading-cost features.
+    
+    Returns:
+        pd.DataFrame: Feature matrix aligned to the input index, or an empty
+            DataFrame with the same index when all feature groups are disabled.
+    """
     parts: list[pd.DataFrame] = []
 
     if with_momentum:

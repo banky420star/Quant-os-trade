@@ -12,10 +12,18 @@ def session_spread_profile(
     spread_col: str = "spread",
     session_col: str | None = None,
 ) -> dict[str, dict[str, float]]:
-    """Compute spread statistics grouped by session (or overall).
-
-    Returns ``{session: {mean, median, p95, p99}}``.
-    If *session_col* is None, returns a single ``\"global\"`` entry.
+    """
+    Compute spread statistics for each session or for the entire DataFrame.
+    
+    Parameters:
+        spread_col (str): Name of the column containing spread values.
+        session_col (str | None): Name of the column used to group statistics by
+            session. If omitted or unavailable, statistics are computed globally.
+    
+    Returns:
+        dict[str, dict[str, float]]: Mapping of session names to mean, median,
+            95th percentile, 99th percentile, and count of valid spread values.
+            Returns an empty dictionary when the spread column is unavailable.
     """
     if spread_col not in df.columns:
         return {}
@@ -47,9 +55,16 @@ def spread_atr_ratio(
     atr_period: int = 14,
     point: float | None = None,
 ) -> pd.Series:
-    """Return the ratio of spread to ATR as a time series.
-
-    Low ratio → spread is cheap relative to typical movement.
+    """
+    Calculate spread cost relative to rolling average true range.
+    
+    Parameters:
+        spread_col (str): Name of the spread column.
+        atr_period (int): Number of periods used to calculate the rolling average true range.
+        point (float | None): Optional multiplier for converting spread values to price units.
+    
+    Returns:
+        pd.Series: Spread-to-ATR ratios, with undefined values where the ATR is zero.
     """
     if spread_col not in df.columns:
         return pd.Series(dtype=float)

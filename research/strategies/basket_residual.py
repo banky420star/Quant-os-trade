@@ -19,11 +19,16 @@ def pca_residual(
     n_components: int = 2,
     window: int = 252,
 ) -> pd.DataFrame:
-    """Compute rolling PCA residuals for a basket of instruments.
-
-    *returns*: DataFrame with symbols as columns, DatetimeIndex.
-    Returns DataFrame with the same index containing residual columns
-    ``residual_{i}`` for each component.
+    """
+    Compute rolling principal-component scores for a basket of instrument returns.
+    
+    Parameters:
+    	returns (pd.DataFrame): Instrument returns indexed by date.
+    	n_components (int): Number of principal components to calculate.
+    	window (int): Number of observations in each rolling window.
+    
+    Returns:
+    	pd.DataFrame: Principal-component scores indexed like `returns`, with columns named `pc1_score`, `pc2_score`, and so on. Values remain missing where a valid score cannot be calculated.
     """
     if len(returns) < window:
         return pd.DataFrame(index=returns.index)
@@ -56,11 +61,18 @@ def basket_residual_zscore(
     entry_z: float = 2.0,
     exit_z: float = 0.5,
 ) -> pd.DataFrame:
-    """Compute basket-relative residual z-scores and entry/exit signals.
-
-    *target*: price series for the target instrument.
-    *basket*: DataFrame of basket constituents (columns).
-    Returns DataFrame with ``residual``, ``zscore``, ``signal``.
+    """
+    Compute basket-relative residual z-scores and trading signals.
+    
+    Parameters:
+        target (pd.Series): Price series for the target instrument.
+        basket (pd.DataFrame): Price series for the basket constituents.
+        window (int): Number of common return observations used for rolling estimation and z-score calculation.
+        entry_z (float): Absolute z-score threshold for entering a signal.
+        exit_z (float): Absolute z-score threshold below which the signal is neutral.
+    
+    Returns:
+        pd.DataFrame: DataFrame indexed by common return dates with `residual`, `zscore`, and `signal` columns. Signals are `-1` above `entry_z`, `1` below `-entry_z`, and `0` when the absolute z-score is below `exit_z`.
     """
     ret_target = target.pct_change().dropna()
     ret_basket = basket.pct_change().dropna()

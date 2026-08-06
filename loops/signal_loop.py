@@ -96,7 +96,13 @@ def _diversification_enabled(config) -> bool:
 
 
 def run() -> dict | None:
-    """Create evidence-based candidate signals — no verification or execution."""
+    """
+    Generate, refine, rank, and persist evidence-based candidate trading signals.
+    
+    Returns:
+    	dict | None: The generated signal output, or `None` when required market
+    	data files are unavailable.
+    """
     config = load_config()
     logger = setup_logger("signal_loop", "signal_loop.log")
     logger.info("=== Decision Loop starting (evidence-first) ===")

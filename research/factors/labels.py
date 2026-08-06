@@ -16,9 +16,16 @@ def future_vol_adjusted_return(
     horizon: int = 5,
     vol_lookback: int = 20,
 ) -> pd.Series:
-    """Future *horizon*-day return divided by *vol_lookback*-day annualised vol.
-
-    Shifts the vol forward so the label is known only after the horizon.
+    """
+    Compute a future return adjusted by annualized rolling volatility.
+    
+    Parameters:
+        close (pd.Series): Closing prices.
+        horizon (int): Number of periods used to measure the future return.
+        vol_lookback (int): Number of periods used to estimate historical volatility.
+    
+    Returns:
+        pd.Series: Future return divided by annualized volatility, with zero-volatility values represented as missing.
     """
     ret = close.pct_change(periods=horizon).shift(-horizon)
     vol = (
@@ -40,10 +47,19 @@ def prob_target_before_stop(
     lookahead: int = 20,
     multiplier: float = 1.5,
 ) -> pd.Series:
-    """Estimate P(target hit before stop) over the next *lookahead* bars.
-
-    Uses ATR-based stop/target distances. Returns 1.0 if target hit first,
-    0.0 if stop hit first, NaN if neither.
+    """
+    Determine whether an ATR-based profit target or stop is reached first within the lookahead window.
+    
+    Parameters:
+    	high (pd.Series): High prices used to evaluate target and stop hits.
+    	low (pd.Series): Low prices used to evaluate target and stop hits.
+    	close (pd.Series): Closing prices used as the default entry price.
+    	entry (float | None): Fixed entry price applied to each observation; when omitted, uses each observation's closing price.
+    	lookahead (int): Number of future bars to inspect.
+    	multiplier (float): ATR multiplier used to set the stop distance.
+    
+    Returns:
+    	pd.Series: A series containing `1.0` when the target is reached first, `0.0` when the stop is reached first, and `NaN` when neither is reached or insufficient data is available.
     """
     atr = (high - low).rolling(14, min_periods=5).mean()
     stop_dist = atr * multiplier
@@ -77,9 +93,16 @@ def expected_realized_r(
     lookahead: int = 20,
     stop_atr_mult: float = 2.0,
 ) -> pd.Series:
-    """Estimated future realised R after costs (per the roadmap's label
-    recommendation).  Exit is assumed on stop-hit, target-hit, or
-    lookahead expiry (at close).
+    """
+    Calculate future realized return in risk units using an ATR-based stop.
+    
+    Parameters:
+        lookahead (int): Number of periods to evaluate before exiting at the future close.
+        stop_atr_mult (float): ATR multiplier used to determine the stop distance.
+    
+    Returns:
+        pd.Series: Realized return divided by initial risk, with missing values where
+            risk is invalid or the full lookahead period is unavailable.
     """
     atr = (high - low).rolling(14, min_periods=5).mean()
     stop_dist = atr * stop_atr_mult

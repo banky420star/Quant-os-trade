@@ -71,6 +71,14 @@ def cost_per_trade_bps(symbol: str) -> float:
 
 
 def daily_swap_bps(symbol: str) -> float:
+    """Return the estimated daily swap cost in basis points for a symbol.
+    
+    Parameters:
+        symbol (str): Symbol whose daily swap cost is requested.
+    
+    Returns:
+        float: Symbol-specific daily swap cost, or 0.05 basis points when no estimate is defined.
+    """
     return SWAP_BPS_DAILY.get(symbol, 0.05)
 
 
@@ -78,10 +86,19 @@ def daily_swap_bps(symbol: str) -> float:
 
 
 def _read_ohlc(sym: str, tf: str) -> pd.DataFrame:
-    """Read OHLC data for a symbol/timeframe.
-
-    Prefers real D1/H4 Parquet files from MT5.  Falls back to
-    M15 resampling if the direct file doesn't exist yet.
+    """
+    Load OHLC data for a symbol and timeframe, using direct timeframe data when available and resampled M15 data otherwise.
+    
+    Parameters:
+        sym (str): Symbol whose market data should be loaded.
+        tf (str): Target timeframe, such as ``"D1"`` or ``"H4"``.
+    
+    Returns:
+        pd.DataFrame: Sorted OHLC data indexed by timestamp.
+    
+    Raises:
+        FileNotFoundError: If neither target-timeframe nor M15 data exists.
+        ValueError: If fallback data has neither a datetime index nor a ``time`` column.
     """
     # Try clean export first, then raw history, then M15 fallback
     direct = DATA_DIR / f"{sym}_{tf}.parquet"
@@ -128,7 +145,18 @@ def _signal_metrics_cost(
     *,
     cost_mult: float = 1.0,
 ) -> dict[str, Any]:
-    """Compute net P&L metrics after transaction + holding costs."""
+    """
+    Calculate trading performance metrics after transaction and holding costs.
+    
+    Parameters:
+        close (pd.Series): Closing prices used to calculate returns.
+        signal (pd.Series): Position signals aligned with the closing prices.
+        symbol (str): Instrument identifier used to determine trading and holding costs.
+        cost_mult (float): Multiplier applied to transaction and holding costs.
+    
+    Returns:
+        dict[str, Any]: Performance, signal, and cost metrics.
+    """
     ret = close.pct_change()
     gross = (ret * signal.shift(1)).dropna()
     if len(gross) < 20:
@@ -186,6 +214,16 @@ def _signal_metrics_cost(
 
 
 def run_baselines(sym: str, tf: str) -> dict[str, Any]:
+    """
+    Evaluate baseline trend-following models for a symbol and timeframe with multiple transaction-cost scenarios.
+    
+    Parameters:
+    	sym (str): Symbol to evaluate.
+    	tf (str): Timeframe, either ``"D1"`` or ``"H4"``.
+    
+    Returns:
+    	dict[str, Any]: Baseline metrics, cost assumptions, date range, and latest signals, or an error message when data is unavailable or contains fewer than 252 bars.
+    """
     try:
         daily = _read_ohlc(sym, tf)
     except FileNotFoundError as e:
@@ -256,7 +294,16 @@ def survival_table(
     all_results: dict[str, dict[str, Any]],
     tf: str,
 ) -> dict[str, Any]:
-    """Count how many symbols survive (positive net return) at each cost level."""
+    """
+    Count symbols with positive returns for each model and cost level.
+    
+    Parameters:
+    	all_results (dict[str, dict[str, Any]]): Results keyed by symbol and timeframe.
+    	tf (str): Timeframe to include in the survival counts.
+    
+    Returns:
+    	dict[str, Any]: A table containing the timeframe and survivor counts for each model and cost level.
+    """
     models = ["ma_200", "mom_3m", "blended"]
     cost_levels = ["gross", "net_1x", "net_2x", "net_3x"]
     cost_labels = ["0x (gross)", "1x cost", "2x cost", "3x cost"]
@@ -285,7 +332,17 @@ def survival_detail(
     tf: str,
     model: str,
 ) -> list[dict[str, Any]]:
-    """Per-symbol net return at each cost level."""
+    """
+    Summarize per-symbol returns, trading activity, and profitability across cost levels.
+    
+    Parameters:
+    	all_results (dict[str, dict[str, Any]]): Baseline results keyed by symbol and timeframe.
+    	tf (str): Timeframe used to filter the results.
+    	model (str): Model whose performance metrics are summarized.
+    
+    Returns:
+    	list[dict[str, Any]]: Per-symbol summaries containing signal changes, round-trip cost, returns from gross through 3x costs, and whether the model remains profitable at 2x costs.
+    """
     cost_levels = ["gross", "net_1x", "net_2x", "net_3x"]
     rows: list[dict[str, Any]] = []
     for key, data in sorted(all_results.items()):
@@ -330,6 +387,7 @@ VOL_LOOKBACK: int = 63
 
 
 def _symbol_cluster(symbol: str) -> str:
+    """Map a symbol to its configured asset cluster."""
     for name, members in CLUSTERS.items():
         if symbol in members:
             return name
@@ -346,7 +404,18 @@ def _per_symbol_returns(
     *,
     cost_mult: float = 1.0,
 ) -> pd.Series:
-    """Compute net daily returns for one symbol given a signal series."""
+    """
+    Compute net daily returns for a symbol from price data and trading signals, including transaction and holding costs.
+    
+    Parameters:
+        close (pd.Series): Closing prices indexed by trading date.
+        signal (pd.Series): Position signals aligned with the closing prices.
+        symbol (str): Symbol used to determine applicable trading and holding costs.
+        cost_mult (float): Multiplier applied to transaction and daily holding costs.
+    
+    Returns:
+        pd.Series: Net daily returns indexed by the closing-price dates.
+    """
     ret = close.pct_change()
     gross = (ret * signal.shift(1)).fillna(0)
 
@@ -374,15 +443,22 @@ def build_portfolio(
     *,
     cost_mult: float = 1.0,
 ) -> dict[str, Any]:
-    """Build a vol-scaled, cluster-capped portfolio from per-symbol signals.
-
-    Steps:
-      1. Recompute per-symbol signals and net daily returns.
-      2. Compute rolling annualised vol for each symbol.
-      3. Vol-scale each symbol to contribute equal risk (vol_target / vol_i).
-      4. Apply cluster caps (35% equity, 35% FX, 15% others).
-      5. Cap single-symbol weight at 15%.
-      6. Combine into portfolio equity curve.
+    """
+    Construct a volatility-scaled portfolio from valid per-symbol signals and returns.
+    
+    Parameters:
+        all_results (dict[str, dict[str, Any]]): Symbol evaluation results used to
+            identify portfolio constituents and timeframe.
+        model (str): Signal model to use: ``"ma_200"``, ``"mom_3m"``, or
+            ``"blended"``.
+        cost_mult (float): Transaction and holding cost multiplier applied to
+            per-symbol returns.
+    
+    Returns:
+        dict[str, Any]: Portfolio metrics, model and cost settings, symbol and
+            cluster exposures, capped weights, and the cumulative equity curve.
+        Returns an error dictionary when no valid symbols are available or fewer
+        than 60 common dates can be aligned.
     """
     tf = all_results.get(list(all_results.keys())[0], {}).get("timeframe", "D1")
 
@@ -511,7 +587,15 @@ def build_portfolio(
 def portfolio_report(
     portfolio_series: pd.Series,
 ) -> dict[str, Any]:
-    """Report Sharpe, MaxDD, annual return from a daily return series."""
+    """
+    Calculate performance metrics for a daily portfolio return series.
+    
+    Parameters:
+        portfolio_series (pd.Series): Daily portfolio returns.
+    
+    Returns:
+        dict[str, Any]: Portfolio performance metrics, or an error when fewer than 20 daily returns are available.
+    """
     if len(portfolio_series) < 20:
         return {"error": f"only {len(portfolio_series)} daily returns"}
 
@@ -539,6 +623,12 @@ def portfolio_report(
 
 
 def main() -> int:
+    """
+    Run the cost-aware D1 and H4 trend-baseline analysis and write the resulting report.
+    
+    Returns:
+        int: Zero after the analysis and report generation complete.
+    """
     timeframes = ["D1", "H4"]
     all_results: dict[str, dict[str, Any]] = {}
 

@@ -18,9 +18,20 @@ def rolling_hedge_ratio(
     x: pd.Series,
     window: int = 252,
 ) -> pd.DataFrame:
-    """Estimate rolling hedge ratio via OLS:  y = alpha + beta * x + e.
-
-    Returns DataFrame with columns ``alpha``, ``beta``, ``r_squared``.
+    """
+    Estimate rolling ordinary least squares hedge-ratio coefficients for two series.
+    
+    The series are aligned on their common index. Windows before enough observations
+    are available contain missing values. If either input is shorter than `window`,
+    returns a single-row DataFrame with missing `alpha` and `beta` values.
+    
+    Parameters:
+        y (pd.Series): Dependent series.
+        x (pd.Series): Independent series.
+        window (int): Number of observations in each rolling regression.
+    
+    Returns:
+        pd.DataFrame: DataFrame containing `alpha`, `beta`, and `r_squared` columns.
     """
     if len(y) < window or len(x) < window:
         return pd.DataFrame({"alpha": [np.nan], "beta": [np.nan]}, index=y.index)
@@ -51,7 +62,17 @@ def spread_residual(
     x: pd.Series,
     beta: float | pd.Series,
 ) -> pd.Series:
-    """Compute the spread residual:  e = y - beta * x."""
+    """
+    Compute the residual spread from two aligned series and a hedge ratio.
+    
+    Parameters:
+        y (pd.Series): Dependent series.
+        x (pd.Series): Independent series.
+        beta (float | pd.Series): Scalar or time-varying hedge ratio.
+    
+    Returns:
+        pd.Series: Residual spread calculated as `y - beta * x`.
+    """
     if isinstance(beta, pd.Series):
         return y - beta * x
     return y - float(beta) * x
@@ -61,16 +82,30 @@ def residual_zscore(
     residual: pd.Series,
     window: int = 252,
 ) -> pd.Series:
-    """Rolling z-score of the spread residual."""
+    """
+    Compute the rolling z-score of a spread residual.
+    
+    Parameters:
+    	residual (pd.Series): Spread residual values.
+    	window (int): Number of observations used for each rolling calculation.
+    
+    Returns:
+    	pd.Series: Rolling z-scores, with missing values where insufficient observations or zero dispersion occur.
+    """
     mu = residual.rolling(window=window, min_periods=window).mean()
     sigma = residual.rolling(window=window, min_periods=window).std()
     return (residual - mu) / sigma.replace(0, np.nan)
 
 
 def half_life(residual: pd.Series) -> float:
-    """Estimate the mean-reversion half-life of a residual series.
-
-    Fits AR(1) and returns -ln(2) / ln(|phi|).
+    """
+    Estimate the mean-reversion half-life of a residual series.
+    
+    Parameters:
+    	residual (pd.Series): Residual observations used for the estimate.
+    
+    Returns:
+    	float: Estimated half-life in periods, or infinity when fewer than 20 observations are available or the estimated autoregressive coefficient does not indicate mean reversion.
     """
     clean = residual.dropna()
     if len(clean) < 20:
@@ -96,10 +131,20 @@ def cointegration_test(
     window: int = 252,
     significance: float = 0.05,
 ) -> dict[str, Any]:
-    """Test for cointegration using augmented Engle-Granger.
-
-    Returns dict with ``is_cointegrated``, ``adf_stat``, ``p_value``,
-    ``hedge_beta``, ``half_life``.
+    """
+    Assess whether two time series are cointegrated using an augmented Engle–Granger test.
+    
+    Parameters:
+    	y (pd.Series): First time series.
+    	x (pd.Series): Second time series.
+    	window (int): Number of most recent common observations used for testing.
+    	significance (float): Threshold for determining cointegration from the test p-value.
+    
+    Returns:
+    	dict[str, Any]: Test result containing cointegration status, ADF statistic,
+    	p-value, hedge coefficients, residual half-life, and observation count.
+    	Returns ``{"is_cointegrated": False, "error": "insufficient_data"}`` when
+    	fewer than ``window`` common observations are available.
     """
     from statsmodels.tsa.stattools import adfuller
 

@@ -17,12 +17,17 @@ def double_cost_test(
     *,
     base_cost_bps: float = 2.0,
 ) -> dict[str, Any]:
-    """Test whether strategy returns survive doubled transaction costs.
-
-    *returns*: daily strategy return series.
-    *base_cost_bps*: estimated one-way cost in basis points (e.g. 2.0 = 2 bps).
-
-    Returns dict with ``base_return``, ``stressed_return``, ``survives``.
+    """
+    Assess whether a strategy remains profitable when transaction costs are doubled.
+    
+    Parameters:
+        returns (pd.Series): Daily strategy returns.
+        base_cost_bps (float): One-way transaction cost in basis points.
+    
+    Returns:
+        dict[str, Any]: A dictionary containing rounded base and stressed returns,
+            a boolean indicating whether the stressed return is positive, and the
+            configured base cost in basis points.
     """
     base_cost = base_cost_bps / 10_000  # bps → decimal
     double_cost = 2 * base_cost
@@ -52,9 +57,19 @@ def spread_stress_test(
     *,
     spread_multipliers: tuple[float, ...] = (1.0, 2.0, 3.0),
 ) -> dict[str, dict[float, float]]:
-    """Test strategy P&L under increasing spread assumptions.
-
-    Returns ``{symbol: {multiplier: net_return}}``.
+    """
+    Evaluate compounded net returns under configurable spread-cost multipliers.
+    
+    Parameters:
+        prices (dict[str, pd.DataFrame]): Symbol-indexed price data containing a
+            ``close`` column.
+        signal_fn (Any): Accepted for interface compatibility; it is not used.
+        spread_multipliers (tuple[float, ...]): Multipliers applied to the
+            one-basis-point spread cost.
+    
+    Returns:
+        dict[str, dict[float, float]]: Rounded net returns grouped by symbol and
+            spread multiplier.
     """
     results: dict[str, dict[float, float]] = {}
 

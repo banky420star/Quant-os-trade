@@ -21,11 +21,17 @@ def moving_average_signal(
     *,
     period: int = 200,
 ) -> pd.Series:
-    """Return +1 (long), -1 (short), 0 (flat) based on close vs MA.
-
-    Signal is computed at each bar; only the *latest* value matters for
-    a weekly-rebalanced portfolio, but the full series is returned for
-    backtesting.
+    """
+    Generate directional signals by comparing closing prices with their rolling moving average.
+    
+    Parameters:
+    	close (pd.Series): Closing prices indexed by observation.
+    	period (int): Number of observations used to calculate the moving average.
+    
+    Returns:
+    	pd.Series: A series containing `1.0` when the close is above the moving average,
+    	`-1.0` when it is below, and `0.0` when the moving average is unavailable or
+    	the close equals the moving average.
     """
     ma = close.rolling(window=period, min_periods=period).mean()
     signal = pd.Series(0.0, index=close.index)
@@ -39,7 +45,16 @@ def time_series_momentum_signal(
     *,
     lookback: int = 63,  # ~3 months of trading days
 ) -> pd.Series:
-    """Return +1 / -1 / 0 based on the sign of *lookback*-period return."""
+    """
+    Determine the directional signal from the return over a specified lookback period.
+    
+    Parameters:
+        close (pd.Series): Closing prices indexed in time.
+        lookback (int): Number of periods used to calculate the return.
+    
+    Returns:
+        pd.Series: A series containing 1.0 for positive returns, -1.0 for negative returns, and 0.0 for zero or unavailable returns.
+    """
     ret = close.pct_change(periods=lookback)
     signal = pd.Series(0.0, index=close.index)
     signal[ret > 0] = 1.0
@@ -53,10 +68,16 @@ def blended_momentum_signal(
     horizons: tuple[int, ...] = (21, 63, 126, 252),
     threshold: float = 0.0,
 ) -> pd.Series:
-    """Blended momentum: standardise returns at each horizon, average, threshold.
-
-    *horizons*: trading-day lookbacks (default 1/3/6/12-month approx).
-    *threshold*: only trade when |blended| > threshold.
+    """
+    Generate trend signals from standardized momentum across multiple lookback horizons.
+    
+    Parameters:
+        close (pd.Series): Closing prices.
+        horizons (tuple[int, ...]): Lookback periods used to calculate momentum scores.
+        threshold (float): Minimum absolute blended score required for a long or short signal.
+    
+    Returns:
+        pd.Series: A series containing 1.0 for long signals, -1.0 for short signals, and 0.0 otherwise.
     """
     if len(close) < max(horizons) + 1:
         return pd.Series(0.0, index=close.index)
@@ -84,9 +105,19 @@ def signal_to_intent(
     risk_mult: float = 2.0,
     reward_mult: float = 3.0,
 ) -> dict[str, Any] | None:
-    """Convert a -1/0/+1 signal into a StrategyIntent dict.
-
-    Returns None for flat (0) signals.
+    """
+    Convert a trading signal into a strategy intent.
+    
+    Parameters:
+    	symbol (str): Instrument symbol.
+    	signal (float): Trading signal, where positive values indicate a buy and negative values indicate a sell.
+    	price (float): Entry price used to calculate the intent levels.
+    	atr (float | None): Average true range used to calculate stop and target distances when provided.
+    	risk_mult (float): ATR multiplier for the stop distance.
+    	reward_mult (float): ATR multiplier for the target distance.
+    
+    Returns:
+    	dict[str, Any] | None: A strategy intent containing the symbol, side, rounded entry, stop, target, signal strength, and source; `None` for a zero signal.
     """
     if signal == 0:
         return None

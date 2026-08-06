@@ -83,9 +83,14 @@ ARTIFACT_SCHEMA: dict[str, Any] = {
 
 
 def validate_artifact(artifact: dict[str, Any]) -> list[str]:
-    """Validate an artifact dict against ARTIFACT_SCHEMA.
-
-    Returns a list of error messages (empty = valid).
+    """
+    Validate an artifact dictionary against the required schema fields and key constraints.
+    
+    Parameters:
+    	artifact (dict[str, Any]): The artifact data to validate.
+    
+    Returns:
+    	list[str]: Validation error messages; an empty list indicates no detected errors.
     """
     errors: list[str] = []
 

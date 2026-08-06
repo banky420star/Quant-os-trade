@@ -27,9 +27,16 @@ def export_to_csv(
     *,
     output_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Export Parquet history to CSV files as ``{symbol}_{timeframe}.csv``.
-
-    Returns a dict mapping key to output path.
+    """
+    Export available Parquet history to CSV files.
+    
+    Parameters:
+    	symbols (list[str] | None): Symbols to export; defaults to the available symbols.
+    	timeframes (list[str] | None): Timeframes to export; defaults to the configured timeframes.
+    	output_dir (Path | None): Destination directory; defaults to the CSV export directory.
+    
+    Returns:
+    	dict[str, Path]: A mapping from each exported symbol-timeframe key to its CSV path.
     """
     symbols = symbols or available_symbols()
     timeframes = timeframes or TIMEFRAMES
@@ -55,7 +62,17 @@ def export_to_parquet_flat(
     *,
     output_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Flat-copy Parquet files (same schema, portable directory)."""
+    """
+    Copy available Parquet history files to a flat export directory.
+    
+    Parameters:
+    	symbols (list[str] | None): Symbols to export. Defaults to all available symbols.
+    	timeframes (list[str] | None): Timeframes to export. Defaults to the configured timeframes.
+    	output_dir (Path | None): Destination directory. Defaults to the configured Parquet export directory.
+    
+    Returns:
+    	dict[str, Path]: Mapping of symbol-timeframe keys to written Parquet file paths.
+    """
     symbols = symbols or available_symbols()
     timeframes = timeframes or TIMEFRAMES
     out = output_dir or (EXPORT_DIR / "parquet")
@@ -78,7 +95,16 @@ def export_manifest(
     *,
     path: Path | None = None,
 ) -> Path:
-    """Write a JSON manifest of exported files with hashes and timestamps."""
+    """
+    Write a JSON manifest containing metadata and checksums for exported files.
+    
+    Parameters:
+        written (dict[str, Path]): Mapping of file identifiers to exported file paths.
+        path (Path | None): Destination path for the manifest. Defaults to the standard export directory.
+    
+    Returns:
+        Path: Path to the written manifest.
+    """
     import hashlib
 
     manifest_path = path or (EXPORT_DIR / "export_manifest.json")
@@ -106,7 +132,16 @@ def export_all(
     symbols: list[str] | None = None,
     timeframes: list[str] | None = None,
 ) -> Path:
-    """Run the full export pipeline: CSV + Parquet + manifest.  Returns manifest path."""
+    """
+    Run the complete export pipeline for the specified symbols and timeframes.
+    
+    Parameters:
+    	symbols (list[str] | None): Symbols to export. Uses the configured research universe when omitted.
+    	timeframes (list[str] | None): Timeframes to export. Uses the configured timeframes when omitted.
+    
+    Returns:
+    	Path: Path to the generated export manifest.
+    """
     csv = export_to_csv(symbols, timeframes)
     pq = export_to_parquet_flat(symbols, timeframes)
     return export_manifest({**csv, **pq})

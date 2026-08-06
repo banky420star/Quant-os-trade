@@ -68,10 +68,26 @@ SLIPPAGE_BPS: float = 0.5
 
 
 def cost_per_trade_bps(symbol: str) -> float:
+    """Return the estimated round-trip trading cost for a symbol in basis points.
+    
+    Parameters:
+    	symbol (str): The symbol whose trading cost is being estimated.
+    
+    Returns:
+    	float: The symbol-specific transaction cost plus round-trip slippage, or the default transaction cost plus slippage when the symbol is not configured.
+    """
     return COST_BPS.get(symbol, 2.0) + 2 * SLIPPAGE_BPS
 
 
 def daily_swap_bps(symbol: str) -> float:
+    """Return the daily swap charge for a symbol in basis points.
+    
+    Parameters:
+    	symbol (str): Trading symbol used to select the applicable swap charge.
+    
+    Returns:
+    	float: Symbol-specific daily swap charge, or 0.05 basis points when no specific charge is configured.
+    """
     return SWAP_BPS_DAILY.get(symbol, 0.05)
 
 
@@ -94,6 +110,14 @@ VOL_LOOKBACK: int = 63
 
 
 def _symbol_cluster(symbol: str) -> str:
+    """Return the cluster name assigned to a symbol.
+    
+    Parameters:
+    	symbol (str): The symbol to classify.
+    
+    Returns:
+    	str: The matching cluster name, or `"other"` when the symbol belongs to no configured cluster.
+    """
     for name, members in CLUSTERS.items():
         if symbol in members:
             return name
@@ -104,7 +128,17 @@ def _symbol_cluster(symbol: str) -> str:
 
 
 def _read_close(sym: str) -> pd.Series:
-    """Read D1 close prices for a symbol."""
+    """Load and return sorted daily close prices for a symbol.
+    
+    Parameters:
+        sym (str): Symbol whose daily close data should be loaded.
+    
+    Returns:
+        pd.Series: Daily close prices indexed by UTC timestamps.
+    
+    Raises:
+        FileNotFoundError: If the symbol's data file is unavailable in the primary and fallback directories.
+    """
     direct = DATA_DIR / f"{sym}_D1.parquet"
     if not direct.exists():
         direct = FALLBACK_DIR / f"{sym}_D1.parquet"
@@ -121,6 +155,17 @@ def _read_close(sym: str) -> pd.Series:
 
 
 def _net_returns(close: pd.Series, signal: pd.Series, symbol: str) -> pd.Series:
+    """
+    Calculate net close-to-close returns after position changes and holding costs.
+    
+    Parameters:
+        close (pd.Series): Daily closing prices.
+        signal (pd.Series): Position signals aligned with the closing prices.
+        symbol (str): Symbol used to determine transaction and daily swap costs.
+    
+    Returns:
+        pd.Series: Net daily returns after transaction costs and swap charges.
+    """
     ret = close.pct_change()
     gross = (ret * signal.shift(1)).fillna(0)
 
@@ -154,7 +199,20 @@ def _generate_folds(
     purge_days: int = 5,
     min_train_days: int = 200,
 ) -> list[dict[str, Any]]:
-    """Generate purged walk-forward folds with temporal buffers."""
+    """
+    Create expanding-training walk-forward folds with a purge period before each test interval.
+    
+    Parameters:
+    	earliest_start (pd.Timestamp): Start of the available data range.
+    	latest_end (pd.Timestamp): End of the available data range.
+    	train_months (int): Number of months before the first test interval used for training.
+    	test_months (int): Length of each test interval in months.
+    	purge_days (int): Number of days separating the training and test intervals.
+    	min_train_days (int): Minimum number of training days required for a fold.
+    
+    Returns:
+    	list[dict[str, Any]]: Fold definitions containing training and test date boundaries.
+    """
     folds: list[dict[str, Any]] = []
     train_delta = pd.DateOffset(months=train_months)
     test_delta = pd.DateOffset(months=test_months)
@@ -190,7 +248,17 @@ def _evaluate_fold(
     all_closes: dict[str, pd.Series],
     model: str,
 ) -> dict[str, Any]:
-    """Evaluate one walk-forward fold for a given model."""
+    """
+    Evaluate a walk-forward fold for the specified model.
+    
+    Parameters:
+    	fold (dict[str, Any]): Fold boundaries and identifier for the evaluation period.
+    	all_closes (dict[str, pd.Series]): Daily close-price series keyed by symbol.
+    	model (str): Strategy model to evaluate.
+    
+    Returns:
+    	dict[str, Any]: Fold performance metrics, or an error entry when insufficient symbols or dates are available.
+    """
     t_start = fold["train_start"]
     t_end = fold["train_end"]
     test_start = fold["test_start"]
@@ -311,7 +379,20 @@ def run_walk_forward(
     test_months: int = 4,
     purge_days: int = 5,
 ) -> dict[str, Any]:
-    """Run walk-forward for one model across all folds."""
+    """
+    Evaluate one model across purged walk-forward folds and summarize its performance stability.
+    
+    Parameters:
+    	model (str): Strategy model to evaluate.
+    	all_closes (dict[str, pd.Series]): Daily close-price series keyed by symbol.
+    	train_months (int): Number of months in each training period.
+    	test_months (int): Number of months in each testing period.
+    	purge_days (int): Number of days separating each training and testing period.
+    
+    Returns:
+    	dict[str, Any]: Summary containing fold results, performance stability statistics, and
+    	fold errors. If no folds are valid, contains an error instead of performance statistics.
+    """
     earliest = min(c.index.min() for c in all_closes.values())
     latest = min(c.index.max() for c in all_closes.values())
 
@@ -390,6 +471,12 @@ def run_walk_forward(
 
 
 def main() -> int:
+    """
+    Run walk-forward validation for all configured portfolio models and write the results report.
+    
+    Returns:
+    	int: Zero indicating successful completion.
+    """
     print("=" * 80)
     print("  PURGED WALK-FORWARD PORTFOLIO VALIDATION")
     print("=" * 80)

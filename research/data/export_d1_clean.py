@@ -41,13 +41,30 @@ EXPORTED_AT = datetime.now(timezone.utc).isoformat()
 
 
 def _hash_file(path: Path) -> str:
+    """
+    Compute the SHA-256 hash of a file.
+    
+    Parameters:
+        path (Path): Path to the file to hash.
+    
+    Returns:
+        str: The hexadecimal SHA-256 digest, or an empty string if the file does not exist.
+    """
     if not path.exists():
         return ""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def export_one(symbol: str) -> dict[str, Any] | None:
-    """Export one symbol's D1 Parquet, return per-file metadata."""
+    """
+    Export a symbol's D1 Parquet history, enrich it with calendar and session metadata, and assess data quality.
+    
+    Parameters:
+    	symbol (str): Symbol whose source history should be exported.
+    
+    Returns:
+    	dict[str, Any] | None: Per-file export metadata and quality results, or an error record when the source file is missing.
+    """
     src = HISTORY_DIR / f"{symbol}_D1.parquet"
     dst = OUT_DIR / f"{symbol}_D1.parquet"
 
@@ -100,6 +117,15 @@ def export_one(symbol: str) -> dict[str, Any] | None:
 
     # trading_session: label based on day_of_week + holiday flag
     def _session_label(row):
+        """
+        Classify a market data row by holiday and day-of-week session.
+        
+        Parameters:
+            row: A row containing `day_of_week` and `is_holiday` values.
+        
+        Returns:
+            The session label: `"thin"`, `"weekend"`, `"pre_weekend"`, or `"regular"`.
+        """
         dow = row["day_of_week"]
         holiday = row["is_holiday"]
         if holiday:
@@ -187,6 +213,12 @@ def export_one(symbol: str) -> dict[str, Any] | None:
 
 
 def main() -> int:
+    """
+    Export D1 Parquet history for all configured symbols and write the export manifest.
+    
+    Returns:
+    	int: `0` if every exported file passes quality checks, `1` otherwise.
+    """
     print(f"Exporting D1 Parquet to {OUT_DIR}")
     print(f"  Symbols: {len(SYMBOLS)}")
     print()

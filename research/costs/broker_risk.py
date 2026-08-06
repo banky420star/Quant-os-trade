@@ -17,12 +17,16 @@ def min_lot_stop_risk(
     stop_distance_atr_multiple: float = 1.5,
     atr_lookup: dict[str, float] | None = None,
 ) -> dict[str, dict[str, float]]:
-    """Estimate the loss at minimum lot for each symbol using broker specs.
-
-    Returns ``{symbol: {volume_min, point, stop_loss_usd, ...}}``.
-
-    For a definitive calculation use ``mt5.order_calc_profit()`` with a
-    live quote — this is a planning estimate from static specifications.
+    """
+    Estimate minimum-lot stop-loss risk for each valid broker symbol specification.
+    
+    Parameters:
+        broker_specs_path (str | Path): Path to the broker specifications JSON file.
+        stop_distance_atr_multiple (float): Multiplier applied to the symbol's ATR to estimate stop distance.
+        atr_lookup (dict[str, float] | None): Mapping of symbols to ATR values.
+    
+    Returns:
+        dict[str, dict[str, float]]: Symbol specifications with estimated stop distance and minimum-lot stop-loss risk in USD. Returns an empty dictionary when the specifications file is missing.
     """
     import json
 
@@ -75,11 +79,15 @@ def required_equity(
     broker_risk: dict[str, dict[str, float]],
     risk_fraction: float,
 ) -> dict[str, float]:
-    """Compute required account equity per symbol for a given risk cap.
-
-    ``required_equity = min_lot_stop_loss / risk_fraction``
-
-    *risk_fraction* is decimal (e.g. ``0.005`` for 0.5%).
+    """
+    Calculate the account equity required to keep each symbol's estimated stop-loss risk within a target fraction.
+    
+    Parameters:
+        broker_risk (dict[str, dict[str, float]]): Per-symbol risk estimates containing `min_lot_stop_loss_usd`.
+        risk_fraction (float): Maximum stop-loss risk as a decimal fraction of account equity.
+    
+    Returns:
+        dict[str, float]: Required account equity by symbol, rounded to two decimal places. Returns an empty dictionary when `risk_fraction` is not positive or no symbol has positive estimated stop-loss risk.
     """
     if risk_fraction <= 0:
         return {}

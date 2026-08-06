@@ -11,10 +11,14 @@ import pandas as pd
 def swap_rate_table(
     broker_specs_path: str | Path = "broker_symbol_specs.json",
 ) -> dict[str, dict[str, float]]:
-    """Read broker symbol specifications and extract swap rates.
-
-    Expects a JSON file produced by the broker-spec dump script.
-    Returns ``{symbol: {swap_long, swap_short, swap_type}}``.
+    """
+    Load symbol swap specifications from a broker-generated JSON file.
+    
+    Parameters:
+    	broker_specs_path (str | Path): Path to the JSON file containing broker symbol specifications.
+    
+    Returns:
+    	dict[str, dict[str, float]]: Mapping of symbols to long and short swap rates and swap type. Missing files produce an empty mapping; invalid entries are skipped.
     """
     import json
 
@@ -41,9 +45,19 @@ def daily_swap_cost(
     side: str,
     volume: float,
 ) -> float:
-    """Estimated daily swap cost for a position.
-
-    *side* ``\"BUY\"`` or ``\"SELL\"``.  Returns cost in account currency.
+    """
+    Estimate the daily holding cost for a position.
+    
+    Parameters:
+        swap_table (dict[str, dict[str, float]]): Swap rates indexed by symbol.
+        symbol (str): Symbol for the position.
+        side (str): Position side; ``"BUY"`` selects the long rate, and other
+            values select the short rate.
+        volume (float): Position volume.
+    
+    Returns:
+        float: Estimated daily swap cost in account currency, or ``0.0`` when the
+            symbol is absent from the table.
     """
     row = swap_table.get(symbol, {})
     if not row:

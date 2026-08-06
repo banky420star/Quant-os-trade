@@ -22,9 +22,19 @@ def neighbourhood_stability(
     n_samples: int = 20,
     metric: str = "sharpe",
 ) -> dict[str, Any]:
-    """Perturb each parameter ±*perturbations* and record the metric.
-
-    Returns ``{param: {mean, std, min, max, base_value, samples}}``.
+    """
+    Measure metric stability around each base parameter value.
+    
+    Parameters:
+        base_params (dict[str, float]): Base parameter values to perturb individually.
+        signal_fn (Callable[..., pd.Series]): Function that generates a signal from prices and parameter values.
+        prices (pd.DataFrame): Price data containing a ``close`` column.
+        perturbations (float): Maximum relative perturbation applied in either direction.
+        n_samples (int): Number of perturbation trials per parameter.
+        metric (str): Metric to calculate: ``"sharpe"`` for annualized Sharpe ratio; any other value selects cumulative return.
+    
+    Returns:
+        dict[str, Any]: Statistics for each parameter with valid trials, including its base value, mean, standard deviation, minimum, maximum, and valid sample count.
     """
     from copy import deepcopy
 
@@ -74,9 +84,17 @@ def parameter_surface(
     *,
     metric: str = "sharpe",
 ) -> pd.DataFrame:
-    """Evaluate a grid of parameters and return a surface DataFrame.
-
-    Each row = one parameter combination plus the computed metric.
+    """
+    Evaluate each parameter combination and return the valid results as a DataFrame.
+    
+    Parameters:
+    	param_grid (dict[str, list[float]]): Parameter names mapped to the values to evaluate.
+    	signal_fn (Callable[..., pd.Series]): Function that generates a trading signal for a parameter combination.
+    	prices (pd.DataFrame): Price data containing a ``close`` column.
+    	metric (str): Metric to compute, either ``"sharpe"`` or cumulative return.
+    
+    Returns:
+    	pd.DataFrame: A row for each valid parameter combination, including the computed metric. Combinations that fail signal generation or produce fewer than 30 strategy-return observations are omitted.
     """
     from itertools import product
 

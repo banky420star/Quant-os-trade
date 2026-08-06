@@ -32,6 +32,14 @@ class QualityReport:
 
 
 def _expected_delta(timeframe: str) -> timedelta:
+    """Return the expected interval between consecutive bars for a timeframe.
+    
+    Parameters:
+    	timeframe (str): Timeframe identifier such as ``D1``, ``H4``, ``H1``, ``M15``, or ``M5``.
+    
+    Returns:
+    	timedelta: Expected interval between consecutive bars; one day for unsupported timeframes.
+    """
     return {
         "D1": timedelta(days=1),
         "H4": timedelta(hours=4),
@@ -42,11 +50,14 @@ def _expected_delta(timeframe: str) -> timedelta:
 
 
 def _trading_day_gap_threshold(timeframe: str) -> timedelta:
-    """Max acceptable gap for trading-day-aware timeframes.
-
-    For D1 bars, weekends create 3-day gaps; holiday weekends can be
-    4-5 days.  For H4, a weekend (Fri 20h -> Mon 00h) is ~52 hours;
-    we allow up to 60h to skip normal weekends.  H1 same logic.
+    """
+    Determine the maximum allowed gap for trading-day-aware timeframes.
+    
+    Parameters:
+    	timeframe (str): Timeframe identifier used to select the gap threshold.
+    
+    Returns:
+    	timedelta or None: Maximum acceptable gap for supported timeframes; None for unsupported timeframes.
     """
     return {
         "D1": timedelta(days=5),
@@ -63,14 +74,18 @@ def run_quality_checks(
     volume_anomaly_multiple: float = 10.0,
     trading_day_aware: bool = True,
 ) -> QualityReport:
-    """Run the full battery of quality checks on a history DataFrame.
-
-    *df* must have a DatetimeIndex and columns ``open, high, low, close``
-    plus optionally ``tick_volume`` / ``real_volume``.
-
-    *trading_day_aware*: if True, D1/H4/H1 gaps smaller than weekend
-    + holiday allowance are not flagged.  Set False for strict bar-by-bar
-    checking (e.g. tick or intraday data).
+    """
+    Run data-quality checks on a historical bar DataFrame.
+    
+    Parameters:
+        df (pd.DataFrame): Historical bars indexed by timestamps.
+        symbol (str): Symbol represented by the data.
+        timeframe (str): Bar timeframe used to determine expected intervals.
+        volume_anomaly_multiple (float): Multiple of the median volume used to identify anomalous bars.
+        trading_day_aware (bool): Whether to allow weekend and holiday gaps for supported timeframes.
+    
+    Returns:
+        QualityReport: Report containing quality findings and the overall pass status.
     """
     report = QualityReport(symbol=symbol, timeframe=timeframe)
     report.total_rows = len(df)
@@ -131,7 +146,15 @@ def run_quality_checks(
 
 
 def quality_summary(reports: list[QualityReport]) -> str:
-    """Human-readable summary of quality reports."""
+    """
+    Create a human-readable summary of data-quality reports.
+    
+    Parameters:
+    	reports (list[QualityReport]): Quality reports to summarize.
+    
+    Returns:
+    	str: Multiline summary containing each report's status and key metrics, followed by aggregate pass/fail totals.
+    """
     lines = ["Data Quality Summary", "=" * 40]
     failed = [r for r in reports if not r.passes]
     for r in reports:

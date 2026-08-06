@@ -19,14 +19,24 @@ def detect_lookahead(
     max_lag: int = 20,
     correlation_threshold: float = 0.15,
 ) -> dict[str, Any]:
-    """Check for lookahead by measuring correlation between features
-    and *future* target values.
-
-    If any feature is strongly correlated with a future target at a
-    short lag, suspect leakage.
-
-    Returns dict with ``suspicious`` feature names, ``max_corrs``,
-    and ``passed`` boolean.
+    """
+    Identify features that correlate with target values from future periods.
+    
+    A feature is marked suspicious when it has at least 30 shared non-null
+    observations with the target and its absolute correlation at any tested lag
+    exceeds the configured threshold.
+    
+    Parameters:
+        features (pd.DataFrame): Feature values indexed by observation time.
+        target (pd.Series): Target values indexed by observation time.
+        max_lag (int): Maximum number of future periods to test.
+        correlation_threshold (float): Absolute correlation above which a feature
+            is considered suspicious.
+    
+    Returns:
+        dict[str, Any]: Audit results containing the pass status, suspicious
+            feature names, maximum absolute correlation and corresponding lag for
+            each eligible feature, and the configured threshold.
     """
     suspicious: list[str] = []
     max_corrs: dict[str, dict[str, float]] = {}
@@ -68,11 +78,18 @@ def point_in_time_audit(
     *,
     max_future_seconds: int = 60,
 ) -> dict[str, Any]:
-    """Verify that no row references data after its timestamp.
-
-    Simple audit: check that columns derived from future data (e.g.
-    shifted returns) are properly aligned.  This is a lightweight
-    structural check, not a deep feature audit.
+    """
+    Perform a lightweight structural audit for potential point-in-time data leakage.
+    
+    Parameters:
+        df (pd.DataFrame): Data to inspect.
+        timestamp_col (str): Name of the column containing timestamps.
+    
+    Returns:
+        dict[str, Any]: Audit results containing ``passed`` and, when applicable,
+        an ``issues`` list describing non-monotonic datetime indexes and
+        future-looking column names. If no timestamp information is available,
+        returns ``passed`` as ``True`` with a ``no_timestamp_column`` note.
     """
     if timestamp_col not in df.columns and not isinstance(df.index, pd.DatetimeIndex):
         return {"passed": True, "note": "no_timestamp_column"}

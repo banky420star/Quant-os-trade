@@ -17,6 +17,15 @@ from core.utils import ensure_dirs, load_config, read_json_state, setup_logger, 
 
 
 def run(mode: str | None = None) -> dict:
+    """
+    Run the configured history update workflow for the selected mode.
+    
+    Parameters:
+    	mode (str | None): Update mode to use, or the configured default when omitted.
+    
+    Returns:
+    	dict: A mapping containing the update results under `run` and current history information under `status`.
+    """
     ensure_dirs()
     config = load_config()
     logger = setup_logger("history_loop", "history_loop.log")

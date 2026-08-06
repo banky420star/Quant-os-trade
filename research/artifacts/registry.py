@@ -33,6 +33,12 @@ class StrategyArtifact:
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """
+        Serialize the strategy artifact metadata for persistence or interchange.
+        
+        Returns:
+        	dict[str, Any]: A mapping containing the artifact's identity, training metadata, symbols, feature and cost-model metadata, out-of-sample metrics, allowed profiles, expiration, and notes.
+        """
         return {
             "strategy_id": self.strategy_id,
             "version": self.version,
@@ -48,6 +54,15 @@ class StrategyArtifact:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> StrategyArtifact:
+        """
+        Create a strategy artifact from serialized field data.
+        
+        Parameters:
+            d (dict[str, Any]): Mapping containing the artifact fields.
+        
+        Returns:
+            StrategyArtifact: Reconstructed strategy artifact.
+        """
         return cls(
             strategy_id=str(d["strategy_id"]),
             version=str(d["version"]),
@@ -66,16 +81,29 @@ class ChampionRegistry:
     """Track which artifact is the current champion for each profile."""
 
     def __init__(self, path: Path | None = None):
+        """
+        Initialize the champion registry from a persisted state file.
+        
+        Parameters:
+        	path (Path | None): Path to the champion state file, or the default registry path when omitted.
+        """
         self._path = path or CHAMPION_PATH
         self._champions: dict[str, str] = self._load()
 
     def _load(self) -> dict[str, str]:
+        """
+        Load champion assignments from the registry file.
+        
+        Returns:
+            dict[str, str]: A mapping of profile names to artifact identifiers, or an empty mapping if the file is absent.
+        """
         if not self._path.exists():
             return {}
         data = json.loads(self._path.read_text(encoding="utf-8"))
         return {str(k): str(v) for k, v in data.get("champions", {}).items()}
 
     def _save(self) -> None:
+        """Persist the current champion assignments to the registry file."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         doc = {
             "updated_at": utc_now_iso(),
@@ -84,12 +112,22 @@ class ChampionRegistry:
         self._path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
     def get_champion(self, profile: str) -> str | None:
+        """Return the registered champion artifact identifier for a profile.
+        
+        Parameters:
+            profile (str): Profile whose champion assignment to retrieve.
+        
+        Returns:
+            str | None: The champion artifact identifier, or `None` if no champion is assigned.
+        """
         return self._champions.get(profile)
 
     def set_champion(self, profile: str, artifact: StrategyArtifact) -> None:
-        """Promote an artifact as the champion for *profile*.
-
-        Rejects artifacts whose allowed_profiles does not include *profile*.
+        """
+        Promote an eligible artifact as the champion for a profile.
+        
+        Raises:
+            ValueError: If the artifact is not allowed for the specified profile.
         """
         if profile not in artifact.allowed_profiles:
             raise ValueError(
@@ -100,6 +138,11 @@ class ChampionRegistry:
         self._save()
 
     def champions(self) -> dict[str, str]:
+        """Return the current champion artifact assignments by profile.
+        
+        Returns:
+            dict[str, str]: A copy mapping each profile to its champion artifact identifier.
+        """
         return dict(self._champions)
 
 

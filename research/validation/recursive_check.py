@@ -22,16 +22,22 @@ def recursive_one_step_ahead(
     min_train: int = 252,
     step: int = 20,
 ) -> pd.DataFrame:
-    """Recursive one-step-ahead predictions.
-
-    *features*: DataFrame with DatetimeIndex.
-    *target*: aligned target Series.
-    *model_factory*: zero-arg callable returning a scikit-learn-style
-                     model with ``fit(X, y)`` and ``predict(X)``.
-    *min_train*: minimum training observations before predicting.
-    *step*: refit the model every *step* bars.
-
-    Returns DataFrame with ``prediction`` and ``actual`` columns.
+    """
+    Generate expanding-window predictions with periodic model refitting.
+    
+    Parameters:
+        features (pd.DataFrame): Feature observations indexed by row order.
+        target (pd.Series): Target values aligned with `features`.
+        model_factory (Callable[[], Any]): Callable that creates a model with
+            `fit(X, y)` and `predict(X)` methods.
+        min_train (int): Number of initial observations required before prediction
+            begins.
+        step (int): Number of observations in each prediction batch and interval
+            between model refits.
+    
+    Returns:
+        pd.DataFrame: Rows with available predictions, containing `prediction` and
+            `actual` columns.
     """
     results = pd.DataFrame(
         {"prediction": np.nan, "actual": target},

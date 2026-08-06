@@ -55,10 +55,21 @@ def blended_daily_signal(
     vol_lookback: int = 63,
     cluster_caps: dict[str, float] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Generate daily blended momentum intents for a symbol universe.
-
-    *prices*: ``{symbol: close_series}`` — each a pd.Series with DatetimeIndex.
-    Returns ``{symbol: StrategyIntent | None}``.
+    """
+    Generate daily trading intents from blended momentum signals with volatility-based sizing.
+    
+    Parameters:
+        prices (dict[str, pd.Series]): Closing-price series keyed by symbol.
+        horizons (tuple[int, ...]): Momentum lookback periods.
+        threshold (float): Signal threshold used to classify momentum.
+        vol_target (float): Target annualized volatility for position sizing.
+        vol_lookback (int): Number of returns used to estimate volatility.
+        cluster_caps (dict[str, float] | None): Optional exposure caps by symbol cluster.
+    
+    Returns:
+        dict[str, dict[str, Any] | None]: Trading intents keyed by symbol; symbols with
+        zero signals, insufficient data, invalid volatility, or no remaining cluster
+        capacity map to None.
     """
     caps = cluster_caps or DEFAULT_CLUSTER_CAPS
     intents: dict[str, dict[str, Any] | None] = {}

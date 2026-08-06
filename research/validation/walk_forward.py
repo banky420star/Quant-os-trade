@@ -24,10 +24,12 @@ class WalkForwardFold:
 
     @property
     def train_days(self) -> int:
+        """Return the number of days in the training period."""
         return (self.train_end - self.train_start).days
 
     @property
     def test_days(self) -> int:
+        """Return the duration of the testing period in days."""
         return (self.test_end - self.test_start).days
 
 
@@ -40,7 +42,20 @@ def _generate_folds(
     purge_days: int = 5,
     min_train_days: int = 252,
 ) -> list[WalkForwardFold]:
-    """Generate purged walk-forward folds with temporal buffers."""
+    """
+    Generate sequential walk-forward folds with a temporal purge between training and testing periods.
+    
+    Parameters:
+        start (pd.Timestamp): Start of the fixed training history.
+        end (pd.Timestamp): End of the available validation period.
+        train_years (float): Minimum training history in years before the first test window.
+        test_months (int): Length of each test window in months.
+        purge_days (int): Number of days separating training and testing data.
+        min_train_days (int): Minimum training-history length required for a fold.
+    
+    Returns:
+        list[WalkForwardFold]: Generated folds with complete test windows and sufficient training history.
+    """
     folds: list[WalkForwardFold] = []
     train_delta = pd.Timedelta(days=int(train_years * 365.25))
     test_delta = pd.DateOffset(months=test_months)
@@ -73,7 +88,15 @@ def _generate_folds(
 def walk_forward_report(
     folds: list[WalkForwardFold],
 ) -> dict[str, Any]:
-    """Summarise walk-forward results across all folds."""
+    """
+    Summarize out-of-sample returns across walk-forward folds.
+    
+    Parameters:
+    	folds (list[WalkForwardFold]): Walk-forward folds containing total-return metrics.
+    
+    Returns:
+    	dict[str, Any]: Aggregate fold count, positive-fold count and fraction, median and mean out-of-sample returns, and rounded per-fold returns; an empty dictionary if no folds are provided.
+    """
     if not folds:
         return {}
 
@@ -103,13 +126,21 @@ def purged_walk_forward(
     test_months: int = 6,
     purge_days: int = 5,
 ) -> dict[str, Any]:
-    """Run a purged walk-forward test with the given signal function.
-
-    *prices*: DataFrame with DatetimeIndex and at minimum a ``close`` column.
-    *signal_fn*: callable that receives a train-period DataFrame slice
-                 and returns a Series of position sizes (-1/0/+1).
-
-    Returns a walk-forward report dict.
+    """
+    Run a purged walk-forward validation using a signal-generation function.
+    
+    Parameters:
+        prices (pd.DataFrame): Price data indexed by timestamps with a ``close`` column.
+        signal_fn (Callable[[pd.DataFrame], pd.Series]): Function that generates position
+            signals from a training-period price slice.
+        train_years (float): Historical training duration for each fold.
+        test_months (int): Out-of-sample testing duration for each fold.
+        purge_days (int): Gap between the training and testing periods.
+    
+    Returns:
+        dict[str, Any]: Aggregate fold count, positive-return fraction, median and mean
+            out-of-sample returns, and rounded per-fold returns. Folds with insufficient
+            data or signal-generation errors are omitted from the metrics.
     """
     start = prices.index.min()
     end = prices.index.max()
