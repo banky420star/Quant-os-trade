@@ -1,17 +1,15 @@
-"""Recursive one-step-ahead validation.
-
-Ports the Freqtrade-inspired recursive-analysis idea: at each bar,
-re-fit the model on all data up to that bar and predict the next.
-Catches parameter drift and overfitting that purged walk-forward
-might miss.
-"""
+"""Recursive expanding-window validation with label purging."""
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import logging
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
+
+_log = logging.getLogger(__name__)
 
 
 def recursive_one_step_ahead(
@@ -21,46 +19,51 @@ def recursive_one_step_ahead(
     *,
     min_train: int = 252,
     step: int = 20,
+    purge: int = 0,
 ) -> pd.DataFrame:
+    """Refit every ``step`` bars and predict the next block.
+
+    ``purge`` removes the final training rows before each test block and should
+    be at least as large as the forward label horizon.
     """
-    Generate expanding-window predictions with periodic model refitting.
-    
-    Parameters:
-        features (pd.DataFrame): Feature observations indexed by row order.
-        target (pd.Series): Target values aligned with `features`.
-        model_factory (Callable[[], Any]): Callable that creates a model with
-            `fit(X, y)` and `predict(X)` methods.
-        min_train (int): Number of initial observations required before prediction
-            begins.
-        step (int): Number of observations in each prediction batch and interval
-            between model refits.
-    
-    Returns:
-        pd.DataFrame: Rows with available predictions, containing `prediction` and
-            `actual` columns.
-    """
+    if purge < 0:
+        raise ValueError("purge must be non-negative")
+
     results = pd.DataFrame(
-        {"prediction": np.nan, "actual": target},
-        index=features.index,
+        {"prediction": np.nan, "actual": target}, index=features.index
     )
 
-    model = model_factory()
+    for index in range(min_train, len(features), step):
+        train_end = max(0, index - purge)
+        train_features = features.iloc[:train_end]
+        train_target = target.iloc[:train_end]
+        test_end = min(index + step, len(features))
+        test_features = features.iloc[index:test_end]
 
-    for i in range(min_train, len(features), step):
-        train_X = features.iloc[:i]
-        train_y = target.iloc[:i]
-        test_end = min(i + step, len(features))
-        test_X = features.iloc[i:test_end]
-
-        clean_idx = train_X.dropna().index.intersection(train_y.dropna().index)
-        if len(clean_idx) < 50:
+        clean_index = train_features.dropna().index.intersection(
+            train_target.dropna().index
+        )
+        if len(clean_index) < 50:
             continue
 
+        model = model_factory()
         try:
-            model.fit(train_X.loc[clean_idx], train_y.loc[clean_idx])
-            preds = model.predict(test_X.fillna(0.0))
-            results.iloc[i:test_end, results.columns.get_loc("prediction")] = preds
-        except Exception:
-            continue
+            model.fit(
+                train_features.loc[clean_index], train_target.loc[clean_index]
+            )
+            predictions = model.predict(test_features.fillna(0.0))
+            if isinstance(predictions, pd.DataFrame):
+                prediction_values = (
+                    predictions["expected_net_r"]
+                    if "expected_net_r" in predictions
+                    else predictions.iloc[:, 0]
+                )
+            else:
+                prediction_values = predictions
+            results.iloc[
+                index:test_end, results.columns.get_loc("prediction")
+            ] = np.asarray(prediction_values)
+        except Exception:  # noqa: BLE001 - one fold must not abort the audit
+            _log.warning("recursive fold at %s failed", index, exc_info=True)
 
     return results.dropna(subset=["prediction"])
