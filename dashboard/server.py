@@ -3557,7 +3557,15 @@ def _mutation_request_allowed(handler: BaseHTTPRequestHandler) -> bool:
     an Origin matching Host. Requests without Origin are accepted only from a
     loopback client, which keeps curl/local automation useful without allowing
     a cross-site browser form to toggle trading remotely.
+
+    Phase 0: When DASH_OPERATOR_TOKEN is set, all mutation requests MUST include
+    an Authorization: Bearer <token> header. This is required for remote access.
     """
+    token = os.environ.get("DASH_OPERATOR_TOKEN", "").strip()
+    if token:
+        auth = str(handler.headers.get("Authorization") or "").strip()
+        if not auth.startswith("Bearer ") or auth[7:] != token:
+            return False
     origin = str(handler.headers.get("Origin") or "").strip()
     client_host = str(handler.client_address[0] or "")
     if not origin:
@@ -3580,7 +3588,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")
+            # Phase 0: CORS only for same-origin; never wildcard
+            req_host = str(self.headers.get("Host") or "").lower()
+            origin_hdr = str(self.headers.get("Origin") or "")
+            if origin_hdr:
+                try:
+                    origin_host = urlparse(origin_hdr).netloc.lower()
+                    allow_origin = origin_hdr if origin_host == req_host else req_host
+                except Exception:
+                    allow_origin = req_host
+            else:
+                allow_origin = req_host
+            self.send_header("Access-Control-Allow-Origin", allow_origin)
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
@@ -3616,7 +3635,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Phase 0: CORS only for same-origin; never wildcard
+        req_host = str(self.headers.get("Host") or "").lower()
+        origin_hdr = str(self.headers.get("Origin") or "")
+        if origin_hdr:
+            try:
+                origin_host = urlparse(origin_hdr).netloc.lower()
+                allow_origin = origin_hdr if origin_host == req_host else req_host
+            except Exception:
+                allow_origin = req_host
+        else:
+            allow_origin = req_host
+        self.send_header("Access-Control-Allow-Origin", allow_origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
@@ -3852,24 +3882,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if not _mutation_request_allowed(self):
                 self._send_json({"ok": False, "message": "Resume requires a same-origin dashboard request"}, 403)
                 return
-            """Phase 0: asymmetric resume -- requires explicit verification."""
+            """Phase 0: asymmetric resume -- server-derived confirmation phrase."""
             try:
-                body = self._read_json_body()
-                typed = str(body.get("confirmation") or "").strip()
-                expected = str(body.get("expected") or "RESUME DEMO").strip()
-                if typed.upper() != expected.upper():
-                    self._send_json({"ok": False, "message": f"Confirmation mismatch. Type {expected!r} to confirm resume."}, 403)
-                    return
                 config = load_config()
                 ok = bool((config.get("execution") or {}).get("explicit_opt_in_danger_zone"))
                 if not ok:
                     self._send_json({"ok": False, "message": "Profile not opted in for execution"}, 403)
                     return
+                # Phase 0: block real-account resume
+                account_mode = str((config.get("execution") or {}).get("mode", "paper")).lower()
+                if account_mode in ("real", "live", "mt5_real"):
+                    self._send_json({"ok": False, "message": "Real-account resume blocked during Phase 0 safety closure"}, 403)
+                    return
+                body = self._read_json_body()
+                typed = str(body.get("confirmation") or "").strip()
+                # Server derives the expected phrase — client never defines it
+                expected = f"RESUME {account_mode.upper()}"
+                if typed.upper() != expected.upper():
+                    self._send_json({"ok": False, "message": f"Confirmation mismatch. Type {expected!r} to confirm resume."}, 403)
+                    return
                 document = _set_operator_kill_switch("off", reason=f"Resume confirmed: {typed}")
                 _write_command_audit("/api/resume", "executed", handler=self)
                 write_json_state("resume_audit.json", {"timestamp": utc_now_iso(), "action": "resume", "confirmation": typed})
-                write_json_state("resume_audit.json", {"timestamp": utc_now_iso(), "action": "resume", "confirmation": typed})
-                self._send_json({"ok": True, "message": "Trading resumed", "timestamp": document.get("updated_at")})
+                self._send_json({"ok": True, "message": "Trading resumed", "timestamp": document.get("updated_at"), "expected_phrase": expected})
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
 
@@ -3878,48 +3913,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "message": "UNBLOCK ALL TRADES removed per Phase 0 safety. Clear each gate individually."}, 403)
             return
         elif path == "/api/_disabled_unblock":
-            try:
-                # DISABLED
-                # 1. Kill switch -> off (trading enabled)
-                current_kill = read_json_state("kill_switch.json", default={}) or {}
-                write_json_state("kill_switch.json", {
-                    "kill_switch": False,
-                    "reason": None,
-                    "source": "operator" if current_kill.get("source") == "operator" else None,
-                    "activated_at": None,
-                    "cleared_at": utc_now_iso(),
-                })
-                # 2. Adaptive gates -> reset to normal tier, clear blocked symbols
-                write_json_state("adaptive_gates.json", {
-                    "timestamp": utc_now_iso(),
-                    "enabled": True,
-                    "tier": "normal",
-                    "min_policy_score": 35.0,
-                    "min_confidence": 50.0,
-                    "blocked_symbols": [],
-                    "lookback_n": 0,
-                    "recent_win_rate_pct": 50.0,
-                    "recent_net_pnl": 0.0,
-                    "consecutive_losses": 0,
-                    "reason": "manual unblock - all gates cleared",
-                })
-                # 3. Market-closed backoff -> clear all symbols
-                write_json_state("market_closed_backoff.json", {
-                    "timestamp": utc_now_iso(),
-                    "symbols": {},
-                })
-                # 4. Learning overrides -> clear any live-apply patches
-                write_json_state("learning_config_overrides.json", {
-                    "timestamp": utc_now_iso(),
-                    "patches": [],
-                })
-                self._send_json({
-                    "ok": True,
-                    "message": "All trade gates unblocked - kill switch cleared, adaptive gates reset to normal, market-closed backoff cleared",
-                    "timestamp": utc_now_iso(),
-                })
-            except Exception as exc:
-                self._send_json({"ok": False, "message": str(exc)}, 500)
+            # Phase 0: permanently disabled. Restore via deployment, not dashboard.
+            self._send_json({"ok": False, "message": "_disabled_unblock removed per Phase 0 safety. Restore each gate individually."}, 403)
         elif path == "/api/fast-mode":
             if not _mutation_request_allowed(self):
                 self._send_json({"ok": False, "message": "Fast-mode changes require a same-origin dashboard request"}, 403)

@@ -32,7 +32,15 @@ def build_safety_header(
 
     lp = live_portfolio or {}
     positions = lp.get("open_positions", [])
-    open_risk = round(sum(abs(float(p.get("profit", 0))) for p in positions), 2)
+    # Phase 0: compute actual stop-risk, not floating P&amp;L
+    stop_risk = 0.0
+    for p in positions:
+        sl_price = p.get("sl") or p.get("stop_loss") or 0.0
+        entry_price = p.get("entry") or p.get("open_price") or 0.0
+        volume = float(p.get("volume", 0) or 0)
+        if sl_price and entry_price and volume:
+            stop_risk += abs(sl_price - entry_price) * volume
+    open_risk = round(stop_risk, 2) if stop_risk else round(sum(abs(float(p.get("profit", 0))) for p in positions), 2)
 
     now_ts = _time.time()
     data_updated = lp.get("updated_at") or ""

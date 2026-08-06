@@ -1470,7 +1470,8 @@ function updateSafetyHeader(sh) {
   var ac = sh.data_freshness==="stale" ? "var(--red)" : sh.data_freshness==="aging" ? "var(--orange)" : "var(--green)";
   S("shDataAge", (sh.data_age_seconds>=0?sh.data_age_seconds+"s":"?")+" "+(sh.data_freshness||"?"), ac);
   S("shPositions", sh.open_positions||"0", (sh.open_positions||0)>0?"var(--orange)":"var(--muted)");
-  S("shRisk", "$"+(sh.open_risk||0).toFixed(2), (sh.open_risk||0)>0?"var(--orange)":"var(--muted)");
+  var riskVal = (sh.open_risk||0);
+  S("shRisk", "$"+riskVal.toFixed(2), riskVal>0?"var(--orange)":"var(--muted)");
   var hdr = document.getElementById("safetyHeader");
   if (hdr) {
     if (sh.data_freshness==="stale" && sh.execution_allowed) hdr.style.background="rgba(255,69,58,.12)";
@@ -1500,7 +1501,7 @@ async function doResume() {
   if (v.toUpperCase() !== _resumeCode.toUpperCase()) { s.textContent="Mismatch"; s.style.color="var(--red)"; return; }
   s.textContent = "Verifying...";
   try {
-    var r = await fetch("/api/resume", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:v,expected:_resumeCode})});
+    var r = await fetch("/api/resume", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:v})});
     var j = await r.json();
     if (j.ok) { s.textContent="Resumed! Reloading..."; s.style.color="var(--green)"; setTimeout(function(){location.reload()},1500); }
     else { s.textContent=j.message||"Failed"; s.style.color="var(--red)"; }
