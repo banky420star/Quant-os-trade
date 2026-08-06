@@ -3517,6 +3517,39 @@ def _handle_sse_profit_quality(handler):
         _ProfitQualityBroadcaster.unsubscribe(q)
 
 
+def _write_command_audit(
+    endpoint: str,
+    action: str,
+    detail: dict | None = None,
+    handler: BaseHTTPRequestHandler | None = None,
+) -> None:
+    """Phase 0: append immutable audit record for every dashboard mutation.
+
+    Written as JSONL to state/command_audit.jsonl. Append-only by design.
+    Audit failure must never block the mutation.
+    """
+    try:
+        import os as _os
+        from core.utils import STATE_DIR as _SD
+        audit_path = _SD / "command_audit.jsonl"
+        remote = ""
+        if handler:
+            remote = str(getattr(handler, "client_address", ("?", 0))[0])
+        record = {
+            "ts": utc_now_iso(),
+            "endpoint": endpoint,
+            "action": action,
+            "detail": detail or {},
+            "remote": remote,
+            "pid": _os.getpid(),
+        }
+        line = json.dumps(record, default=str) + "\n"
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
 def _mutation_request_allowed(handler: BaseHTTPRequestHandler) -> bool:
     """Allow dashboard mutations only from the dashboard origin or localhost.
 
@@ -3778,6 +3811,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 from scripts.reset_session_memory import reset_session_memory
 
                 reset_session_memory()
+                _write_command_audit("/api/reset-session", "executed", handler=self)
                 self._send_json({
                     "ok": True,
                     "message": "Session state reset — baselines, kill switch, and memory cleared",
@@ -3800,6 +3834,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     action,
                     reason=body.get("reason"),
                 )
+                _write_command_audit("/api/kill-switch", f"action={action}", handler=self)
                 self._send_json({
                     "ok": True,
                     "action": action,
@@ -3814,6 +3849,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/resume":
+            if not _mutation_request_allowed(self):
+                self._send_json({"ok": False, "message": "Resume requires a same-origin dashboard request"}, 403)
+                return
             """Phase 0: asymmetric resume -- requires explicit verification."""
             try:
                 body = self._read_json_body()
@@ -3828,6 +3866,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({"ok": False, "message": "Profile not opted in for execution"}, 403)
                     return
                 document = _set_operator_kill_switch("off", reason=f"Resume confirmed: {typed}")
+                _write_command_audit("/api/resume", "executed", handler=self)
+                write_json_state("resume_audit.json", {"timestamp": utc_now_iso(), "action": "resume", "confirmation": typed})
                 write_json_state("resume_audit.json", {"timestamp": utc_now_iso(), "action": "resume", "confirmation": typed})
                 self._send_json({"ok": True, "message": "Trading resumed", "timestamp": document.get("updated_at")})
             except Exception as exc:
@@ -3881,6 +3921,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/fast-mode":
+            if not _mutation_request_allowed(self):
+                self._send_json({"ok": False, "message": "Fast-mode changes require a same-origin dashboard request"}, 403)
+                return
             # Phase 0 safety: only off/observe allowed from dashboard.
             try:
                 from core.fast_mode_runtime import (
@@ -3903,6 +3946,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         }, 403)
                         return
                     doc = apply_preset(preset, extra=body.get("extra"))
+                _write_command_audit("/api/fast-mode", f"action={action}, preset={preset if action != 'clear' else 'N/A'}", handler=self)
                 self._send_json({
                     "ok": True,
                     "preset": doc.get("preset"),
@@ -4025,6 +4069,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "requested_at": utc_now_iso(),
                     "reason": f"Dashboard profile switch to {profile}",
                 })
+                _write_command_audit("/api/switch_profile", f"profile={profile}", handler=self)
                 # Launch new bot FIRST (independent process), then kill self
                 # Order matters on Windows: os.kill is instant, so anything after
                 # it would be dead code. The new bot takes 5-15s to boot (imports,
@@ -4088,6 +4133,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 write_json_state("session_reset_at.json", {
                     "reset_at": now, "reset_by": _by,
                 })
+                _write_command_audit("/api/reset_memory", "executed", handler=self)
 
                 # --- Learning + calibration state (original scope) ---
                 write_json_state("learning_config_overrides.json", {
