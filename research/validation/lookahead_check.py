@@ -1,14 +1,9 @@
-"""Point-in-time leakage detection.
-
-Tests that features do not contain future information and that
-train/test splits respect temporal boundaries.
-"""
+"""Point-in-time leakage detection."""
 
 from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 
@@ -19,45 +14,28 @@ def detect_lookahead(
     max_lag: int = 20,
     correlation_threshold: float = 0.15,
 ) -> dict[str, Any]:
-    """
-    Identify features that correlate with target values from future periods.
-    
-    A feature is marked suspicious when it has at least 30 shared non-null
-    observations with the target and its absolute correlation at any tested lag
-    exceeds the configured threshold.
-    
-    Parameters:
-        features (pd.DataFrame): Feature values indexed by observation time.
-        target (pd.Series): Target values indexed by observation time.
-        max_lag (int): Maximum number of future periods to test.
-        correlation_threshold (float): Absolute correlation above which a feature
-            is considered suspicious.
-    
-    Returns:
-        dict[str, Any]: Audit results containing the pass status, suspicious
-            feature names, maximum absolute correlation and corresponding lag for
-            each eligible feature, and the configured threshold.
-    """
+    """Identify features that correlate with future target values."""
     suspicious: list[str] = []
     max_corrs: dict[str, dict[str, float]] = {}
+    target_non_null = target.dropna()
 
     for col in features.columns:
         feat = features[col].dropna()
-        common = feat.index.intersection(target.dropna().index)
+        common = feat.index.intersection(target_non_null.index)
         if len(common) < 30:
             continue
 
         best_corr = 0.0
         best_lag = 0
-
         for lag in range(1, max_lag + 1):
             future = target.shift(-lag).reindex(common)
             past = feat.reindex(common)
             corr = past.corr(future)
+            if pd.isna(corr):
+                continue
             if abs(corr) > best_corr:
                 best_corr = abs(corr)
                 best_lag = lag
-
             if abs(corr) > correlation_threshold:
                 suspicious.append(col)
                 break
@@ -78,35 +56,31 @@ def point_in_time_audit(
     *,
     max_future_seconds: int = 60,
 ) -> dict[str, Any]:
-    """
-    Perform a lightweight structural audit for potential point-in-time data leakage.
-    
-    Parameters:
-        df (pd.DataFrame): Data to inspect.
-        timestamp_col (str): Name of the column containing timestamps.
-    
-    Returns:
-        dict[str, Any]: Audit results containing ``passed`` and, when applicable,
-        an ``issues`` list describing non-monotonic datetime indexes and
-        future-looking column names. If no timestamp information is available,
-        returns ``passed`` as ``True`` with a ``no_timestamp_column`` note.
-    """
-    if timestamp_col not in df.columns and not isinstance(df.index, pd.DatetimeIndex):
+    """Audit ordering, future timestamps, and future-looking column names."""
+    has_datetime_index = isinstance(df.index, pd.DatetimeIndex)
+    if timestamp_col not in df.columns and not has_datetime_index:
         return {"passed": True, "note": "no_timestamp_column"}
 
     issues: list[dict[str, Any]] = []
 
-    # Check monotonic timestamps
-    if isinstance(df.index, pd.DatetimeIndex):
-        if not df.index.is_monotonic_increasing:
-            issues.append({"type": "non_monotonic_index", "count": int((~df.index.is_monotonic_increasing).sum())})
+    if has_datetime_index and not df.index.is_monotonic_increasing:
+        regressions = int(
+            (df.index.to_series().diff() < pd.Timedelta(0)).sum()
+        )
+        issues.append({"type": "non_monotonic_index", "count": regressions})
 
-    # Flag future-looking column names
+    if timestamp_col in df.columns:
+        timestamps = pd.to_datetime(df[timestamp_col], utc=True, errors="coerce")
+        future_limit = pd.Timestamp.now(tz="utc") + pd.Timedelta(
+            seconds=max_future_seconds
+        )
+        future_count = int((timestamps > future_limit).sum())
+        if future_count:
+            issues.append({"type": "future_timestamp", "count": future_count})
+
     future_patterns = ["next_", "future_", "forward_", "_t1", "_lead"]
     for col in df.columns:
-        for pat in future_patterns:
-            if pat in str(col).lower():
-                issues.append({"type": "future_looking_column", "column": str(col)})
-                break
+        if any(pattern in str(col).lower() for pattern in future_patterns):
+            issues.append({"type": "future_looking_column", "column": str(col)})
 
     return {"passed": len(issues) == 0, "issues": issues}
