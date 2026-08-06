@@ -64,16 +64,19 @@ Profiles live in `profiles/*.yaml`. Pick one with `--profile`:
 
 | Profile | Use case |
 |---------|----------|
-| `30-real` | **Micro live/demo** — XAU, Oil, UK100; independent per-symbol exposure; ~$30 equity |
-| `30` | Micro paper-style gates |
-| `growth` | Growth / practice campaign |
-| `live` | Full live plan ($50k gates) |
+| `validation` | **Default — read-only**. MT5 data/features/journal only. Zero orders. Safe everywhere. |
+| `30-real` | Micro live — XAU, Oil, UK100; requires explicit opt-in |
+| `30` | Micro paper-style gates — no external orders |
+| `growth` | Growth / practice campaign (demo); requires explicit opt-in |
+| `live` | Full live plan; requires explicit opt-in |
 
 Set explicitly (recommended):
 
 ```powershell
-C:\Python314\python.exe start.py --profile 30-real
+C:\Python314\python.exe start.py --profile validation
 ```
+
+To enable order routing, the profile must set `execution.explicit_opt_in_danger_zone: true`.
 
 Or use the batch launcher, which selects the MT5-capable interpreter automatically:
 
@@ -91,7 +94,7 @@ LAUNCH.bat --profile 30-real
 cd Quant-os-trade
 .\scripts\kill_agent.bat
 C:\Python314\python.exe scripts\preflight.py
-C:\Python314\python.exe start.py --profile 30-real
+C:\Python314\python.exe start.py --profile validation
 ```
 
 **Windows shortcut:**

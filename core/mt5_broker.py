@@ -376,7 +376,8 @@ class MT5Broker:
             "type_filling": self._filling_mode(info),
         }
         self.logger.info("Closing position #%s %s %s vol=%s", ticket, symbol, side, volume)
-        result = mt5.order_send(request)
+        from core.mt5_owner import MT5Owner
+        result = MT5Owner.instance().order_send(request)
         if result is None:
             return {"success": False, "error": str(mt5.last_error())}
         if result.retcode != mt5.TRADE_RETCODE_DONE:
@@ -616,7 +617,8 @@ class MT5Broker:
         # else: required_margin is 0.0 or affordable — not a failure.
 
         self.logger.info("Sending order: %s", {k: v for k, v in request.items() if k != "comment"})
-        result = mt5.order_send(request)
+        from core.mt5_owner import MT5Owner
+        result = MT5Owner.instance().order_send(request)
 
         if result is None:
             return {"success": False, "error": str(mt5.last_error())}

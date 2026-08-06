@@ -193,6 +193,10 @@ filters:
     - '15:00'
 execution:
   starting_cash: 30
+  live_trading_enabled: false
+  mt5_trading_enabled: false
+  # Phase 0 safety: paper profile does NOT opt into order routing.
+  explicit_opt_in_danger_zone: false
 research:
   min_trades_for_research: 10
   replay_bars: 300

@@ -19,6 +19,12 @@ except ImportError:
     psutil = None  # type: ignore
 
 
+# Phase 0 safety: services that can mutate the broker. When any of these
+# fail 3+ consecutive times, the supervisor triggers an emergency halt.
+CRITICAL_SERVICES: set[str] = {"trading_pipeline", "fast_mode"}
+MAX_CONSECUTIVE_FAILURES = 3
+
+
 @dataclass
 class ServiceState:
     name: str
@@ -31,6 +37,7 @@ class ServiceState:
     restart_count: int = 0
     last_error: str | None = None
     interval_seconds: float = 60.0
+    consecutive_failures: int = 0
 
 
 class ManagedService:
@@ -76,13 +83,27 @@ class ManagedService:
                 self.state.run_count += 1
                 self.state.status = "ok"
                 self.state.last_error = None
+                self.state.consecutive_failures = 0
             except Exception as exc:
                 self.state.error_count += 1
                 self.state.status = "error"
                 self.state.last_error = str(exc)
                 self.state.restart_count += 1
+                self.state.consecutive_failures += 1
                 self._logger.error("Service %s failed: %s", self.state.name, exc)
                 self._logger.error(traceback.format_exc())
+                # Phase 0 safety: critical service failure cascade → emergency halt.
+                if (
+                    self.state.name in CRITICAL_SERVICES
+                    and self.state.consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+                ):
+                    self._logger.critical(
+                        "EMERGENCY HALT: %s failed %d consecutive times. "
+                        "Shutting down to prevent unsafe operation.",
+                        self.state.name,
+                        self.state.consecutive_failures,
+                    )
+                    os._exit(1)
             finally:
                 self.state.last_run = utc_now_iso()
                 self.state.last_duration_ms = round((time.monotonic() - t0) * 1000, 1)

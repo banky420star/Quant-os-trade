@@ -11,10 +11,12 @@ Evidence-first MT5 trading agent for Windows: sequential pipeline loops, strateg
 pip install -r requirements.txt
 .\scripts\kill_agent.bat
 python scripts\preflight.py
-python start.py --profile 30-real
+python start.py --profile validation
 ```
 
-Open **http://127.0.0.1:8080** — MT5 must be logged in with **Algo Trading** enabled.
+Open **http://127.0.0.1:8080**. The validation profile is **read-only** — it connects to MT5 for data/features/journal but sends **zero orders**. Safe to run on any account.
+
+To enable demo trading, use `--profile growth`. To enable live trading, use `--profile 30-real` or `--profile 100` — each requires an explicit opt-in via `execution.explicit_opt_in_danger_zone: true` in the profile.
 
 ## Documentation
 
@@ -35,13 +37,19 @@ Open **http://127.0.0.1:8080** — MT5 must be logged in with **Algo Trading** e
 
 | Profile | Use |
 |---------|-----|
-| `30-real` | Micro demo/live — XAU, Oil, UK100; independent per-symbol exposure |
-| `30` | Micro paper gates |
-| `growth` | Growth campaign |
-| `live` | Full $50k live plan |
+| `validation` | **Default** — read-only MT5 connection, zero orders. Safe everywhere. |
+| `growth` | Demo growth campaign — 14 symbols, fraction-Kelly (explicit opt-in) |
+| `30-real` | Micro live — XAU, Oil, UK100; requires explicit opt-in |
+| `30` | Micro paper gates — no external orders |
+| `100` | Small live — XAU+FX, up to 0.02 lot; requires explicit opt-in |
+| `live` | Full live plan; requires explicit opt-in |
 
 ```powershell
-python start.py --profile 30-real
+# Safe default (recommended):
+python start.py --profile validation
+
+# Demo trading (explicit opt-in):
+python start.py --profile growth
 ```
 
 ## Project layout (summary)
@@ -64,10 +72,12 @@ See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the full tree.
 
 | Action | Command |
 |--------|---------|
-| Start (micro live) | `python start.py --profile 30-real` |
+| Start (safe default) | `python start.py --profile validation` |
+| Start (demo trading) | `python start.py --profile growth` |
 | Stop | `.\scripts\kill_agent.bat` |
 | Reset session state | Dashboard **Reset state** or `python scripts\reset_session_memory.py` |
 | Pre-flight | `python scripts\preflight.py` |
+| Safety audit | `python scripts\safety_audit.py` |
 | Tests | `python -m pytest tests/ -q` |
 
 ## Requirements

@@ -9,3 +9,8 @@ practice:
     enabled: false
 mt5:
   account_mode: real
+execution:
+  live_trading_enabled: true
+  mt5_trading_enabled: true
+  # Phase 0 safety: this profile explicitly opts into live order routing.
+  explicit_opt_in_danger_zone: true

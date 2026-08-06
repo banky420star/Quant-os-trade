@@ -274,6 +274,9 @@ evaluation:
 execution:
   live_trading_enabled: true
   mt5_trading_enabled: true
+  # Phase 0 safety: this profile explicitly opts into live order routing.
+  # Without this flag, the global execution gate blocks ALL order_send calls.
+  explicit_opt_in_danger_zone: true
   # Hard gate: fast_mode_runtime.json presets cannot override these.
   fast_mode_enabled: false
   allow_fast_mode_runtime_enable: false

@@ -211,6 +211,29 @@ def start(once: bool = False, profile: str | None = None) -> None:
     # live-trading combination (the 2026-06-30 wipe scenario) and enforce the
     # explicit config.mode label. See core/profile_guard.py.
     assert_profile(config)
+
+    # Phase 0 safety gate: open the global execution mutex ONLY when the
+    # effective profile explicitly opts into the danger zone. Without this
+    # flag, MT5Owner.order_send() returns None for every caller — zero broker
+    # mutations regardless of what runtime state files, dashboards, or presets
+    # attempt. The flag lives in core.mt5_owner so no import-time side-effects
+    # can bypass it.
+    exec_cfg = config.get("execution") or {}
+    if exec_cfg.get("explicit_opt_in_danger_zone") is True:
+        import core.mt5_owner as _owner
+        _owner.EXECUTION_ALLOWED = True
+        logger.info(
+            "Global execution gate OPEN — profile '%s' has opted into "
+            "live order routing",
+            config.get("active_profile", "?"),
+        )
+    else:
+        logger.info(
+            "Global execution gate CLOSED — no broker orders will be sent. "
+            "Set execution.explicit_opt_in_danger_zone: true in the active "
+            "profile to enable order routing."
+        )
+
     write_json_state("runtime_mode.json", mode)
     logger.info("Runtime mode: %s — %s", mode["label"], mode["detail"])
     if not performance_gates_active(config):

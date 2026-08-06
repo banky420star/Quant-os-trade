@@ -160,6 +160,11 @@ strategies:
     donchian_enabled: true
     bollinger_enabled: true
     atr_expansion_enabled: true
+execution:
+  live_trading_enabled: true
+  mt5_trading_enabled: true
+  # Phase 0 safety: this profile explicitly opts into demo order routing.
+  explicit_opt_in_danger_zone: true
 filters:
   spread_mult: 5.0
   min_volume_ratio: 0.08

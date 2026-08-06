@@ -528,6 +528,8 @@ evaluation:
 execution:
   live_trading_enabled: true
   mt5_trading_enabled: true
+  # Phase 0 safety: this profile explicitly opts into live order routing.
+  explicit_opt_in_danger_zone: true
   max_lot: 0.03
 strategy_arena:
   enabled: false

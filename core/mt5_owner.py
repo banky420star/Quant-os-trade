@@ -42,6 +42,23 @@ except ImportError as exc:  # pragma: no cover - exercised via unavailable path
 
 IPC_TIMEOUT_CODE = -10005
 
+# Global execution gate — the single chokepoint for ALL MT5 mutations.
+# Set to True ONLY after start.py validates the profile and confirms the
+# operator has explicitly opted into the danger zone. No code path, runtime
+# state file, dashboard action, or preset can bypass this gate.
+EXECUTION_ALLOWED = False
+
+
+def execution_gate_blocked() -> bool:
+    """Return True when the global execution gate is CLOSED (safe).
+
+    This is the non-bypassable gate promised by the Phase 0 safety
+    architecture. When True, every order_send path returns None without
+    touching the broker. Only start.py can open it, and only after
+    profile validation and explicit opt-in.
+    """
+    return not EXECUTION_ALLOWED
+
 
 class MT5Owner:
     """Process-global singleton that owns the MetaTrader5 module connection."""
@@ -215,6 +232,18 @@ class MT5Owner:
             return mt5.copy_rates_from_pos(symbol, timeframe, start, count) if mt5 is not None else None
 
     def order_send(self, request: dict[str, Any]) -> Any:
+        # Phase 0 global execution gate — the non-bypassable chokepoint.
+        # No code path, runtime state file, dashboard action, or preset can
+        # open this gate except start.py setting EXECUTION_ALLOWED=True.
+        if execution_gate_blocked():
+            _log = logging.getLogger("mt5_owner")
+            _log.warning(
+                "MT5 order_send BLOCKED by global execution gate. "
+                "Set execution.explicit_opt_in_danger_zone: true in the "
+                "active profile to enable live/demo order routing."
+            )
+            return None
+
         # Single global mutation chokepoint (2026-08-04 review fix): MT5Broker
         # serializes its own order_send under
         # ``MT5TerminalManager._shared_trade_lock``, while the position_manager

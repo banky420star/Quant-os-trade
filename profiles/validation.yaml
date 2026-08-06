@@ -17,6 +17,7 @@ execution:
   mode: mt5
   live_trading_enabled: false
   mt5_trading_enabled: false
+  explicit_opt_in_danger_zone: false
   default_lot: 0.01
   max_lot: 0.01
   magic_number: 20250625
