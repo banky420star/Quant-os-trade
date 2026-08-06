@@ -1,12 +1,5 @@
 #!/usr/bin/env python
-"""D1/H4 Trend MVP — cost-aware baselines with double-cost stress survival.
-
-Reads real D1/H4 Parquet files from MT5 (backfilled by history_loop).
-Falls back to M15 resampling if D1/H4 files are not yet available.
-Runs MA200, 3M momentum, and blended 1/3/6/12-month models.
-Deducts estimated spread, swap, and slippage per signal flip,
-then stress-tests at 1x, 2x, and 3x costs.
-"""
+"""Cost-aware D1 and H4 trend baseline research runner."""
 
 from __future__ import annotations
 
@@ -19,6 +12,23 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from research.costs.trend_portfolio import (
+    CLUSTER_CAPS,
+    COST_BPS,
+    SINGLE_SYMBOL_CAP,
+    SLIPPAGE_BPS,
+    SWAP_BPS_DAILY,
+    VOL_LOOKBACK,
+    bars_per_day,
+    capped_vol_weights,
+    cost_per_trade_bps,
+    daily_swap_bps,
+    equivalent_horizons,
+    net_returns,
+    periods_per_year,
+    portfolio_metrics,
+    symbol_cluster,
+)
 from research.data.catalog import RESEARCH_UNIVERSE
 from research.strategies.trend_baseline import (
     blended_momentum_signal,
@@ -26,116 +36,47 @@ from research.strategies.trend_baseline import (
     time_series_momentum_signal,
 )
 
-# Primary: clean exports from research/data/.  Fallback: raw MT5 history.
 DATA_DIR = Path("research/data")
 FALLBACK_DIR = Path("data/history")
 REPORT_PATH = Path("data/trend_mvp_cost_report.json")
 
-# ── cost model ───────────────────────────────────────────────────────────────
-# Estimated one-way cost in basis points per symbol class.
-# These are conservative planning estimates; real costs come from
-# broker_symbol_specs.json + mt5.order_calc_profit().
 
-COST_BPS: dict[str, float] = {
-    # Equity indices — wider spreads on CFDs
-    "US500m": 1.5, "US30m": 2.0, "NAS100m": 2.5,
-    "UK100m": 2.5, "FR40m": 2.5, "JP225m": 3.0,
-    # FX majors — tight spreads
-    "EURUSDm": 0.3, "GBPUSDm": 0.5, "USDJPYm": 0.4,
-    "USDCHFm": 0.5, "AUDUSDm": 0.6,
-    # Metals & energy — moderate
-    "XAUUSDm": 2.0, "USOILm": 3.0,
-    # Crypto — wide
-    "BTCUSDm": 5.0,
-}
-
-# Daily swap cost in bps (1 bp = 0.01%).  Negative = you receive.
-# Long-only estimate; shorts are symm for this rough pass.
-SWAP_BPS_DAILY: dict[str, float] = {
-    "XAUUSDm": 0.15, "USOILm": 0.40,
-    "EURUSDm": 0.05, "GBPUSDm": 0.04, "USDJPYm": 0.06,
-    "USDCHFm": 0.03, "AUDUSDm": 0.04,
-    "US500m": 0.08, "US30m": 0.10, "NAS100m": 0.12,
-    "UK100m": 0.08, "FR40m": 0.08, "JP225m": 0.10,
-    "BTCUSDm": 1.0,
-}
-
-# Slippage in bps per entry/exit
-SLIPPAGE_BPS: float = 0.5
-
-
-def cost_per_trade_bps(symbol: str) -> float:
-    """Round-trip cost in bps: spread + 2×slippage (entry+exit)."""
-    spread = COST_BPS.get(symbol, 2.0)
-    return spread + 2 * SLIPPAGE_BPS
-
-
-def daily_swap_bps(symbol: str) -> float:
-    """Return the estimated daily swap cost in basis points for a symbol.
-    
-    Parameters:
-        symbol (str): Symbol whose daily swap cost is requested.
-    
-    Returns:
-        float: Symbol-specific daily swap cost, or 0.05 basis points when no estimate is defined.
-    """
-    return SWAP_BPS_DAILY.get(symbol, 0.05)
-
-
-# ── resampling ───────────────────────────────────────────────────────────────
-
-
-def _read_ohlc(sym: str, tf: str) -> pd.DataFrame:
-    """
-    Load OHLC data for a symbol and timeframe, using direct timeframe data when available and resampled M15 data otherwise.
-    
-    Parameters:
-        sym (str): Symbol whose market data should be loaded.
-        tf (str): Target timeframe, such as ``"D1"`` or ``"H4"``.
-    
-    Returns:
-        pd.DataFrame: Sorted OHLC data indexed by timestamp.
-    
-    Raises:
-        FileNotFoundError: If neither target-timeframe nor M15 data exists.
-        ValueError: If fallback data has neither a datetime index nor a ``time`` column.
-    """
-    # Try clean export first, then raw history, then M15 fallback
-    direct = DATA_DIR / f"{sym}_{tf}.parquet"
+def _read_ohlc(symbol: str, timeframe: str) -> pd.DataFrame:
+    """Load direct OHLC history or resample M15 as a fallback."""
+    direct = DATA_DIR / f"{symbol}_{timeframe}.parquet"
     if not direct.exists():
-        direct = FALLBACK_DIR / f"{sym}_{tf}.parquet"
+        direct = FALLBACK_DIR / f"{symbol}_{timeframe}.parquet"
     if direct.exists():
-        df = pd.read_parquet(direct)
-        if "time" in df.columns:
-            df["time"] = pd.to_datetime(df["time"], utc=True)
-            df = df.set_index("time")
-        return df.sort_index()
+        frame = pd.read_parquet(direct)
+        if "time" in frame.columns:
+            frame["time"] = pd.to_datetime(frame["time"], utc=True)
+            frame = frame.set_index("time")
+        if not isinstance(frame.index, pd.DatetimeIndex):
+            raise ValueError(f"{direct} has no datetime index")
+        return frame.sort_index()
 
-    # Fall back to M15 resampling from fallback dir
-    m15 = FALLBACK_DIR / f"{sym}_M15.parquet"
-    if not m15.exists():
-        raise FileNotFoundError(f"No data for {sym} {tf} (neither {direct.name} nor {m15.name})")
-
-    df = pd.read_parquet(m15)
-    # Resample M15 to the target timeframe
-    if "time" in df.columns:
-        df = df.copy()
-        df["time"] = pd.to_datetime(df["time"], utc=True)
-        df = df.set_index("time")
-    elif not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("DataFrame must have a DatetimeIndex or 'time' column")
-
-    rule = {"D1": "D", "H4": "4h"}[tf]
-    agg_map = {"open": "first", "high": "max", "low": "min", "close": "last"}
-    for col in ["volume", "tick_volume", "real_volume"]:
-        if col in df.columns:
-            agg_map[col] = "sum"
-    if "spread" in df.columns:
-        agg_map["spread"] = "mean"
-    return df.resample(rule).agg(agg_map).dropna(subset=["open", "close"])
-
-
-# ── cost-aware metrics ───────────────────────────────────────────────────────
+    source = FALLBACK_DIR / f"{symbol}_M15.parquet"
+    if not source.exists():
+        raise FileNotFoundError(f"No data for {symbol} {timeframe}")
+    frame = pd.read_parquet(source)
+    if "time" in frame.columns:
+        frame["time"] = pd.to_datetime(frame["time"], utc=True)
+        frame = frame.set_index("time")
+    if not isinstance(frame.index, pd.DatetimeIndex):
+        raise ValueError(f"{source} has no datetime index")
+    rule = {"D1": "1D", "H4": "4h"}[timeframe]
+    aggregation: dict[str, str] = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+    }
+    for column in ("volume", "tick_volume", "real_volume"):
+        if column in frame.columns:
+            aggregation[column] = "sum"
+    if "spread" in frame.columns:
+        aggregation["spread"] = "mean"
+    return frame.resample(rule).agg(aggregation).dropna(subset=["open", "close"])
 
 
 def _signal_metrics_cost(
@@ -144,297 +85,143 @@ def _signal_metrics_cost(
     symbol: str,
     *,
     cost_mult: float = 1.0,
+    tf: str = "D1",
 ) -> dict[str, Any]:
-    """
-    Calculate trading performance metrics after transaction and holding costs.
-    
-    Parameters:
-        close (pd.Series): Closing prices used to calculate returns.
-        signal (pd.Series): Position signals aligned with the closing prices.
-        symbol (str): Instrument identifier used to determine trading and holding costs.
-        cost_mult (float): Multiplier applied to transaction and holding costs.
-    
-    Returns:
-        dict[str, Any]: Performance, signal, and cost metrics.
-    """
-    ret = close.pct_change()
-    gross = (ret * signal.shift(1)).dropna()
-    if len(gross) < 20:
-        return {"n_bars": len(gross), "total_return": 0, "sharpe": 0, "max_dd": 0}
-
-    # Count signal flips = number of round-trip trades
-    flips = int((signal.diff().abs() > 0).sum())
-
-    # Transaction cost: per-flip round-trip cost in decimal
-    tc_bps = cost_per_trade_bps(symbol) * cost_mult
-    tc_decimal = tc_bps / 10_000
-
-    # Holding cost: daily swap × signal direction × cost multiplier
-    swap_bps = daily_swap_bps(symbol) * cost_mult / 10_000
-
-    # Build cost series
-    cost_series = pd.Series(0.0, index=gross.index)
-
-    # Transaction cost at each flip
-    for i in range(1, len(signal)):
-        if signal.iloc[i] != signal.iloc[i - 1]:
-            idx = signal.index[i]
-            if idx in cost_series.index:
-                cost_series.loc[idx] = tc_decimal
-
-    # Daily swap when in position
-    swap_daily = signal.abs().shift(1).fillna(0) * swap_bps
-    swap_daily = swap_daily.reindex(cost_series.index).fillna(0)
-
-    net = gross - cost_series - swap_daily
-    cum = (1 + net).cumprod()
-    total = float(cum.iloc[-1] - 1)
-    dd = (cum / cum.cummax() - 1).min()
-    sharpe = float(net.mean() / net.std() * np.sqrt(252)) if net.std() > 0 else 0
-
-    return {
-        "n_bars": len(net),
-        "total_return": round(total, 6),
-        "annual_return": round(float((1 + total) ** (252 / max(len(net), 1)) - 1), 6),
-        "sharpe": round(sharpe, 4),
-        "max_drawdown": round(float(dd), 4),
-        "signal_changes": flips,
-        "cost_mult": cost_mult,
-        "cost_bps_rt": round(tc_bps, 2),
-        "swap_bps_daily": round(swap_bps * 10_000, 3),
-        "total_cost_deducted": round(float(cost_series.sum() + swap_daily.sum()), 6),
-        "avg_signal": round(float(signal.mean()), 4),
-        "long_pct": round(float((signal > 0).mean()), 4),
-        "short_pct": round(float((signal < 0).mean()), 4),
-        "flat_pct": round(float((signal == 0).mean()), 4),
-    }
+    """Calculate timeframe-aware performance after costs."""
+    strategy_returns = net_returns(
+        close, signal, symbol, cost_mult=cost_mult, timeframe=tf
+    ).dropna()
+    metrics = portfolio_metrics(strategy_returns, timeframe=tf)
+    if "error" in metrics:
+        return {
+            "n_bars": len(strategy_returns),
+            "total_return": 0.0,
+            "annual_return": 0.0,
+            "sharpe": 0.0,
+            "max_drawdown": 0.0,
+        }
+    flips = int(signal.reindex(close.index).fillna(0.0).diff().fillna(0.0).ne(0.0).sum())
+    metrics.update(
+        {
+            "n_bars": metrics.pop("n_periods"),
+            "signal_changes": flips,
+            "cost_mult": cost_mult,
+            "cost_bps_rt": round(cost_per_trade_bps(symbol) * cost_mult, 2),
+            "swap_bps_daily": round(daily_swap_bps(symbol) * cost_mult, 3),
+            "bars_per_day": bars_per_day(tf),
+            "avg_signal": round(float(signal.mean()), 4),
+            "long_pct": round(float((signal > 0).mean()), 4),
+            "short_pct": round(float((signal < 0).mean()), 4),
+            "flat_pct": round(float((signal == 0).mean()), 4),
+        }
+    )
+    return metrics
 
 
-# ── single-symbol runner ─────────────────────────────────────────────────────
+def _model_signal(close: pd.Series, model: str, timeframe: str) -> tuple[pd.Series, dict[str, Any]]:
+    """Generate a model signal and report its effective lookbacks."""
+    if model == "ma_200":
+        effective_period = min(200, max(len(close) // 2, 2))
+        return moving_average_signal(close, period=effective_period), {
+            "effective_period": effective_period
+        }
+    if model == "mom_3m":
+        lookback = equivalent_horizons(timeframe, (63,))[0]
+        return time_series_momentum_signal(close, lookback=lookback), {
+            "lookback": lookback
+        }
+    if model == "blended":
+        horizons = equivalent_horizons(timeframe)
+        return blended_momentum_signal(close, horizons=horizons, threshold=0.0), {
+            "horizons": horizons
+        }
+    raise ValueError(f"unknown model: {model}")
 
 
-def run_baselines(sym: str, tf: str) -> dict[str, Any]:
-    """
-    Evaluate baseline trend-following models for a symbol and timeframe with multiple transaction-cost scenarios.
-    
-    Parameters:
-    	sym (str): Symbol to evaluate.
-    	tf (str): Timeframe, either ``"D1"`` or ``"H4"``.
-    
-    Returns:
-    	dict[str, Any]: Baseline metrics, cost assumptions, date range, and latest signals, or an error message when data is unavailable or contains fewer than 252 bars.
-    """
+def run_baselines(symbol: str, timeframe: str) -> dict[str, Any]:
+    """Evaluate MA, momentum, and blended trend baselines for one symbol."""
     try:
-        daily = _read_ohlc(sym, tf)
-    except FileNotFoundError as e:
-        return {"error": str(e)}
-    close = daily["close"]
-
-    if len(close) < 252:
-        return {"error": f"only {len(close)} {tf} bars for {sym} (need >=252)"}
+        frame = _read_ohlc(symbol, timeframe)
+    except (FileNotFoundError, ValueError) as exc:
+        return {"error": str(exc)}
+    close = frame["close"].dropna()
+    minimum = max(252, equivalent_horizons(timeframe)[-1])
+    if len(close) < minimum:
+        return {"error": f"only {len(close)} {timeframe} bars for {symbol} (need {minimum})"}
 
     result: dict[str, Any] = {
-        "symbol": sym,
-        "timeframe": tf,
+        "symbol": symbol,
+        "timeframe": timeframe,
         "bars": len(close),
         "start": str(close.index.min()),
         "end": str(close.index.max()),
         "cost_model": {
-            "spread_bps": COST_BPS.get(sym, 2.0),
+            "spread_bps": COST_BPS.get(symbol, 2.0),
             "slippage_bps": SLIPPAGE_BPS,
-            "swap_bps_daily": SWAP_BPS_DAILY.get(sym, 0.05),
-            "round_trip_bps": round(cost_per_trade_bps(sym), 2),
+            "swap_bps_daily": SWAP_BPS_DAILY.get(symbol, 0.05),
+            "bars_per_day": bars_per_day(timeframe),
         },
     }
-
-    # Baseline A: 200-period MA
-    sig_a = moving_average_signal(close, period=min(200, len(close) // 2))
-    result["ma_200"] = {
-        "gross": _signal_metrics_cost(close, sig_a, sym, cost_mult=0.0),
-        "net_1x": _signal_metrics_cost(close, sig_a, sym, cost_mult=1.0),
-        "net_2x": _signal_metrics_cost(close, sig_a, sym, cost_mult=2.0),
-        "net_3x": _signal_metrics_cost(close, sig_a, sym, cost_mult=3.0),
-    }
-
-    # Baseline B: 3-month momentum
-    lookback = {"D1": 63, "H4": 90}[tf]
-    sig_b = time_series_momentum_signal(close, lookback=lookback)
-    result["mom_3m"] = {
-        "gross": _signal_metrics_cost(close, sig_b, sym, cost_mult=0.0),
-        "net_1x": _signal_metrics_cost(close, sig_b, sym, cost_mult=1.0),
-        "net_2x": _signal_metrics_cost(close, sig_b, sym, cost_mult=2.0),
-        "net_3x": _signal_metrics_cost(close, sig_b, sym, cost_mult=3.0),
-    }
-
-    # Baseline C: Blended
-    horizons_d1 = (21, 63, 126, 252)
-    horizons_h4 = (30, 90, 180, 360)
-    horizons = {"D1": horizons_d1, "H4": horizons_h4}[tf]
-    sig_c = blended_momentum_signal(close, horizons=horizons, threshold=0.0)
-    result["blended"] = {
-        "gross": _signal_metrics_cost(close, sig_c, sym, cost_mult=0.0),
-        "net_1x": _signal_metrics_cost(close, sig_c, sym, cost_mult=1.0),
-        "net_2x": _signal_metrics_cost(close, sig_c, sym, cost_mult=2.0),
-        "net_3x": _signal_metrics_cost(close, sig_c, sym, cost_mult=3.0),
-    }
-
-    result["latest"] = {
-        "ma_200": int(sig_a.iloc[-1]) if len(sig_a) > 0 else 0,
-        "mom_3m": int(sig_b.iloc[-1]) if len(sig_b) > 0 else 0,
-        "blended": round(float(sig_c.iloc[-1]), 2) if len(sig_c) > 0 else 0,
-    }
-
+    latest: dict[str, float | int] = {}
+    for model in ("ma_200", "mom_3m", "blended"):
+        signal, parameters = _model_signal(close, model, timeframe)
+        result[model] = {
+            "parameters": parameters,
+            "gross": _signal_metrics_cost(close, signal, symbol, cost_mult=0.0, tf=timeframe),
+            "net_1x": _signal_metrics_cost(close, signal, symbol, cost_mult=1.0, tf=timeframe),
+            "net_2x": _signal_metrics_cost(close, signal, symbol, cost_mult=2.0, tf=timeframe),
+            "net_3x": _signal_metrics_cost(close, signal, symbol, cost_mult=3.0, tf=timeframe),
+        }
+        latest[model] = round(float(signal.iloc[-1]), 4) if len(signal) else 0
+    result["latest"] = latest
     return result
 
 
-# ── survival tables ──────────────────────────────────────────────────────────
-
-
-def survival_table(
-    all_results: dict[str, dict[str, Any]],
-    tf: str,
-) -> dict[str, Any]:
-    """
-    Count symbols with positive returns for each model and cost level.
-    
-    Parameters:
-    	all_results (dict[str, dict[str, Any]]): Results keyed by symbol and timeframe.
-    	tf (str): Timeframe to include in the survival counts.
-    
-    Returns:
-    	dict[str, Any]: A table containing the timeframe and survivor counts for each model and cost level.
-    """
-    models = ["ma_200", "mom_3m", "blended"]
-    cost_levels = ["gross", "net_1x", "net_2x", "net_3x"]
-    cost_labels = ["0x (gross)", "1x cost", "2x cost", "3x cost"]
-
+def survival_table(all_results: dict[str, dict[str, Any]], tf: str) -> dict[str, Any]:
+    """Count profitable symbols by model and cost multiplier."""
+    levels = {
+        "0x (gross)": "gross",
+        "1x cost": "net_1x",
+        "2x cost": "net_2x",
+        "3x cost": "net_3x",
+    }
     table: dict[str, Any] = {"timeframe": tf}
-    for model in models:
-        counts: dict[str, int] = {}
-        for level, label in zip(cost_levels, cost_labels):
-            survivors = 0
-            for key, data in all_results.items():
-                if not key.endswith(f"_{tf}"):
-                    continue
-                if "error" in data:
-                    continue
-                net = data.get(model, {}).get(level, {}).get("total_return", 0)
-                if net > 0:
-                    survivors += 1
-            counts[label] = survivors
-        table[model] = counts
-
+    for model in ("ma_200", "mom_3m", "blended"):
+        table[model] = {
+            label: sum(
+                1
+                for data in all_results.values()
+                if data.get("timeframe") == tf
+                and "error" not in data
+                and data.get(model, {}).get(level, {}).get("total_return", 0.0) > 0
+            )
+            for label, level in levels.items()
+        }
     return table
 
 
 def survival_detail(
-    all_results: dict[str, dict[str, Any]],
-    tf: str,
-    model: str,
+    all_results: dict[str, dict[str, Any]], tf: str, model: str
 ) -> list[dict[str, Any]]:
-    """
-    Summarize per-symbol returns, trading activity, and profitability across cost levels.
-    
-    Parameters:
-    	all_results (dict[str, dict[str, Any]]): Baseline results keyed by symbol and timeframe.
-    	tf (str): Timeframe used to filter the results.
-    	model (str): Model whose performance metrics are summarized.
-    
-    Returns:
-    	list[dict[str, Any]]: Per-symbol summaries containing signal changes, round-trip cost, returns from gross through 3x costs, and whether the model remains profitable at 2x costs.
-    """
-    cost_levels = ["gross", "net_1x", "net_2x", "net_3x"]
+    """Return per-symbol stress metrics for a model and timeframe."""
     rows: list[dict[str, Any]] = []
-    for key, data in sorted(all_results.items()):
-        if not key.endswith(f"_{tf}"):
+    for data in all_results.values():
+        if data.get("timeframe") != tf or "error" in data:
             continue
-        if "error" in data:
-            continue
-        m = data.get(model, {})
-        row = {
-            "symbol": data["symbol"],
-            "flips": m.get("gross", {}).get("signal_changes", 0),
-            "cost_bps_rt": round(cost_per_trade_bps(data["symbol"]), 2),
-        }
-        for level in cost_levels:
-            row[level] = m.get(level, {}).get("total_return", 0)
-        row["survives_2x"] = m.get("net_2x", {}).get("total_return", 0) > 0
-        rows.append(row)
-    return rows
-
-
-# ── cluster definitions ─────────────────────────────────────────────────────
-
-CLUSTERS: dict[str, list[str]] = {
-    "equity_indices": ["US500m", "US30m", "NAS100m", "UK100m", "FR40m", "JP225m"],
-    "fx_usd_majors": ["EURUSDm", "GBPUSDm", "AUDUSDm", "USDCHFm", "USDJPYm"],
-    "metals": ["XAUUSDm"],
-    "energy": ["USOILm"],
-    "crypto": ["BTCUSDm"],
-}
-
-CLUSTER_CAPS: dict[str, float] = {
-    "equity_indices": 0.35,
-    "fx_usd_majors": 0.35,
-    "metals": 0.15,
-    "energy": 0.15,
-    "crypto": 0.10,
-}
-
-SINGLE_SYMBOL_CAP: float = 0.15
-VOL_TARGET: float = 0.15
-VOL_LOOKBACK: int = 63
-
-
-def _symbol_cluster(symbol: str) -> str:
-    """Map a symbol to its configured asset cluster."""
-    for name, members in CLUSTERS.items():
-        if symbol in members:
-            return name
-    return "other"
-
-
-# ── portfolio construction ──────────────────────────────────────────────────
-
-
-def _per_symbol_returns(
-    close: pd.Series,
-    signal: pd.Series,
-    symbol: str,
-    *,
-    cost_mult: float = 1.0,
-) -> pd.Series:
-    """
-    Compute net daily returns for a symbol from price data and trading signals, including transaction and holding costs.
-    
-    Parameters:
-        close (pd.Series): Closing prices indexed by trading date.
-        signal (pd.Series): Position signals aligned with the closing prices.
-        symbol (str): Symbol used to determine applicable trading and holding costs.
-        cost_mult (float): Multiplier applied to transaction and daily holding costs.
-    
-    Returns:
-        pd.Series: Net daily returns indexed by the closing-price dates.
-    """
-    ret = close.pct_change()
-    gross = (ret * signal.shift(1)).fillna(0)
-
-    tc_bps = cost_per_trade_bps(symbol) * cost_mult
-    tc_decimal = tc_bps / 10_000
-    swap_bps = daily_swap_bps(symbol) * cost_mult / 10_000
-
-    cost_series = pd.Series(0.0, index=gross.index)
-    sig_vals = signal.values if isinstance(signal, pd.Series) else signal
-    for i in range(1, len(signal)):
-        if sig_vals[i] != sig_vals[i - 1]:
-            idx = signal.index[i]
-            if idx in cost_series.index:
-                cost_series.loc[idx] = tc_decimal
-
-    swap_daily = signal.abs().shift(1).fillna(0) * swap_bps
-    swap_daily = swap_daily.reindex(cost_series.index).fillna(0)
-
-    return gross - cost_series - swap_daily
+        metrics = data.get(model, {})
+        rows.append(
+            {
+                "symbol": data["symbol"],
+                "flips": metrics.get("gross", {}).get("signal_changes", 0),
+                "cost_bps_rt": round(cost_per_trade_bps(data["symbol"]), 2),
+                "gross": metrics.get("gross", {}).get("total_return", 0.0),
+                "net_1x": metrics.get("net_1x", {}).get("total_return", 0.0),
+                "net_2x": metrics.get("net_2x", {}).get("total_return", 0.0),
+                "net_3x": metrics.get("net_3x", {}).get("total_return", 0.0),
+                "survives_2x": metrics.get("net_2x", {}).get("total_return", 0.0) > 0,
+            }
+        )
+    return sorted(rows, key=lambda row: row["symbol"])
 
 
 def build_portfolio(
@@ -442,386 +229,105 @@ def build_portfolio(
     model: str,
     *,
     cost_mult: float = 1.0,
+    tf: str = "D1",
 ) -> dict[str, Any]:
-    """
-    Construct a volatility-scaled portfolio from valid per-symbol signals and returns.
-    
-    Parameters:
-        all_results (dict[str, dict[str, Any]]): Symbol evaluation results used to
-            identify portfolio constituents and timeframe.
-        model (str): Signal model to use: ``"ma_200"``, ``"mom_3m"``, or
-            ``"blended"``.
-        cost_mult (float): Transaction and holding cost multiplier applied to
-            per-symbol returns.
-    
-    Returns:
-        dict[str, Any]: Portfolio metrics, model and cost settings, symbol and
-            cluster exposures, capped weights, and the cumulative equity curve.
-        Returns an error dictionary when no valid symbols are available or fewer
-        than 60 common dates can be aligned.
-    """
-    tf = all_results.get(list(all_results.keys())[0], {}).get("timeframe", "D1")
-
-    # Step 1: recompute signals and net returns for all symbols
-    sym_returns: dict[str, pd.Series] = {}
-    sym_vols: dict[str, float] = {}
-    sym_weights_final: dict[str, float] = {}
-
-    for key, data in all_results.items():
-        sym = data.get("symbol", "")
-        if not sym or "error" in data:
+    """Build a deterministic portfolio using only results for ``tf``."""
+    returns_by_symbol: dict[str, pd.Series] = {}
+    volatilities: dict[str, float] = {}
+    for data in all_results.values():
+        if data.get("timeframe") != tf or "error" in data:
             continue
-
+        symbol = data.get("symbol")
+        if not symbol:
+            continue
         try:
-            daily = _read_ohlc(sym, tf)
-        except FileNotFoundError:
+            close = _read_ohlc(symbol, tf)["close"].dropna()
+        except (FileNotFoundError, ValueError):
             continue
-        close = daily["close"]
-        if len(close) < 252:
+        try:
+            signal, _ = _model_signal(close, model, tf)
+        except ValueError:
             continue
+        symbol_returns = net_returns(
+            close, signal, symbol, cost_mult=cost_mult, timeframe=tf
+        )
+        returns_by_symbol[symbol] = symbol_returns
+        lookback = int(VOL_LOOKBACK * bars_per_day(tf))
+        sample = symbol_returns.tail(lookback)
+        volatilities[symbol] = float(sample.std() * np.sqrt(periods_per_year(tf)))
 
-        # Recompute signal
-        if model == "ma_200":
-            sig = moving_average_signal(close, period=min(200, len(close) // 2))
-        elif model == "mom_3m":
-            lookback = {"D1": 63, "H4": 90}.get(tf, 63)
-            sig = time_series_momentum_signal(close, lookback=lookback)
-        elif model == "blended":
-            horizons = {"D1": (21, 63, 126, 252), "H4": (30, 90, 180, 360)}.get(tf, (21, 63, 126, 252))
-            sig = blended_momentum_signal(close, horizons=horizons, threshold=0.0)
-        else:
-            continue
+    if not returns_by_symbol:
+        return {"error": f"no valid symbols for {tf} portfolio"}
+    common_index = next(iter(returns_by_symbol.values())).index
+    for series in returns_by_symbol.values():
+        common_index = common_index.intersection(series.index)
+    if len(common_index) < 60:
+        return {"error": f"only {len(common_index)} common {tf} bars"}
 
-        net_ret = _per_symbol_returns(close, sig, sym, cost_mult=cost_mult)
-        sym_returns[sym] = net_ret
-
-        # Rolling annualised vol (last VOL_LOOKBACK days)
-        if len(net_ret) >= VOL_LOOKBACK:
-            sym_vols[sym] = float(net_ret.tail(VOL_LOOKBACK).std() * np.sqrt(252))
-        else:
-            sym_vols[sym] = float(net_ret.std() * np.sqrt(252))
-
-    if not sym_returns:
-        return {"error": "no valid symbols for portfolio"}
-
-    # Align to common date index
-    common_dates = sorted(set.intersection(*[set(r.index) for r in sym_returns.values()]))
-    if len(common_dates) < 60:
-        return {"error": f"only {len(common_dates)} common dates"}
-
-    aligned: dict[str, pd.Series] = {
-        sym: r.reindex(common_dates).fillna(0)
-        for sym, r in sym_returns.items()
-    }
-
-    # Step 2-3: vol-scale weights
-    raw_weights: dict[str, float] = {}
-    for sym in aligned:
-        vol = sym_vols.get(sym, 0)
-        if vol > 0:
-            raw_weights[sym] = VOL_TARGET / vol
-        else:
-            raw_weights[sym] = 0.0
-
-    # Normalize so total raw weight = 1.0
-    total_raw = sum(raw_weights.values())
-    if total_raw > 0:
-        raw_weights = {s: w / total_raw for s, w in raw_weights.items()}
-
-    # Step 4-5: apply single-symbol cap, then cluster caps
-    weights = dict(raw_weights)
-
-    # Single-symbol cap
-    for sym in weights:
-        if weights[sym] > SINGLE_SYMBOL_CAP:
-            weights[sym] = SINGLE_SYMBOL_CAP
-
-    # Cluster caps — process symbols in descending weight order
-    cluster_totals: dict[str, float] = {c: 0.0 for c in CLUSTERS}
-    cluster_totals["other"] = 0.0
-
-    for sym in sorted(weights, key=lambda s: -weights[s]):
-        cluster = _symbol_cluster(sym)
-        cap = CLUSTER_CAPS.get(cluster, SINGLE_SYMBOL_CAP)
-        if cluster_totals[cluster] + weights[sym] > cap:
-            weights[sym] = max(0.0, cap - cluster_totals[cluster])
-        cluster_totals[cluster] += weights[sym]
-
-    # Do NOT re-normalize after caps — clipping trims exposure,
-    # it should not inflate other weights back above their caps.
-    # The portfolio may be less than 100% invested; that's correct.
-    sym_weights_final = dict(weights)
-
-    # Step 6: combined daily return
-    combined = pd.Series(0.0, index=common_dates)
-    for sym, w in weights.items():
-        if w > 0 and sym in aligned:
-            combined += w * aligned[sym]
-
-    # Portfolio metrics
-    metrics = portfolio_report(combined)
-
-    # Cluster exposure breakdown
+    weights = capped_vol_weights(volatilities)
+    combined = pd.Series(0.0, index=common_index)
+    for symbol, weight in weights.items():
+        combined += weight * returns_by_symbol[symbol].reindex(common_index).fillna(0.0)
+    metrics = portfolio_metrics(combined, timeframe=tf)
+    if "error" in metrics:
+        return metrics
     cluster_exposure: dict[str, float] = {}
-    for sym, w in weights.items():
-        c = _symbol_cluster(sym)
-        cluster_exposure[c] = cluster_exposure.get(c, 0.0) + w
-
-    # Per-symbol final weights (top-level)
-    symbol_weights = {s: round(w, 4) for s, w in sorted(weights.items(), key=lambda x: -x[1])}
-
+    for symbol, weight in weights.items():
+        cluster = symbol_cluster(symbol)
+        cluster_exposure[cluster] = cluster_exposure.get(cluster, 0.0) + weight
     return {
         **metrics,
+        "timeframe": tf,
         "model": model,
         "cost_mult": cost_mult,
-        "n_symbols": len(aligned),
-        "vol_target": VOL_TARGET,
-        "cluster_exposure": {c: round(w, 4) for c, w in sorted(cluster_exposure.items(), key=lambda x: -x[1])},
-        "symbol_weights": symbol_weights,
+        "n_symbols": len(weights),
+        "cluster_exposure": {key: round(value, 4) for key, value in cluster_exposure.items()},
+        "symbol_weights": {key: round(value, 4) for key, value in weights.items()},
         "cluster_caps_applied": CLUSTER_CAPS,
         "single_symbol_cap": SINGLE_SYMBOL_CAP,
-        "equity_curve": [round(float(x), 6) for x in (1 + combined).cumprod()],
+        "equity_curve": [round(float(value), 6) for value in (1.0 + combined).cumprod()],
     }
 
 
-def portfolio_report(
-    portfolio_series: pd.Series,
-) -> dict[str, Any]:
-    """
-    Calculate performance metrics for a daily portfolio return series.
-    
-    Parameters:
-        portfolio_series (pd.Series): Daily portfolio returns.
-    
-    Returns:
-        dict[str, Any]: Portfolio performance metrics, or an error when fewer than 20 daily returns are available.
-    """
-    if len(portfolio_series) < 20:
-        return {"error": f"only {len(portfolio_series)} daily returns"}
-
-    cum = (1 + portfolio_series).cumprod()
-    total = float(cum.iloc[-1] - 1)
-    dd = (cum / cum.cummax() - 1).min()
-    ann = float((1 + total) ** (252 / len(portfolio_series)) - 1)
-    sharpe = float(portfolio_series.mean() / portfolio_series.std() * np.sqrt(252)) if portfolio_series.std() > 0 else 0
-    win_days = float((portfolio_series > 0).mean())
-
-    return {
-        "n_days": len(portfolio_series),
-        "total_return": round(total, 6),
-        "annual_return": round(ann, 6),
-        "sharpe": round(sharpe, 4),
-        "max_drawdown": round(float(dd), 4),
-        "win_day_pct": round(win_days, 4),
-        "avg_daily_return": round(float(portfolio_series.mean()), 8),
-        "vol_daily": round(float(portfolio_series.std()), 6),
-        "vol_annual": round(float(portfolio_series.std() * np.sqrt(252)), 4),
-    }
-
-
-# ── main ─────────────────────────────────────────────────────────────────────
+def portfolio_report(portfolio_series: pd.Series, tf: str = "D1") -> dict[str, Any]:
+    """Compatibility wrapper for timeframe-aware portfolio metrics."""
+    return portfolio_metrics(portfolio_series, timeframe=tf)
 
 
 def main() -> int:
-    """
-    Run the cost-aware D1 and H4 trend-baseline analysis and write the resulting report.
-    
-    Returns:
-        int: Zero after the analysis and report generation complete.
-    """
-    timeframes = ["D1", "H4"]
+    """Run all symbol and timeframe baselines and write a JSON report."""
+    timeframes = ("D1", "H4")
     all_results: dict[str, dict[str, Any]] = {}
+    for timeframe in timeframes:
+        for symbol in RESEARCH_UNIVERSE:
+            all_results[f"{symbol}_{timeframe}"] = run_baselines(symbol, timeframe)
 
-    for tf in timeframes:
-        print(f"\n{'='*80}")
-        print(f"  {tf} TREND BASELINES — COST-AWARE")
-        print(f"{'='*80}")
-        header = (
-            f"{'Symbol':12s} {'Bars':>5s} {'Flips':>5s} "
-            f"{'Gross':>8s} {'Net 1x':>8s} {'Net 2x':>8s} {'Net 3x':>8s} "
-            f"{'Surv':>5s} {'Latest'}"
-        )
-        print(header)
-        print("-" * 80)
-
-        for sym in RESEARCH_UNIVERSE:
-            result = run_baselines(sym, tf)
-            key = f"{sym}_{tf}"
-            all_results[key] = result
-
-            if "error" in result:
-                print(f"  {sym:10s}  SKIP: {result['error'][:60]}")
-                continue
-
-            # Show MA200 (the best model from previous run)
-            m = result["ma_200"]
-            gross = m["gross"]["total_return"]
-            n1 = m["net_1x"]["total_return"]
-            n2 = m["net_2x"]["total_return"]
-            n3 = m["net_3x"]["total_return"]
-            flips = m["gross"]["signal_changes"]
-            surv = "YES" if n2 > 0 else "no"
-            latest = result.get("latest", {})
-            latest_str = f"ma={latest.get('ma_200',0)}"
-
-            print(
-                f"  {sym:10s} {result['bars']:>5d} {flips:>5d} "
-                f"{gross:>8.4f} {n1:>8.4f} {n2:>8.4f} {n3:>8.4f} "
-                f"{surv:>5s}  {latest_str}"
-            )
-
-    # ── per-tf survival summary ────────────────────────────────────────────
-    surv_by_tf: dict[str, Any] = {}
-    detail_by_tf: dict[str, Any] = {}
-
-    for tf in timeframes:
-        print(f"\n{'='*80}")
-        print(f"  DOUBLE-COST SURVIVAL ({tf})")
-        print(f"{'='*80}")
-
-        surv = survival_table(all_results, tf)
-        surv_by_tf[tf] = surv
-        cost_labels = ["0x (gross)", "1x cost", "2x cost", "3x cost"]
-        header2 = f"{'Model':12s} " + " ".join(f"{l:>12s}" for l in cost_labels)
-        print(header2)
-        print("-" * 65)
-
-        for model in ["ma_200", "mom_3m", "blended"]:
-            counts = surv[model]
-            row = f"{model:12s} " + " ".join(f"{counts[l]:>12d}" for l in cost_labels)
-            print(row)
-
-        # per-symbol MA200 detail
-        print(f"\n  MA200 PER-SYMBOL COST STRESS ({tf})")
-        detail = survival_detail(all_results, tf, "ma_200")
-        detail_by_tf.setdefault("ma_200", {})[tf] = detail
-        detail_header = (
-            f"  {'Symbol':10s} {'Flips':>5s} {'Cost bp':>7s} "
-            f"{'Gross':>8s} {'1x':>8s} {'2x':>8s} {'3x':>8s} {'Surv2x':>7s}"
-        )
-        print(detail_header)
-        print("  " + "-" * 70)
-        for row in detail:
-            surv2x = "YES" if row["survives_2x"] else "no"
-            print(
-                f"  {row['symbol']:10s} {row['flips']:>5d} {row['cost_bps_rt']:>7.2f} "
-                f"{row['gross']:>8.4f} {row['net_1x']:>8.4f} {row['net_2x']:>8.4f} "
-                f"{row['net_3x']:>8.4f} {surv2x:>7s}"
-            )
-
-    # ── D1 vs H4 COMPARISON ──────────────────────────────────────────────
-    if len(timeframes) >= 2:
-        print(f"\n{'='*80}")
-        print("  D1 vs H4 COMPARISON — 2x COST SURVIVAL")
-        print(f"{'='*80}")
-        comp_header = (
-            f"  {'Symbol':10s} {'D1 Flips':>8s} {'H4 Flips':>9s} "
-            f"{'D1 2x':>8s} {'H4 2x':>8s} {'Winner':>7s}"
-        )
-        print(comp_header)
-        print("  " + "-" * 60)
-
-        d1_detail = detail_by_tf.get("ma_200", {}).get("D1", [])
-        h4_detail = detail_by_tf.get("ma_200", {}).get("H4", [])
-        d1_map = {r["symbol"]: r for r in d1_detail}
-        h4_map = {r["symbol"]: r for r in h4_detail}
-
-        d1_wins = 0
-        h4_wins = 0
-        both_survive = 0
-        both_die = 0
-
-        for sym in RESEARCH_UNIVERSE:
-            d1 = d1_map.get(sym, {})
-            h4 = h4_map.get(sym, {})
-            d1_2x = d1.get("net_2x", 0)
-            h4_2x = h4.get("net_2x", 0)
-            d1_flips = d1.get("flips", 0)
-            h4_flips = h4.get("flips", 0)
-
-            if d1_2x > h4_2x:
-                winner = "D1"
-                d1_wins += 1
-            elif h4_2x > d1_2x:
-                winner = "H4"
-                h4_wins += 1
-            else:
-                winner = "tie"
-
-            if d1_2x > 0 and h4_2x > 0:
-                both_survive += 1
-            elif d1_2x <= 0 and h4_2x <= 0:
-                both_die += 1
-
-            print(
-                f"  {sym:10s} {d1_flips:>8d} {h4_flips:>9d} "
-                f"{d1_2x:>8.4f} {h4_2x:>8.4f} {winner:>7s}"
-            )
-
-        print(f"\n  D1 wins: {d1_wins}  H4 wins: {h4_wins}  Both survive: {both_survive}  Both die: {both_die}")
-
-    # ── portfolio section (D1 only — H4 portfolio needs compatible dates) ─
-    print(f"\n{'='*80}")
-    print("  COMBINED PORTFOLIO (D1, vol-scaled + cluster-capped, 1x costs)")
-    print(f"{'='*80}")
-    header_pf = f"{'Model':12s} {'#Sym':>5s} {'AnnRet':>8s} {'Sharpe':>8s} {'MaxDD':>8s} {'WinDay%':>7s} {'VolAnn':>8s}"
-    print(header_pf)
-    print("-" * 65)
-
-    portfolios: dict[str, dict[str, Any]] = {}
-    for model in ["ma_200", "mom_3m", "blended"]:
-        pf = build_portfolio(all_results, model, cost_mult=1.0)
-        portfolios[model] = pf
-        if "error" in pf:
-            print(f"  {model:12s}  ERROR: {pf['error'][:50]}")
-            continue
-        print(
-            f"  {model:12s} {pf['n_symbols']:>5d} "
-            f"{pf['annual_return']:>8.4f} {pf['sharpe']:>8.4f} {pf['max_drawdown']:>8.4f} "
-            f"{pf['win_day_pct']:>7.4f} {pf['vol_annual']:>8.4f}"
-        )
-
-    # ── cluster exposure breakdown ────────────────────────────────────────
-    for model, pf in portfolios.items():
-        if "error" in pf:
-            continue
-        print(f"\n  {model} cluster exposure:")
-        for cluster, w in pf.get("cluster_exposure", {}).items():
-            cap = CLUSTER_CAPS.get(cluster, SINGLE_SYMBOL_CAP)
-            bar_in = int(w * 40)
-            bar_out = int(cap * 40)
-            print(f"    {cluster:20s} {w:>6.2%} / cap {cap:>5.0%}  [{'#' * bar_in}{'.' * max(0, bar_out - bar_in)}]")
-
-    # ── per-symbol weights (top 8) ────────────────────────────────────────
-    for model, pf in portfolios.items():
-        if "error" in pf:
-            continue
-        syms = list(pf.get("symbol_weights", {}).items())[:8]
-        print(f"\n  {model} top-8 symbol weights:")
-        for sym, w in syms:
-            bar = int(w * 50)
-            print(f"    {sym:12s} {w:>6.2%}  [{'#' * bar}]")
-
-    # ── write report ─────────────────────────────────────────────────────
+    details = {
+        model: {
+            timeframe: survival_detail(all_results, timeframe, model)
+            for timeframe in timeframes
+        }
+        for model in ("ma_200", "mom_3m", "blended")
+    }
+    portfolios = {
+        model: build_portfolio(all_results, model, cost_mult=1.0, tf="D1")
+        for model in ("ma_200", "mom_3m", "blended")
+    }
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_tf": "D1+H4_real",  # real D1/H4 from MT5, M15 fallback if missing
-        "target_tfs": timeframes,
-        "cost_model": {
-            "slippage_bps": SLIPPAGE_BPS,
-            "spread_bps_by_symbol": COST_BPS,
-            "swap_bps_daily_by_symbol": SWAP_BPS_DAILY,
-        },
+        "target_tfs": list(timeframes),
         "results": all_results,
-        "survival_by_tf": surv_by_tf,
-        "ma200_detail_by_tf": detail_by_tf.get("ma_200", {}),
-        "blended_detail_by_tf": detail_by_tf.get("blended", {}),
+        "survival_by_tf": {
+            timeframe: survival_table(all_results, timeframe)
+            for timeframe in timeframes
+        },
+        "ma200_detail_by_tf": details["ma_200"],
+        "blended_detail_by_tf": details["blended"],
         "portfolio": portfolios,
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-    print(f"\nReport written to {REPORT_PATH}")
-
+    print(f"Report written to {REPORT_PATH}")
     return 0
 
 
