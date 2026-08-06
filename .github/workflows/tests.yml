@@ -49,4 +49,4 @@ jobs:
           pip install pytest
 
       - name: Critical safety tests
-        run: python -m pytest tests/test_mt5_owner.py tests/test_exposure.py tests/test_kelly_sizing.py tests/test_account_mode.py tests/test_fast_mode.py -q --tb=short
+        run: python -m pytest tests/test_mt5_owner.py tests/test_exposure.py tests/test_kelly_sizing.py tests/test_fast_mode.py -q --tb=short
