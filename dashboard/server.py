@@ -3107,6 +3107,21 @@ def aggregate_state(*, lite: bool = False) -> dict:
         payload.get("edge_scores", {}),
     )
     payload["ai_decision"] = _build_ai_decision(top_signal, top_explain, payload["edge_insights"])
+    # M1 structure intelligence (provisional/confirmed BOS/CHoCH/FVG/OB)
+    try:
+        from core.m1_structure_engine import read_structure_events, M1StructureEngine
+        from core.utils import read_json_state as _rjs
+        m1_decisions = _rjs("m1_structure_decisions.json", default={})
+        payload["m1_structure"] = {
+            "decisions": m1_decisions.get("decisions", {}),
+            "events": {},
+        }
+        # Include recent events per symbol (max 10 each)
+        for sym in (payload.get("symbols") or {}):
+            payload["m1_structure"]["events"][sym] = read_structure_events(sym, limit=10)
+    except Exception as _m1_err:
+        _LOG.debug("M1 structure data unavailable: %s", _m1_err)
+        payload["m1_structure"] = {"decisions": {}, "events": {}}
     # Equity-curve trade reconstruction must read the ACTIVE closed-trade ledger.
     # In MT5 mode paper_trades is empty and the real closes live in mt5_trades;
     # passing paper_trades here detached the curve from reality (pnl_total wrong).

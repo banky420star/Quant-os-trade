@@ -164,6 +164,15 @@ trade_manager:
   - wide_points
   - medium_wide
   - tight_control
+# M1 smart-money structure engine (provisional/confirmed BOS/CHoCH/FVG/OB)
+# Provides one clear WAIT/BUY/SELL decision per symbol with candle-close
+# countdown, touch semantics, and immutable event ledger.
+m1_structure:
+  enabled: false
+  lookback_bars: 50
+  min_displacement_atr: 0.5
+  min_fvg_atr: 0.25
+  ob_lookback: 20
 fast_mode:
   enabled: true
   live_enabled: false

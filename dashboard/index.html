@@ -1810,6 +1810,13 @@ document.addEventListener("DOMContentLoaded",function(){
             </div>
             <div id="fastModePanel"><p class="empty">Fast mode disabled or waiting for cache…</p></div>
           </div>
+          <div class="card" id="m1StructureCard">
+            <div class="section-head">
+              <div class="card-title">M1 Structure</div>
+              <span class="hint">ICT/SMC: BOS/CHoCH/FVG/OB — provisional vs confirmed</span>
+            </div>
+            <div id="m1StructurePanel"><p class="empty">M1 structure engine disabled or waiting for data…</p></div>
+          </div>
           <div class="card" id="learningCard">
             <div class="section-head">
               <div class="card-title">Learning Loop</div>
@@ -2898,8 +2905,68 @@ document.addEventListener("DOMContentLoaded",function(){
       }
     }
 
+    function renderM1Structure(data) {
+      const root = document.getElementById("m1StructurePanel");
+      if (!root) return;
+      const m1 = data.m1_structure || {};
+      const decisions = m1.decisions || {};
+      const events = m1.events || {};
+      
+      if (Object.keys(decisions).length === 0) {
+        root.innerHTML = '<p class="empty">M1 structure engine disabled or waiting for data…</p>';
+        return;
+      }
+      
+      let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;">';
+      for (const [sym, dec] of Object.entries(decisions)) {
+        const stateClass = dec.state === 'BUY' ? 'ok' : dec.state === 'SELL' ? 'bad' : 'warn';
+        const biasClass = dec.bias === 'Bullish' ? 'ok' : dec.bias === 'Bearish' ? 'bad' : 'warn';
+        html += `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;background:#0e0e12;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-weight:700;font-size:13px;">${escapeHtml(sym)}</span>
+            <span style="font-weight:800;font-size:14px;padding:2px 8px;border-radius:4px;${stateClass==='ok'?'background:rgba(0,200,120,.15);color:var(--green)':stateClass==='bad'?'background:rgba(255,60,60,.15);color:var(--red)':'background:rgba(255,159,10,.15);color:var(--orange)'}">${escapeHtml(dec.state)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted2);margin-bottom:6px;">
+            Bias: <span style="color:${biasClass==='ok'?'var(--green)':biasClass==='bad'?'var(--red)':'var(--orange)'}">${escapeHtml(dec.bias)}</span>
+            ${dec.zone_type ? ` · Zone: <span style="color:#fff">${escapeHtml(dec.zone_type)}</span>` : ''}
+          </div>
+          ${dec.active_zone ? `<div style="font-size:11px;color:var(--muted2);margin-bottom:4px;">
+            Active: <span style="color:#fff">${escapeHtml(dec.active_zone)}</span>
+            <span style="color:var(--muted)">(${dec.zone_age_minutes.toFixed(1)}m, ${dec.touches_confirmed} confirmed)</span>
+          </div>` : ''}
+          <div style="font-size:11px;color:var(--muted2);margin-bottom:4px;">
+            Price: <span style="color:#fff">${escapeHtml(dec.price_location)}</span>
+            ${dec.touches_provisional > 0 ? `<span style="color:var(--orange)"> (${dec.touches_provisional} provisional)</span>` : ''}
+          </div>
+          <div style="font-size:11px;color:var(--muted2);margin-bottom:4px;">
+            Candle closes in: <span style="color:#fff;font-weight:700;">${dec.candle_close_seconds}s</span>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
+            <div>Bull: ${escapeHtml(dec.bull_trigger)}</div>
+            <div>Bear: ${escapeHtml(dec.bear_trigger)}</div>
+          </div>
+        </div>`;
+      }
+      html += '</div>';
+      
+      // Show recent events summary
+      const allEvents = Object.values(events).flat();
+      if (allEvents.length > 0) {
+        html += '<div style="margin-top:8px;font-size:11px;color:var(--muted2);">';
+        html += `<span style="font-weight:700;">${allEvents.length}</span> structure events tracked`;
+        const forming = allEvents.filter(e => e.status === 'FORMING').length;
+        const confirmed = allEvents.filter(e => e.status === 'CONFIRMED').length;
+        if (forming > 0) html += ` · <span style="color:var(--orange)">${forming} FORMING</span>`;
+        if (confirmed > 0) html += ` · <span style="color:var(--green)">${confirmed} CONFIRMED</span>`;
+        html += '</div>';
+      }
+      
+      root.innerHTML = html;
+    }
+
     function renderCore(data) {
       renderSafetyMatrix(data);
+      renderM1Structure(data);
       const sup = data.supervisor||{};
       const health = data.health||{};
       const conn = health.connection||{};
