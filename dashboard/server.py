@@ -3887,18 +3887,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "message": "Session reset requires a same-origin dashboard request"}, 403)
                 return
             try:
+                # Phase 0: refuse while any MT5 (or paper) position is open.
+                # Wiping session state with live trades in flight could make
+                # the bot lose management state for those positions.
+                _mt5_pos = read_json_state("mt5_positions.json", default={}) or {}
+                _paper_pos = read_json_state("paper_positions.json", default={}) or {}
+                _open_positions = list(_mt5_pos.get("positions") or []) + list(_paper_pos.get("positions") or [])
+                if _open_positions:
+                    self._send_json({
+                        "ok": False,
+                        "message": (
+                            "Cannot reset session: "
+                            f"{len(_open_positions)} position(s) open. "
+                            "Close or manage them first, then retry."
+                        ),
+                        "open_positions": len(_open_positions),
+                        "symbols": sorted({p.get("symbol", "?") for p in _open_positions}),
+                    }, 409)
+                    return
+
                 from scripts.reset_session_memory import reset_session_memory
 
                 # Phase 0 safety: NEVER clear the operator kill switch or risk
                 # gates from the dashboard. Reset only learning/session memory.
                 # Without preserve_safety_gates, this endpoint is an
                 # UNBLOCK/RESUME bypass (it re-enabled execution that the
-                # operator stopped).
+                # operator stopped). position_management.json is preserved.
                 reset_session_memory(preserve_safety_gates=True)
                 _write_command_audit("/api/reset-session", "executed", handler=self)
                 self._send_json({
                     "ok": True,
-                    "message": "Session memory reset — kill switch and risk gates PRESERVED (Phase 0)",
+                    "message": "Session memory reset — kill switch, risk gates, and position management PRESERVED (Phase 0)",
                     "timestamp": utc_now_iso(),
                 })
             except Exception as exc:

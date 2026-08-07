@@ -540,7 +540,12 @@ class M1StructureEngine:
             defining_epoch = _ts_epoch(event.defining_candle_time)
             if defining_epoch <= 0:
                 continue
-            for bar in bars:
+            # Confirmed touches come ONLY from CLOSED candles. bars[-1] is the
+            # current/forming M1 bar (MT5 copy_rates position 0); its in-zone
+            # interaction is reported as a provisional touch instead, so a
+            # forming candle can never double-dip as both provisional and a
+            # confirmed touch.
+            for bar in bars[:-1]:
                 bar_epoch = _ts_epoch(bar.get("time"))
                 if bar_epoch <= defining_epoch:
                     continue  # only candles strictly after the defining candle
@@ -633,7 +638,12 @@ class M1StructureEngine:
         bearish_confirmed = [e for e in confirmed if e.side == "bearish"]
         latest_confirmed = confirmed[-1] if confirmed else None
 
-        last_close = bars[-1].get("close") if bars else None
+        # The confirmation chain must use the last CLOSED candle (bars[-2]);
+        # bars[-1] is the current/forming candle and must never be treated as
+        # closed. Falls back to bars[-1] only when no closed bar exists.
+        last_close = None
+        if bars:
+            last_close = bars[-2].get("close") if len(bars) >= 2 else bars[-1].get("close")
 
         bullish_chain = (
             len(bullish_confirmed) >= 2

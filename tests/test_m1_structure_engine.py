@@ -365,14 +365,29 @@ class TestTouchCounting:
         eng._events["T"] = [ev]
         bars = [
             _bar(100.5, 100.7, 100.3, 100.5, _t(5)),   # defining candle itself: never
-            _bar(100.4, 100.7, 100.3, 100.6, _t(6)),   # after defining: touch 1
-            _bar(100.5, 100.8, 100.4, 100.6, _t(7)),   # after defining: touch 2
+            _bar(100.4, 100.7, 100.3, 100.6, _t(6)),   # CLOSED, after defining: touch 1
+            _bar(100.5, 100.8, 100.4, 100.6, _t(7)),   # CLOSED, after defining: touch 2
             _bar(100.5, 100.8, 100.4, 100.6, _t(7)),   # same bar time: dedupe
-            _bar(100.7, 101.1, 100.6, 100.9, _t(8)),   # after defining: touch 3
+            _bar(100.7, 101.1, 100.6, 100.9, _t(8)),   # CURRENT/forming candle
         ]
         eng.update("T", bars, 100.9, atr=1.0)
-        assert ev.touches == 3, ev.touches
-        assert ev.provisional_touches == 1  # 100.9 is inside the zone right now
+        assert ev.touches == 2, ev.touches
+        assert ev.provisional_touches == 1  # 100.9 in zone right now -> provisional only
+
+    def test_current_candle_never_double_dips_as_confirmed_touch(self):
+        """The forming candle's in-zone close is provisional ONLY — it must not
+        also be counted as a confirmed touch (no semantic double-dip)."""
+        eng = _engine()
+        ev = _confirmed_event("fvg", "bullish", 101.0, 100.0, "T|fvg|bullish|t5", _t(5))
+        ev.touches = 0
+        eng._events["T"] = [ev]
+        bars = [
+            _bar(100.4, 100.7, 100.3, 100.6, _t(6)),   # CLOSED: touch 1
+            _bar(100.7, 101.1, 100.6, 100.9, _t(7)),   # CURRENT/forming, in zone
+        ]
+        eng.update("T", bars, 100.9, atr=1.0)
+        assert ev.touches == 1, "current candle must not add a confirmed touch"
+        assert ev.provisional_touches == 1
 
     def test_forming_zone_never_counts_confirmed_touches(self):
         eng = _engine()
@@ -518,6 +533,22 @@ class TestDecisionChain:
         dec = eng.get_decision("T")
         assert dec["state"] == "WAIT", dec
         assert dec["bias"] == "Mixed"
+
+    def test_chain_uses_last_closed_candle_not_forming_candle(self):
+        """A forming candle closing beyond the level must NOT trigger BUY —
+        the confirmation chain uses the last CLOSED candle's close."""
+        eng = _engine()
+        eng._events["T"] = [
+            _confirmed_event("bos", "bullish", 101.4, 101.2, "T|bos|bullish|t10", _t(10)),
+            _confirmed_event("fvg", "bullish", 101.6, 100.6, "T|fvg|bullish|t11", _t(11)),
+        ]
+        bars = [
+            _bar(101.2, 101.4, 101.0, 101.3, _t(12)),  # CLOSED: below level 101.6
+            _bar(101.6, 101.9, 101.5, 101.8, _t(13)),  # FORMING: above level
+        ]
+        eng.update("T", bars, 101.8, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "WAIT", dec
 
     def test_close_back_below_zone_breaks_chain(self):
         """Close below the newest bullish level (reclaim failed) -> WAIT."""
@@ -745,6 +776,40 @@ class TestM1StructureLoop:
         assert res["reason"] == "no_m1_data"
         assert written["m1_structure_decisions.json"]["enabled"] is True
 
+    def test_loop_processes_m1_bars_into_decisions(self, monkeypatch):
+        """With M1 bars present (collector now feeds M1 when enabled), the
+        loop writes per-symbol decisions to m1_structure_decisions.json."""
+        from loops import m1_structure_loop as msl
+
+        m1_bars = [
+            {"open": 100.0, "high": 100.4, "low": 99.7, "close": 100.2,
+             "time": "2026-08-07T12:00:00+00:00"},
+            {"open": 100.2, "high": 100.6, "low": 100.0, "close": 100.4,
+             "time": "2026-08-07T12:01:00+00:00"},
+            {"open": 100.4, "high": 100.9, "low": 100.2, "close": 100.7,
+             "time": "2026-08-07T12:02:00+00:00"},
+            {"open": 100.6, "high": 101.0, "low": 100.4, "close": 100.8,
+             "time": "2026-08-07T12:03:00+00:00"},
+            {"open": 100.8, "high": 101.3, "low": 100.6, "close": 101.1,
+             "time": "2026-08-07T12:04:00+00:00"},
+            {"open": 101.0, "high": 101.5, "low": 100.9, "close": 101.4,
+             "time": "2026-08-07T12:05:00+00:00"},
+        ]
+        written = {}
+        monkeypatch.setattr(msl, "load_config",
+                            lambda: {"m1_structure": {"enabled": True}})
+        monkeypatch.setattr(msl, "read_json_state",
+                            lambda name, default=None: {"symbols": {"XAUUSDm": {"M1": m1_bars}}})
+        monkeypatch.setattr(msl, "write_json_state",
+                            lambda name, data: written.__setitem__(name, data))
+        res = msl.run()
+        assert res["enabled"] is True
+        assert "XAUUSDm" in res["decisions"], res
+        dec = res["decisions"]["XAUUSDm"]
+        assert dec["state"] in ("WAIT", "BUY", "SELL")
+        assert dec["symbol"] == "XAUUSDm"
+        assert written["m1_structure_decisions.json"]["decisions"]["XAUUSDm"] == dec
+
     def test_collect_m1_bars_extracts_only_m1(self):
         from loops.m1_structure_loop import _collect_m1_bars
 
@@ -763,6 +828,82 @@ class TestM1StructureLoop:
         out = _collect_m1_bars(doc)
         assert set(out.keys()) == {"XAUUSDm"}
         assert len(out["XAUUSDm"]) == 3
+
+
+# ===========================================================================
+# 9b. M1 feed wiring (collector + payload validation)
+# ===========================================================================
+
+
+class TestFeedWiring:
+    def test_validate_payload_accepts_m1_when_enabled(self):
+        # loops.data_loop transitively imports pandas (core.history_manager),
+        # which is not installed in this sandbox — skip here, run where the
+        # production env (Windows/MT5) has it.
+        pytest.importorskip("pandas")
+        from loops.data_loop import _validate_payload
+
+        data = {
+            "timestamp": "t", "source": "mt5", "symbol_map": {}, "account": {},
+            "symbols": {"XAUUSDm": {"broker_symbol": "XAUUSDm",
+                                     "M5": [], "M15": [], "M1": []}},
+        }
+        _validate_payload(data, "M5", "M15", m1_tf="M1")  # must not raise
+
+    def test_validate_payload_tolerates_missing_m1_when_enabled(self):
+        """M1 is shadow/optional — its absence must not fail the payload."""
+        pytest.importorskip("pandas")
+        from loops.data_loop import _validate_payload
+
+        data = {
+            "timestamp": "t", "source": "mt5", "symbol_map": {}, "account": {},
+            "symbols": {"XAUUSDm": {"broker_symbol": "XAUUSDm",
+                                     "M5": [], "M15": []}},
+        }
+        _validate_payload(data, "M5", "M15", m1_tf="M1")  # must not raise
+
+    def test_validate_payload_ignores_m1_when_disabled(self):
+        pytest.importorskip("pandas")
+        from loops.data_loop import _validate_payload
+
+        data = {
+            "timestamp": "t", "source": "mt5", "symbol_map": {}, "account": {},
+            "symbols": {"XAUUSDm": {"broker_symbol": "XAUUSDm",
+                                     "M5": [], "M15": []}},
+        }
+        _validate_payload(data, "M5", "M15", m1_tf=None)  # must not raise
+
+    def test_pull_latest_fetches_m1_only_when_enabled(self):
+        from core.data_collector import DataCollector
+
+        class _Conn:
+            connected = True
+
+            def account_snapshot(self):
+                return {"login": 1, "mode": "demo", "server": "s"}
+
+        class _Symbols:
+            symbol_map = {"XAUUSDm": "XAUUSDm"}
+
+        def _make(enabled: bool):
+            cfg = {
+                "mt5": {"timeframes": {"entry": "M5", "bias": "M15"},
+                        "candles": 300},
+                "m1_structure": {"enabled": enabled},
+            }
+            collector = DataCollector(cfg, _Conn(), _Symbols(), None)
+            seen: list[str] = []
+            collector.fetch_candles = lambda sym, tf, count: (seen.append(tf), [])[1]
+            data = collector.pull_latest()
+            return seen, data
+
+        seen_off, data_off = _make(False)
+        assert seen_off == ["M5", "M15"]
+        assert "M1" not in data_off["symbols"]["XAUUSDm"]
+
+        seen_on, data_on = _make(True)
+        assert seen_on == ["M5", "M15", "M1"]
+        assert data_on["symbols"]["XAUUSDm"]["M1"] == []
 
 
 # ===========================================================================

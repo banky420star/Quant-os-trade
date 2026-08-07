@@ -24,15 +24,18 @@ def _account_starting_cash(config: dict, account: dict) -> float:
     return float(config.get("execution", {}).get("starting_cash", 1000))
 
 
-def reset_session_memory(preserve_safety_gates: bool = False) -> None:
+def reset_session_memory(preserve_safety_gates: bool = True) -> None:
     """Reset learned session memory while preserving live market/account snapshots.
 
     Args:
-        preserve_safety_gates: When True (Phase 0 default for dashboard calls),
-            the kill switch and risk-state gates are NOT cleared. This blocks
-            the reset-session path from acting as an UNBLOCK/RESUME bypass:
+        preserve_safety_gates: FAIL-SAFE DEFAULT True. When True, the kill
+            switch, risk gates, and position-management state are NOT cleared.
+            This blocks the reset path from acting as an UNBLOCK/RESUME bypass:
             resetting learning memory must never re-enable execution that the
-            operator stopped or that risk gates disabled.
+            operator stopped or that risk gates disabled, and must never make
+            the bot lose management state for live trades. Clearing the gates
+            is an explicitly named out-of-band choice (CLI --full / campaign
+            resets) — it must never happen because a caller forgot an argument.
     """
     config = load_config()
     now = utc_now_iso()
@@ -68,9 +71,9 @@ def reset_session_memory(preserve_safety_gates: bool = False) -> None:
     write_json_state("strategy_rankings.json", {"timestamp": now, "rankings": []})
     write_json_state("strategy_arena.json", {})
 
-    write_json_state("position_management.json", {"timestamp": now, "positions": {}})
-
     if not preserve_safety_gates:
+        # Full reset: wipe position-management state too (explicit opt-out).
+        write_json_state("position_management.json", {"timestamp": now, "positions": {}})
         # Full reset (scripts / CLI): clear the gates too.
         write_json_state("kill_switch.json", {
             "kill_switch": False,
@@ -166,12 +169,15 @@ def reset_session_memory(preserve_safety_gates: bool = False) -> None:
     print(f"  mode={mode} starting_cash={starting:.2f} equity={equity:.2f}")
     cleared = "memory, edge DB/scores, trades/orders, signals"
     if preserve_safety_gates:
-        cleared += " (kill switch + risk gates PRESERVED — Phase 0)"
+        cleared += " (kill switch + risk gates + position management PRESERVED — fail-safe)"
     else:
-        cleared += ", risk/kill switch"
+        cleared += ", risk/kill switch, position management"
     print(f"  Cleared: {cleared}")
     print("  Preserved: latest_candles, features, account, broker_symbols, history")
 
 
 if __name__ == "__main__":
-    reset_session_memory()
+    # Fail-safe default: preserve safety gates. A true full reset (which also
+    # clears the kill switch, risk gates, and position management) requires the
+    # explicitly named --full flag.
+    reset_session_memory(preserve_safety_gates="--full" not in sys.argv)

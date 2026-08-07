@@ -81,7 +81,9 @@ def run_preflight() -> int:
         print("BLOCKERS:")
         for i in issues:
             print(f"  X {i}")
-        print("Fix blockers before trading, or run: python scripts/reset_session_memory.py")
+        print("Fix blockers before trading, or run: python scripts/reset_session_memory.py --full")
+        print("  (Note: without --full, reset_session_memory PRESERVES the kill switch,")
+        print("   risk gates, and position management by default.)")
         return 1
     print("OK — ready to start")
     if account.get("login"):

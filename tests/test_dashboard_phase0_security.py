@@ -273,6 +273,8 @@ def test_reset_session_preserves_safety_gates(monkeypatch):
         "operator-stop source must survive a reset-session call"
     assert "risk_state.json" not in calls, \
         "reset-session must never rewrite risk gates"
+    assert "position_management.json" not in calls, \
+        "reset-session must never wipe live position-management state"
 
 
 def test_reset_session_full_still_clears_gates(monkeypatch):
@@ -297,12 +299,64 @@ def test_reset_session_full_still_clears_gates(monkeypatch):
     assert calls["kill_switch.json"]["kill_switch"] is False
     assert "risk_state.json" in calls
     assert calls["risk_state.json"]["kill_switch"] is False
+    assert "position_management.json" in calls  # full reset wipes it
+    assert calls["position_management.json"]["positions"] == {}
+
+
+def test_reset_session_default_is_fail_safe(monkeypatch):
+    """The default (no argument) must preserve gates — forgetting the arg is
+    never the dangerous path."""
+    import scripts.reset_session_memory as rsm
+
+    calls: dict = {}
+    monkeypatch.setattr(rsm, "DELETE_FILES", ())
+    monkeypatch.setattr(rsm, "write_json_state",
+                        lambda name, data: calls.__setitem__(name, data))
+
+    def fake_read(name, default=None):
+        if name == "kill_switch.json":
+            return {"kill_switch": True, "reason": "operator",
+                    "source": "operator", "activated_at": "x"}
+        if name == "account.json":
+            return {}
+        return default
+
+    monkeypatch.setattr(rsm, "read_json_state", fake_read)
+    monkeypatch.setattr(rsm, "load_config", lambda: {
+        "execution": {"mode": "paper"},
+        "risk": {"max_total_exposure_usd": 1000.0,
+                 "max_symbol_exposure_usd": 300.0},
+        "practice": {"micro": {}, "growth": {}},
+    })
+
+    rsm.reset_session_memory()  # NO argument — fail-safe default
+
+    assert calls["kill_switch.json"]["kill_switch"] is True
+    assert calls["kill_switch.json"].get("source") == "operator"
+    assert "risk_state.json" not in calls
+    assert "position_management.json" not in calls
 
 
 def test_dashboard_reset_session_uses_preserve_safety_gates():
     """The dashboard endpoint must call the preserve-gates path."""
     source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
     assert "reset_session_memory(preserve_safety_gates=True)" in source
+
+
+def test_dashboard_reset_session_refuses_with_open_positions():
+    """/api/reset-session must refuse while MT5 or paper positions are open."""
+    source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
+    assert "mt5_positions.json" in source
+    assert "paper_positions.json" in source
+    assert "Cannot reset session" in source
+    assert "open_positions" in source
+
+
+def test_reset_session_cli_full_requires_explicit_flag():
+    """The CLI full reset (clearing gates) requires an explicit --full flag."""
+    source = (ROOT / "scripts" / "reset_session_memory.py").read_text(encoding="utf-8")
+    assert "--full" in source
+    assert 'preserve_safety_gates="--full" not in sys.argv' in source
 
 
 def test_switch_profile_blocks_live_execution_profiles():

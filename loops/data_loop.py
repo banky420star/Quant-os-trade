@@ -44,18 +44,29 @@ from core.symbol_manager import SymbolManager
 from core.utils import ensure_dirs, load_config, setup_logger, utc_now_iso, write_json_state
 
 
-def _validate_payload(data: dict, entry_tf: str, bias_tf: str) -> None:
+def _validate_payload(data: dict, entry_tf: str, bias_tf: str, m1_tf: str | None = None) -> None:
+    """Validate the collector payload. ``m1_tf`` is validated when the M1
+    structure shadow engine is enabled (see collector)."""
     for key in ("timestamp", "source", "symbol_map", "account", "symbols"):
         if key not in data:
             raise ValueError(f"Missing field: {key}")
     if data["source"] != "mt5":
         raise ValueError(f"Expected source=mt5, got {data['source']!r}")
+    required = (entry_tf, bias_tf) + ((m1_tf,) if m1_tf else ())
     for logical, payload in data["symbols"].items():
         if "broker_symbol" not in payload:
             raise ValueError(f"{logical}: missing broker_symbol")
-        for tf in (entry_tf, bias_tf):
+        for tf in required:
             if tf not in payload or not isinstance(payload[tf], list):
+                if tf == m1_tf:
+                    continue  # M1 is shadow/optional — its absence must not fail the payload
                 raise ValueError(f"{logical}: invalid {tf}")
+
+
+def _m1_tf_if_enabled(config: dict) -> str | None:
+    """Return 'M1' when the M1 structure shadow engine is enabled, else None."""
+    m1_cfg = config.get("m1_structure") or {}
+    return "M1" if bool(m1_cfg.get("enabled", False)) else None
 
 
 def startup(*, logger=None) -> dict:
@@ -72,6 +83,7 @@ def startup(*, logger=None) -> dict:
     mt5_cfg = config["mt5"]
     entry_tf = mt5_cfg["timeframes"]["entry"]
     bias_tf = mt5_cfg["timeframes"]["bias"]
+    m1_tf = _m1_tf_if_enabled(config)
     timings: dict[str, float] = {}
 
     log.info("=== Data Loop startup() (one-shot infrastructure) ===")
@@ -108,7 +120,7 @@ def startup(*, logger=None) -> dict:
         data = collector.pull_latest()
         timings["collect_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
-        _validate_payload(data, entry_tf, bias_tf)
+        _validate_payload(data, entry_tf, bias_tf, m1_tf)
         write_json_state("latest_candles.json", data)
 
         history_mgr = HistoryManager(config, collector, log)
@@ -123,7 +135,8 @@ def startup(*, logger=None) -> dict:
             timings["history_ms"] = round((time.perf_counter() - t0) * 1000, 1)
             write_json_state("history_status.json", history_mgr.status(broker_symbols["resolved"]))
 
-        total = sum(len(data["symbols"][s].get(tf, [])) for s in data["symbols"] for tf in (entry_tf, bias_tf))
+        collected_tfs = (entry_tf, bias_tf) + ((m1_tf,) if m1_tf else ())
+        total = sum(len(data["symbols"][s].get(tf, [])) for s in data["symbols"] for tf in collected_tfs)
         log.info(
             "Saved latest_candles.json — login=%s mode=%s candles=%d timings=%s",
             account["login"], account["account_mode"], total, timings,
@@ -171,6 +184,7 @@ def candle_refresh_now(config: dict | None = None, logger=None) -> dict | bool:
     mt5_cfg = config["mt5"]
     entry_tf = mt5_cfg["timeframes"]["entry"]
     bias_tf = mt5_cfg["timeframes"]["bias"]
+    m1_tf = _m1_tf_if_enabled(config)
     connection = MT5ConnectionManager(config, log)
     symbol_mgr = SymbolManager(config, log)
     try:
@@ -178,7 +192,7 @@ def candle_refresh_now(config: dict | None = None, logger=None) -> dict | bool:
         broker_symbols = symbol_mgr.discover()
         collector = DataCollector(config, connection, symbol_mgr, log)
         data = collector.pull_latest()
-        _validate_payload(data, entry_tf, bias_tf)
+        _validate_payload(data, entry_tf, bias_tf, m1_tf)
         write_json_state("latest_candles.json", data)
         return data
     except Exception as exc:

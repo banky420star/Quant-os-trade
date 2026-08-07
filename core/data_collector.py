@@ -56,6 +56,12 @@ class DataCollector:
         bias_tf = mt5_cfg["timeframes"]["bias"]
         count = int(mt5_cfg.get("candles", 300))
 
+        # M1 is fetched ONLY when the M1 structure shadow engine is enabled.
+        # M5/M15 (entry/bias) collection is unchanged.
+        m1_cfg = self.config.get("m1_structure") or {}
+        m1_tf = "M1" if bool(m1_cfg.get("enabled", False)) else None
+        timeframes = (entry_tf, bias_tf) + ((m1_tf,) if m1_tf else ())
+
         result: dict[str, Any] = {
             "timestamp": utc_now_iso(),
             "source": "mt5",
@@ -66,10 +72,20 @@ class DataCollector:
 
         for logical, broker in symbol_map.items():
             payload: dict[str, Any] = {"broker_symbol": broker}
+            # Primary timeframes are hard requirements — the pipeline depends on
+            # them. M1 is SHADOW/optional: a missing or failed M1 pull must
+            # never take down the primary M5/M15 data path, so it is best-effort.
             for tf in (entry_tf, bias_tf):
                 candles = self.fetch_candles(broker, tf, count)
                 payload[tf] = candles
                 self.logger.info("Collected %d candles: %s (%s) %s", len(candles), logical, broker, tf)
+            if m1_tf:
+                try:
+                    m1_candles = self.fetch_candles(broker, m1_tf, count)
+                    payload[m1_tf] = m1_candles
+                    self.logger.info("Collected %d candles: %s (%s) %s", len(m1_candles), logical, broker, m1_tf)
+                except Exception as exc:  # noqa: BLE001 — M1 is shadow/optional
+                    self.logger.warning("M1 collect skipped for %s (%s): %s", logical, broker, exc)
             result["symbols"][logical] = payload
 
         return result

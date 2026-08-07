@@ -58,7 +58,9 @@ def run_growth_campaign(*, start_bot: bool = True) -> int:
         print("ERROR: No equity — open MT5 Exness demo and retry.")
         return 1
 
-    reset_session_memory()
+    # Campaign restarts are an explicit full-slate reset: clear the gates
+    # intentionally rather than relying on the fail-safe default.
+    reset_session_memory(preserve_safety_gates=False)
     arena_state = reset_arena(config, campaign_id=f"growth-all-{utc_now_iso()[:10]}")
     settings = arena_settings(config)
 

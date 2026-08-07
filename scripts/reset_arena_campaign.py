@@ -16,7 +16,10 @@ from scripts.reset_session_memory import reset_session_memory
 
 def reset_arena_campaign() -> None:
     config = load_config()
-    reset_session_memory()
+    # Campaign restarts are an explicit full-slate reset (arena practice):
+    # clear the gates intentionally rather than relying on the fail-safe
+    # default. Dashboard resets always preserve them.
+    reset_session_memory(preserve_safety_gates=False)
     arena_state = reset_arena(config, campaign_id=f"full-tilt-{utc_now_iso()[:10]}")
     settings = arena_settings(config)
 
