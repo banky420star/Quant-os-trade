@@ -21,8 +21,10 @@ ANALYTICAL_LOOPS: set[str] = {
     "news_sentiment_loop",
     # Read-only aggregation of the specialized-setup shadow fire ledger.
     "specialized_shadow_loop",
-    # Forward-only M1 smart-money structure shadow engine (decisions file).
-    "m1_structure_loop",
+    # NOTE: m1_structure_loop deliberately NOT here — it is part of the live
+    # market-state layer and must run on EVERY pipeline cycle so the current
+    # FORMING M1 candle stays fresh. It is shadow-only and gated on
+    # m1_structure.enabled, so running it every cycle never touches orders.
 }
 
 
