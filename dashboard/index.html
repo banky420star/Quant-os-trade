@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -27,6 +27,7 @@
       --sidebar-w: 220px;
       --right-w: 300px;
       --top-h: 52px;
+      --safety-h: 74px;
       --bottom-h: 76px;
       --radius: 14px;
     }
@@ -226,8 +227,36 @@
     .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
     .status-pill:not(.bad):not(.warn) .dot { animation: status-pulse 2s ease infinite; }
 
+
+    .safety-matrix {
+      min-height: var(--safety-h); display: grid;
+      grid-template-columns: repeat(10, minmax(105px, 1fr)); gap: 1px;
+      background: var(--border); border-bottom: 1px solid var(--border);
+      overflow-x: auto; position: relative; z-index: 25;
+    }
+    .safety-matrix.disarmed { box-shadow: inset 0 3px 0 var(--red); }
+    .safety-matrix.armed { box-shadow: inset 0 3px 0 var(--green); }
+    .safety-cell { background: #0e0e12; padding: 10px 12px; min-width: 105px; }
+    .safety-cell .k { color: var(--muted2); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .safety-cell .v { margin-top: 5px; font-size: 12px; font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .safety-cell.ok .v { color: var(--green); }
+    .safety-cell.warn .v { color: var(--orange); }
+    .safety-cell.bad .v { color: var(--red); }
+    .resume-trading-btn {
+      border: 1px solid rgba(255,159,10,.5); border-radius: 7px; padding: 7px 11px;
+      background: rgba(255,159,10,.12); color: #ffd08a; cursor: pointer;
+      font: 700 11px/1 inherit; white-space: nowrap;
+    }
+    .resume-trading-btn:disabled { opacity: .35; cursor: not-allowed; }
+    [data-preset] { pointer-events: none !important; opacity: .45 !important; }
+    @media (max-width: 768px) {
+      :root { --safety-h: 66px; }
+      .safety-matrix { grid-template-columns: repeat(10, minmax(94px, 1fr)); }
+      .safety-cell { padding: 8px 9px; min-width: 94px; }
+    }
+
     /* Shell */
-    .shell { display: flex; height: calc(100vh - var(--top-h) - var(--bottom-h)); }
+    .shell { display: flex; height: calc(100vh - var(--top-h) - var(--safety-h) - var(--bottom-h)); }
 
     /* Sidebar */
     .sidebar {
@@ -1565,8 +1594,22 @@ document.addEventListener("DOMContentLoaded",function(){
     <div class="topbar-stats" id="liveTradesStrip" style="gap:14px;font-size:12px;min-width:0;flex:1;overflow:hidden;white-space:nowrap"></div>
     <span class="kill-switch-status" id="killSwitchStatus" aria-live="polite"></span>
     <button type="button" class="kill-switch-btn" id="killSwitchBtn" title="Stop new trading immediately">STOP TRADING</button>
+    <button type="button" class="resume-trading-btn" id="resumeTradingBtn" title="Resume requires verified demo preflight" disabled>RESUME</button>
     <a href="#" class="topbar-link" id="resetSessionLink" title="Clear kill switch, daily baselines, and learned memory">Reset state</a>
   </header>
+
+  <section class="safety-matrix disarmed" id="safetyMatrix" aria-label="Phase 0 safety matrix">
+    <div class="safety-cell bad"><div class="k">Execution</div><div class="v">DISARMED</div></div>
+    <div class="safety-cell"><div class="k">Account</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Profile</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Health</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Data age</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Source</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Fast mode</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Adaptation</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Open risk</div><div class="v">loading</div></div>
+    <div class="safety-cell"><div class="k">Kill switch</div><div class="v">loading</div></div>
+  </section>
 
   <div class="shell">
     <aside class="sidebar" id="sidebar">
@@ -2111,8 +2154,6 @@ document.addEventListener("DOMContentLoaded",function(){
             </p>
             <button type="button" class="btn secondary" id="resetSessionBtn">Reset session state</button>
             <div id="resetSessionStatus" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
-            <button type="button" class="btn" id="unblockTradesBtnSettings" style="margin-top:12px;background:var(--orange);color:#fff;border:none;padding:10px 16px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px">UNBLOCK ALL TRADES</button>
-            <div id="unblockStatus" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
           </div>
         </div>
 
@@ -2818,7 +2859,47 @@ document.addEventListener("DOMContentLoaded",function(){
         })()}`;
     }
 
+
+    function renderSafetyMatrix(data) {
+      const root = document.getElementById("safetyMatrix");
+      if (!root) return;
+      const s = data.safety_header || {};
+      const allowed = s.execution_allowed === true;
+      root.className = "safety-matrix " + (allowed ? "armed" : "disarmed");
+      const age = Number(s.data_age_seconds);
+      const ageText = Number.isFinite(age) && age >= 0 ? age.toFixed(1) + "s" : "unknown";
+      const riskText = s.open_risk_known === false
+        ? "$" + fmt(s.open_risk || 0) + " + unknown"
+        : "$" + fmt(s.open_risk || 0);
+      const cells = [
+        ["Execution", s.execution_state || (allowed ? "ARMED" : "DISARMED"), allowed ? "ok" : "bad"],
+        ["Account", `${String(s.account_mode || "unknown").toUpperCase()} \u00b7 ${s.account_login || "\u2014"}`, s.account_mode === "demo" ? "ok" : "bad"],
+        ["Profile", s.profile || "unknown", s.profile === "unknown" ? "warn" : ""],
+        ["Health", String(s.health || "unknown").toUpperCase(), s.health === "ok" ? "ok" : "bad"],
+        ["Data age", ageText, ["fresh", "warm"].includes(s.data_freshness) ? "ok" : "bad"],
+        ["Source", s.data_source || "unknown", s.data_source ? "" : "warn"],
+        ["Fast mode", s.fast_mode || "OFF", s.fast_mode === "OFF" || s.fast_mode === "observe" ? "ok" : "bad"],
+        ["Adaptation", s.adaptation || "OFF", s.adaptation === "OFF" ? "ok" : "bad"],
+        ["Open risk", riskText, s.open_risk_known === false ? "bad" : ""],
+        ["Kill switch", s.kill_switch ? "ON" : "OFF", s.kill_switch ? "bad" : "ok"],
+      ];
+      root.innerHTML = cells.map(([k, v, cls]) =>
+        `<div class="safety-cell ${cls}"><div class="k">${escapeHtml(k)}</div><div class="v" title="${escapeHtml(v)}">${escapeHtml(v)}</div></div>`
+      ).join("");
+      root.title = (s.execution_blockers || []).join("\n");
+
+      const resumeBtn = document.getElementById("resumeTradingBtn");
+      if (resumeBtn) {
+        const demo = String(s.account_mode || "").toLowerCase() === "demo";
+        resumeBtn.disabled = !s.kill_switch || !demo;
+        resumeBtn.title = resumeBtn.disabled
+          ? "Resume is available only for a stopped demo account"
+          : "Run verified demo resume preflight";
+      }
+    }
+
     function renderCore(data) {
+      renderSafetyMatrix(data);
       const sup = data.supervisor||{};
       const health = data.health||{};
       const conn = health.connection||{};
@@ -2839,12 +2920,13 @@ document.addEventListener("DOMContentLoaded",function(){
       const killBtn = document.getElementById("killSwitchBtn");
       const killStatus = document.getElementById("killSwitchStatus");
       if (killBtn) {
-        killBtn.className = "kill-switch-btn " + (killOn ? "on" : "off");
-        killBtn.textContent = killOn ? "TRADING STOPPED" : "TRADING";
+        killBtn.className = "kill-switch-btn " + (killOn ? "on" : "");
+        killBtn.textContent = killOn ? "TRADING STOPPED" : "STOP TRADING";
         killBtn.title = killOn
-          ? "Click to clear the operator kill switch and resume new trading"
-          : "Click to stop new trading; existing positions are not closed";
+          ? "Trading is stopped. Use the separate verified RESUME control."
+          : "Stop new trading immediately; existing positions remain open";
         killBtn.dataset.killOn = killOn ? "1" : "0";
+        killBtn.disabled = killOn;
       }
       if (killStatus) {
         const source = kill.source === "operator" ? "operator stop" : (kill.reason || "");
@@ -4581,25 +4663,25 @@ document.addEventListener("DOMContentLoaded",function(){
       const presetBtn = e.target.closest("[data-preset]");
       if (!presetBtn || !presetBtn.closest("#fastModeCard, #fastModeSettingsCard")) return;
       e.preventDefault();
-      setFastModePreset(presetBtn.dataset.preset, presetBtn);
+      const status = document.getElementById("fastModeSettingsStatus");
+      if (status) status.textContent = "Phase 0: fast mode is read-only in the dashboard.";
     });
 
     document.getElementById("resetSessionBtn")?.addEventListener("click", (e) => {
       resetSessionState(e.currentTarget);
     });
 
-    async function toggleKillSwitch(triggerEl) {
+    async function stopTrading(triggerEl) {
       const statusEl = document.getElementById("killSwitchStatus");
-      const isOn = triggerEl?.dataset.killOn === "1";
-      const action = isOn ? "off" : "on";
-      if (action === "on" && !confirm("STOP NEW TRADING?\n\nExisting MT5 positions will remain open. The bot will not open new positions until you press Resume Trading.")) return;
+      if (triggerEl?.dataset.killOn === "1") return;
+      if (!confirm("STOP NEW TRADING?\n\nExisting MT5 positions remain open. Resuming uses a separate verified demo preflight.")) return;
       if (triggerEl) triggerEl.disabled = true;
-      if (statusEl) statusEl.textContent = action === "on" ? "stopping…" : "resuming…";
+      if (statusEl) statusEl.textContent = "stopping...";
       try {
         const res = await fetch("/api/kill-switch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, reason: "Stopped from dashboard" }),
+          body: JSON.stringify({ action: "on", reason: "Stopped from dashboard" }),
         });
         const out = await res.json();
         if (!res.ok || !out.ok) throw new Error(out.message || "Kill switch request failed");
@@ -4607,38 +4689,50 @@ document.addEventListener("DOMContentLoaded",function(){
         await refresh(true);
       } catch (err) {
         if (statusEl) statusEl.textContent = "Kill switch error: " + err.message;
-        if (typeof safeRender === "function" && lastData) safeRender(lastData);
-      } finally {
         if (triggerEl) triggerEl.disabled = false;
       }
     }
 
     document.getElementById("killSwitchBtn")?.addEventListener("click", (e) => {
-      toggleKillSwitch(e.currentTarget);
+      stopTrading(e.currentTarget);
     });
 
-    async function unblockTrades(triggerEl) {
-      const statusEl = document.getElementById("unblockStatus");
-      if (triggerEl) triggerEl.disabled = true;
+
+    function openResumeModal() {
+      const s = (lastData && lastData.safety_header) || {};
+      const login = s.account_login || "";
+      const expected = login ? `RESUME DEMO ${login}` : "RESUME DEMO";
+      document.getElementById("resumeExpected").textContent = expected;
+      document.getElementById("resumeInput").value = "";
+      document.getElementById("resumeStatus").textContent = "";
+      document.getElementById("resumeModal").style.display = "flex";
+      document.getElementById("resumeInput").focus();
+    }
+
+    async function doResume() {
+      const confirmation = document.getElementById("resumeInput").value.trim();
+      const status = document.getElementById("resumeStatus");
+      status.textContent = "Running server-side preflight...";
       try {
-        const res = await fetch("/api/unblock-trades", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        const out = await res.json();
-        if (out.ok) {
-          if (statusEl) statusEl.textContent = "All gates cleared - trades unblocked";
-          if (typeof safeRender === "function") safeRender();
-        } else {
-          if (statusEl) statusEl.textContent = out.message || "Failed to unblock";
-        }
-      } catch (err) {
-        if (statusEl) statusEl.textContent = "API error: " + err.message;
-      } finally {
-        if (triggerEl) triggerEl.disabled = false;
+        const response = await fetch("/api/resume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmation }),
+        });
+        const out = await response.json();
+        if (!response.ok || !out.ok) throw new Error(out.message || "Resume rejected");
+        status.textContent = out.message || "Demo trading resumed";
+        setTimeout(() => {
+          document.getElementById("resumeModal").style.display = "none";
+          refresh(true);
+        }, 700);
+      } catch (error) {
+        status.textContent = error.message || String(error);
       }
     }
 
-    document.getElementById("unblockTradesBtnSettings")?.addEventListener("click", (e) => {
-      unblockTrades(e.currentTarget);
-    });
+    document.getElementById("resumeTradingBtn")?.addEventListener("click", openResumeModal);
+
     document.getElementById("resetSessionLink")?.addEventListener("click", (e) => {
       e.preventDefault();
       resetSessionState(e.currentTarget);

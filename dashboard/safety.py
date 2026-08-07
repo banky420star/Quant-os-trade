@@ -1,10 +1,31 @@
-"""Phase 0 dashboard safety helpers. Imported by server.py."""
+"""Phase 0 dashboard safety helpers."""
 
 from __future__ import annotations
 
-import time as _time
-from datetime import datetime, timezone as _tz
-from typing import Any
+import time
+from datetime import datetime
+from typing import Any, NoReturn
+
+
+def _position_stop_risk(position: dict) -> float | None:
+    """Return broker/planner stop risk only. Floating PnL is never risk."""
+    for key in (
+        "actual_stop_risk",
+        "stop_risk",
+        "risk_amount",
+        "initial_risk_amount",
+        "planned_risk",
+    ):
+        value = position.get(key)
+        if value is None:
+            continue
+        try:
+            risk = abs(float(value))
+        except (TypeError, ValueError):
+            continue
+        if risk >= 0:
+            return risk
+    return None
 
 
 def build_safety_header(
@@ -16,41 +37,42 @@ def build_safety_header(
     *,
     active_profile_name_fn=None,
 ) -> dict[str, Any]:
-    """Phase 0: permanent safety matrix for every dashboard page."""
+    """Build the fail-closed safety matrix displayed on every dashboard page."""
     cfg = config or {}
-    exec_cfg = cfg.get("execution") or {}
-    profile = (cfg.get("profile") or {}).get("name")
-    if not profile and active_profile_name_fn:
-        profile = active_profile_name_fn()
-    profile = profile or "?"
-
-    account_mode = exec_cfg.get("mode", "paper")
-    explicit_opt_in = bool(exec_cfg.get("explicit_opt_in_danger_zone", False))
-    fast_cfg = cfg.get("fast_mode") or {}
+    execution = cfg.get("execution") or {}
+    mt5_cfg = cfg.get("mt5") or {}
     learning_cfg = cfg.get("learning") or {}
     adaptation_cfg = cfg.get("adaptation") or {}
+    portfolio = live_portfolio or {}
+    positions = list(portfolio.get("open_positions") or [])
 
-    lp = live_portfolio or {}
-    positions = lp.get("open_positions", [])
-    # Phase 0: compute actual stop-risk, not floating P&amp;L
-    stop_risk = 0.0
-    for p in positions:
-        sl_price = p.get("sl") or p.get("stop_loss") or 0.0
-        entry_price = p.get("entry") or p.get("open_price") or 0.0
-        volume = float(p.get("volume", 0) or 0)
-        if sl_price and entry_price and volume:
-            stop_risk += abs(sl_price - entry_price) * volume
-    open_risk = round(stop_risk, 2) if stop_risk else round(sum(abs(float(p.get("profit", 0))) for p in positions), 2)
+    profile = (cfg.get("profile") or {}).get("name")
+    if not profile and active_profile_name_fn:
+        try:
+            profile = active_profile_name_fn()
+        except Exception:
+            profile = None
+    profile = profile or "unknown"
 
-    now_ts = _time.time()
-    data_updated = lp.get("updated_at") or ""
+    account_mode = str(
+        account.get("account_mode")
+        or mt5_cfg.get("account_mode")
+        or "unknown"
+    ).lower()
+
+    data_updated = (
+        portfolio.get("updated_at")
+        or account.get("timestamp")
+        or account.get("updated_at")
+        or ""
+    )
     data_age_s = -1.0
     if data_updated:
         try:
-            dt = datetime.fromisoformat(data_updated.replace("Z", "+00:00"))
-            data_age_s = round(now_ts - dt.timestamp(), 1)
+            parsed = datetime.fromisoformat(str(data_updated).replace("Z", "+00:00"))
+            data_age_s = round(max(0.0, time.time() - parsed.timestamp()), 1)
         except Exception:
-            pass
+            data_age_s = -1.0
 
     if data_age_s < 0:
         freshness = "unknown"
@@ -63,36 +85,70 @@ def build_safety_header(
     else:
         freshness = "fresh"
 
-    health_status = "unknown"
-    if health:
-        hs = health.get("status", "")
-        if hs == "critical":
-            health_status = "critical"
-        elif hs == "degraded":
-            health_status = "degraded"
-        elif hs == "ok":
-            health_status = "ok"
+    raw_health = str((health or {}).get("status") or "unknown").lower()
+    health_status = {
+        "healthy": "ok",
+        "ok": "ok",
+        "degraded": "degraded",
+        "critical": "critical",
+        "halted": "critical",
+    }.get(raw_health, "unknown")
+
+    try:
+        from core.fast_mode import fast_mode_settings
+
+        fast_cfg = fast_mode_settings(cfg)
+    except Exception:
+        fast_cfg = cfg.get("fast_mode") or {}
+
+    risk_values = [_position_stop_risk(position) for position in positions]
+    known_risks = [value for value in risk_values if value is not None]
+    unknown_risk_positions = len(risk_values) - len(known_risks)
+    open_risk = round(sum(known_risks), 2)
 
     kill_on = bool((kill_switch or {}).get("kill_switch", False))
-    fast_live = bool(fast_cfg.get("live_enabled", False))
+    live_enabled = bool(execution.get("live_trading_enabled", False))
+    explicit_opt_in = bool(execution.get("explicit_opt_in_danger_zone", False))
     fast_enabled = bool(fast_cfg.get("enabled", False))
+    fast_live = bool(fast_cfg.get("live_enabled", False))
     adaptation_on = bool(adaptation_cfg.get("enabled", False))
-    learning_mode = learning_cfg.get("mode", "observe_only")
+
+    blockers: list[str] = []
+    if kill_on:
+        blockers.append("operator kill switch is on")
+    if not live_enabled:
+        blockers.append("live trading is disabled")
+    if not explicit_opt_in:
+        blockers.append("execution has no explicit opt-in")
+    if health_status != "ok":
+        blockers.append(f"health is {health_status}")
+    if freshness not in {"fresh", "warm"}:
+        blockers.append(f"data freshness is {freshness}")
+    if account_mode == "real":
+        blockers.append("real-account execution is blocked during Phase 0")
+    if unknown_risk_positions:
+        blockers.append(f"{unknown_risk_positions} position(s) have unknown stop risk")
+
+    execution_allowed = not blockers
 
     return {
         "account_mode": account_mode,
-        "account_login": lp.get("account_login"),
-        "account_server": lp.get("account_server"),
+        "account_login": portfolio.get("account_login") or account.get("login"),
+        "account_server": portfolio.get("account_server") or account.get("server"),
         "profile": profile,
-        "execution_allowed": explicit_opt_in,
+        "execution_allowed": execution_allowed,
+        "execution_state": "ARMED" if execution_allowed else "DISARMED",
+        "execution_blockers": blockers,
         "fast_mode": "LIVE" if fast_live else ("observe" if fast_enabled else "OFF"),
         "adaptation": "ON" if adaptation_on else "OFF",
-        "learning": learning_mode,
+        "learning": learning_cfg.get("mode", "observe_only"),
         "kill_switch": kill_on,
         "health": health_status,
         "open_positions": len(positions),
         "open_risk": open_risk,
-        "data_source": lp.get("source"),
+        "open_risk_known": unknown_risk_positions == 0,
+        "unknown_risk_positions": unknown_risk_positions,
+        "data_source": portfolio.get("source"),
         "data_freshness": freshness,
         "data_age_seconds": data_age_s,
     }

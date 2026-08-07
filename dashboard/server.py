@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hmac
 import json
 import math
 import os
@@ -3517,21 +3518,48 @@ def _handle_sse_profit_quality(handler):
         _ProfitQualityBroadcaster.unsubscribe(q)
 
 
+_COMMAND_AUDIT_LOCK = threading.Lock()
+
+
+def _request_operator_token(handler: BaseHTTPRequestHandler) -> str:
+    """Read an operator token without accepting it from the request body."""
+    bearer = str(handler.headers.get("Authorization") or "").strip()
+    if bearer.lower().startswith("bearer "):
+        return bearer[7:].strip()
+    return str(handler.headers.get("X-Operator-Token") or "").strip()
+
+
+def _operator_mutation_allowed(handler: BaseHTTPRequestHandler) -> bool:
+    """Central fail-closed authorization for every dashboard mutation.
+
+    Local loopback requests are permitted without a token. Remote requests
+    require both a same-origin browser request and DASH_OPERATOR_TOKEN.
+    """
+    if not _mutation_request_allowed(handler):
+        return False
+    client_host = str(getattr(handler, "client_address", ("", 0))[0] or "")
+    is_loopback = client_host in {"127.0.0.1", "::1", "localhost"}
+    expected = str(os.environ.get("DASH_OPERATOR_TOKEN") or "").strip()
+    if is_loopback and not expected:
+        return True
+    if not expected:
+        return False
+    supplied = _request_operator_token(handler)
+    return bool(supplied and hmac.compare_digest(supplied, expected))
+
+
 def _write_command_audit(
     endpoint: str,
     action: str,
     detail: dict | None = None,
     handler: BaseHTTPRequestHandler | None = None,
 ) -> None:
-    """Phase 0: append immutable audit record for every dashboard mutation.
-
-    Written as JSONL to state/command_audit.jsonl. Append-only by design.
-    Audit failure must never block the mutation.
-    """
+    """Append a thread-safe JSONL audit record for dashboard commands."""
     try:
-        import os as _os
         from core.utils import STATE_DIR as _SD
+
         audit_path = _SD / "command_audit.jsonl"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
         remote = ""
         if handler:
             remote = str(getattr(handler, "client_address", ("?", 0))[0])
@@ -3541,13 +3569,15 @@ def _write_command_audit(
             "action": action,
             "detail": detail or {},
             "remote": remote,
-            "pid": _os.getpid(),
+            "pid": os.getpid(),
         }
-        line = json.dumps(record, default=str) + "\n"
-        with open(audit_path, "a", encoding="utf-8") as f:
-            f.write(line)
-    except Exception:
-        pass
+        line = json.dumps(record, default=str, sort_keys=True) + "\n"
+        with _COMMAND_AUDIT_LOCK:
+            with audit_path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+                handle.flush()
+    except Exception as exc:  # audit failure is visible, not silently swallowed
+        _LOG.error("dashboard command audit failed: %s", exc)
 
 
 def _mutation_request_allowed(handler: BaseHTTPRequestHandler) -> bool:
@@ -3635,20 +3665,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
-        # Phase 0: CORS only for same-origin; never wildcard
-        req_host = str(self.headers.get("Host") or "").lower()
-        origin_hdr = str(self.headers.get("Origin") or "")
-        if origin_hdr:
-            try:
-                origin_host = urlparse(origin_hdr).netloc.lower()
-                allow_origin = origin_hdr if origin_host == req_host else req_host
-            except Exception:
-                allow_origin = req_host
-        else:
-            allow_origin = req_host
-        self.send_header("Access-Control-Allow-Origin", allow_origin)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Allow", "GET, POST, OPTIONS")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
     def do_GET(self) -> None:
@@ -3827,12 +3845,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path == "/api/kill-switch" and not _mutation_request_allowed(self):
+        if not _operator_mutation_allowed(self):
+            _write_command_audit(
+                path,
+                "denied",
+                {"reason": "operator_authorization_failed"},
+                handler=self,
+            )
             self._send_json({
                 "ok": False,
-                "message": "Kill-switch changes require a same-origin dashboard request",
+                "message": (
+                    "Dashboard mutations require loopback access or a valid "
+                    "DASH_OPERATOR_TOKEN from the same origin"
+                ),
             }, 403)
             return
+        _write_command_audit(path, "accepted", handler=self)
+
         if path == "/api/reset-session":
             if not _mutation_request_allowed(self):
                 self._send_json({"ok": False, "message": "Session reset requires a same-origin dashboard request"}, 403)
@@ -3879,32 +3908,69 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
         elif path == "/api/resume":
-            if not _mutation_request_allowed(self):
-                self._send_json({"ok": False, "message": "Resume requires a same-origin dashboard request"}, 403)
-                return
-            """Phase 0: asymmetric resume -- server-derived confirmation phrase."""
             try:
-                config = load_config()
-                ok = bool((config.get("execution") or {}).get("explicit_opt_in_danger_zone"))
-                if not ok:
-                    self._send_json({"ok": False, "message": "Profile not opted in for execution"}, 403)
-                    return
-                # Phase 0: block real-account resume
-                account_mode = str((config.get("execution") or {}).get("mode", "paper")).lower()
-                if account_mode in ("real", "live", "mt5_real"):
-                    self._send_json({"ok": False, "message": "Real-account resume blocked during Phase 0 safety closure"}, 403)
-                    return
                 body = self._read_json_body()
                 typed = str(body.get("confirmation") or "").strip()
-                # Server derives the expected phrase — client never defines it
-                expected = f"RESUME {account_mode.upper()}"
+                config = load_config()
+                execution = config.get("execution") or {}
+                account_cfg = config.get("mt5") or {}
+                account = read_json_state("account.json", default={}) or {}
+                health = read_json_state("health.json", default={}) or {}
+                heartbeat = read_json_state("heartbeat.json", default={}) or {}
+
+                account_mode = str(
+                    account.get("account_mode")
+                    or account_cfg.get("account_mode")
+                    or "demo"
+                ).strip().lower()
+                login = account.get("login")
+                expected = f"RESUME DEMO {login}" if login else "RESUME DEMO"
+
+                blockers = []
+                if account_mode == "real":
+                    blockers.append("real-account resume is disabled during Phase 0")
+                if not bool(execution.get("explicit_opt_in_danger_zone")):
+                    blockers.append("profile has no explicit execution opt-in")
+                if health.get("status") not in {"ok", "healthy"}:
+                    blockers.append(f"health is {health.get('status') or 'unknown'}")
+                if account.get("connected") is False:
+                    blockers.append("MT5 account is disconnected")
+                if not heartbeat.get("timestamp"):
+                    blockers.append("heartbeat timestamp is missing")
                 if typed.upper() != expected.upper():
-                    self._send_json({"ok": False, "message": f"Confirmation mismatch. Type {expected!r} to confirm resume."}, 403)
+                    blockers.append(f"type {expected!r} exactly")
+
+                if blockers:
+                    _write_command_audit(
+                        "/api/resume",
+                        "blocked",
+                        {"blockers": blockers, "account_mode": account_mode, "login": login},
+                        handler=self,
+                    )
+                    self._send_json({
+                        "ok": False,
+                        "message": "Resume blocked: " + "; ".join(blockers),
+                        "expected_confirmation": expected,
+                    }, 403)
                     return
-                document = _set_operator_kill_switch("off", reason=f"Resume confirmed: {typed}")
-                _write_command_audit("/api/resume", "executed", handler=self)
-                write_json_state("resume_audit.json", {"timestamp": utc_now_iso(), "action": "resume", "confirmation": typed})
-                self._send_json({"ok": True, "message": "Trading resumed", "timestamp": document.get("updated_at"), "expected_phrase": expected})
+
+                document = _set_operator_kill_switch(
+                    "off", reason=f"Resume confirmed for demo account {login or 'unknown'}"
+                )
+                audit = {
+                    "timestamp": utc_now_iso(),
+                    "action": "resume",
+                    "confirmation": typed,
+                    "account_mode": account_mode,
+                    "login": login,
+                }
+                write_json_state("resume_audit.json", audit)
+                _write_command_audit("/api/resume", "executed", audit, handler=self)
+                self._send_json({
+                    "ok": True,
+                    "message": "Demo trading resumed",
+                    "timestamp": document.get("updated_at"),
+                })
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
 
@@ -3913,44 +3979,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "message": "UNBLOCK ALL TRADES removed per Phase 0 safety. Clear each gate individually."}, 403)
             return
         elif path == "/api/_disabled_unblock":
-            # Phase 0: permanently disabled. Restore via deployment, not dashboard.
-            self._send_json({"ok": False, "message": "_disabled_unblock removed per Phase 0 safety. Restore each gate individually."}, 403)
+            self.send_error(404)
+            return
         elif path == "/api/fast-mode":
-            if not _mutation_request_allowed(self):
-                self._send_json({"ok": False, "message": "Fast-mode changes require a same-origin dashboard request"}, 403)
-                return
-            # Phase 0 safety: only off/observe allowed from dashboard.
-            try:
-                from core.fast_mode_runtime import (
-                    apply_preset,
-                    clear_runtime,
-                    read_runtime,
-                )
-
-                body = self._read_json_body()
-                action = str(body.get("action") or "preset").lower()
-                if action == "clear":
-                    clear_runtime()
-                    doc = read_runtime()
-                else:
-                    preset = str(body.get("preset") or "").lower()
-                    if preset not in {"off", "observe"}:
-                        self._send_json({
-                            "ok": False,
-                            "message": "Phase 0 safety: only 'off' and 'observe' presets available from dashboard. Live-capable presets require out-of-band deployment change.",
-                        }, 403)
-                        return
-                    doc = apply_preset(preset, extra=body.get("extra"))
-                _write_command_audit("/api/fast-mode", f"action={action}, preset={preset if action != 'clear' else 'N/A'}", handler=self)
-                self._send_json({
-                    "ok": True,
-                    "preset": doc.get("preset"),
-                    "label": doc.get("label"),
-                    "timestamp": doc.get("timestamp"),
-                    "note": "Phase 0: only off/observe allowed. Safe/aggressive/sprint require deployment change.",
-                })
-            except Exception as exc:
-                self._send_json({"ok": False, "message": str(exc)}, 500)
+            self._send_json({
+                "ok": False,
+                "message": (
+                    "Fast mode is read-only in the Phase 0 dashboard. "
+                    "Change execution authority through a reviewed deployment."
+                ),
+            }, 403)
+            return
         elif path == "/api/replay":
             if not _mutation_request_allowed(self):
                 self._send_json({"ok": False, "message": "Replay requires a same-origin dashboard request"}, 403)
@@ -4279,7 +4318,7 @@ if __name__ == "__main__":
     import argparse as _ap
 
     _p = _ap.ArgumentParser(description="MT5 Quant OS dashboard server (reads state files directly)")
-    _p.add_argument("--host", default=None, help="bind host (default 0.0.0.0, or DASH_HOST)")
+    _p.add_argument("--host", default=None, help="bind host (default 127.0.0.1, or DASH_HOST)")
     _p.add_argument("--port", type=int, default=None, help="bind port (default 8082, or DASH_PORT)")
     _a = _p.parse_args()
     run(host=_a.host, port=_a.port)
