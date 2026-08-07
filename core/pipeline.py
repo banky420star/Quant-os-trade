@@ -21,6 +21,8 @@ ANALYTICAL_LOOPS: set[str] = {
     "news_sentiment_loop",
     # Read-only aggregation of the specialized-setup shadow fire ledger.
     "specialized_shadow_loop",
+    # Forward-only M1 smart-money structure shadow engine (decisions file).
+    "m1_structure_loop",
 }
 
 
@@ -45,6 +47,7 @@ def _init_loops() -> list[tuple[str, Any]]:
         babysit_loop,
         news_sentiment_loop,
         specialized_shadow_loop,
+        m1_structure_loop,
     )
     return [
         ("data_loop", data_loop.run),
@@ -77,6 +80,10 @@ def _init_loops() -> list[tuple[str, Any]]:
         # per-symbol/per-setup/per-session report. Read-only, analytical, gated
         # on signals.specialized_setups.shadow.
         ("specialized_shadow_loop", specialized_shadow_loop.run),
+        # 2026-08-06 — forward-only M1 smart-money structure shadow engine.
+        # Writes state/m1_structure_decisions.json for the dashboard. Read-only,
+        # gated on m1_structure.enabled (disabled by default in Phase 0).
+        ("m1_structure_loop", m1_structure_loop.run),
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
 

@@ -24,7 +24,16 @@ def _account_starting_cash(config: dict, account: dict) -> float:
     return float(config.get("execution", {}).get("starting_cash", 1000))
 
 
-def reset_session_memory() -> None:
+def reset_session_memory(preserve_safety_gates: bool = False) -> None:
+    """Reset learned session memory while preserving live market/account snapshots.
+
+    Args:
+        preserve_safety_gates: When True (Phase 0 default for dashboard calls),
+            the kill switch and risk-state gates are NOT cleared. This blocks
+            the reset-session path from acting as an UNBLOCK/RESUME bypass:
+            resetting learning memory must never re-enable execution that the
+            operator stopped or that risk gates disabled.
+    """
     config = load_config()
     now = utc_now_iso()
     account = read_json_state("account.json", default={})
@@ -61,26 +70,40 @@ def reset_session_memory() -> None:
 
     write_json_state("position_management.json", {"timestamp": now, "positions": {}})
 
-    write_json_state("kill_switch.json", {
-        "kill_switch": False,
-        "reason": None,
-        "activated_at": None,
-    })
-    write_json_state("risk_state.json", {
-        "timestamp": now,
-        "kill_switch": False,
-        "risk_events": [],
-        "total_exposure": 0,
-        "symbol_exposure": {},
-        "exposure_used_pct": 0.0,
-        "max_total_exposure": float(config["risk"]["max_total_exposure_usd"]),
-        "max_symbol_exposure": float(config["risk"]["max_symbol_exposure_usd"]),
-        "drawdown": 0.0,
-        "open_positions": 0,
-        "consecutive_losses": 0,
-        "equity": round(equity, 2),
-        "cash": round(cash, 2),
-    })
+    if not preserve_safety_gates:
+        # Full reset (scripts / CLI): clear the gates too.
+        write_json_state("kill_switch.json", {
+            "kill_switch": False,
+            "reason": None,
+            "activated_at": None,
+        })
+        write_json_state("risk_state.json", {
+            "timestamp": now,
+            "kill_switch": False,
+            "risk_events": [],
+            "total_exposure": 0,
+            "symbol_exposure": {},
+            "exposure_used_pct": 0.0,
+            "max_total_exposure": float(config["risk"]["max_total_exposure_usd"]),
+            "max_symbol_exposure": float(config["risk"]["max_symbol_exposure_usd"]),
+            "drawdown": 0.0,
+            "open_positions": 0,
+            "consecutive_losses": 0,
+            "equity": round(equity, 2),
+            "cash": round(cash, 2),
+        })
+    else:
+        # Phase 0 safety: preserve the operator kill switch and risk gates.
+        # Re-read the current kill_switch so a stopped system stays stopped.
+        # The full document (including ``source``) is carried through — the
+        # risk manager relies on source == "operator" to never clear an
+        # operator stop, so it must survive a reset-session call intact.
+        _ks = read_json_state("kill_switch.json", default={}) or {}
+        preserved = dict(_ks)
+        preserved["kill_switch"] = bool(preserved.get("kill_switch", False))
+        preserved["updated_at"] = now
+        preserved["preserved_by_reset"] = True
+        write_json_state("kill_switch.json", preserved)
 
     write_json_state("equity_history.json", {
         "timestamp": now,
@@ -141,7 +164,12 @@ def reset_session_memory() -> None:
 
     print(f"Session memory reset at {now}")
     print(f"  mode={mode} starting_cash={starting:.2f} equity={equity:.2f}")
-    print("  Cleared: memory, edge DB/scores, trades/orders, signals, risk/kill switch")
+    cleared = "memory, edge DB/scores, trades/orders, signals"
+    if preserve_safety_gates:
+        cleared += " (kill switch + risk gates PRESERVED — Phase 0)"
+    else:
+        cleared += ", risk/kill switch"
+    print(f"  Cleared: {cleared}")
     print("  Preserved: latest_candles, features, account, broker_symbols, history")
 
 

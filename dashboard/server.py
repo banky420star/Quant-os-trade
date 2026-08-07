@@ -31,7 +31,12 @@ from core.utils import (
     utc_now_iso,
     write_json_state,
 )
-from core.profile_launcher import active_profile_name, list_profiles, profile_summary
+from core.profile_launcher import (
+    active_profile_name,
+    list_profiles,
+    load_profile_overlay,
+    profile_summary,
+)
 from dashboard.safety import build_safety_header  # Phase 0
 
 import logging
@@ -3884,11 +3889,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 from scripts.reset_session_memory import reset_session_memory
 
-                reset_session_memory()
+                # Phase 0 safety: NEVER clear the operator kill switch or risk
+                # gates from the dashboard. Reset only learning/session memory.
+                # Without preserve_safety_gates, this endpoint is an
+                # UNBLOCK/RESUME bypass (it re-enabled execution that the
+                # operator stopped).
+                reset_session_memory(preserve_safety_gates=True)
                 _write_command_audit("/api/reset-session", "executed", handler=self)
                 self._send_json({
                     "ok": True,
-                    "message": "Session state reset — baselines, kill switch, and memory cleared",
+                    "message": "Session memory reset — kill switch and risk gates PRESERVED (Phase 0)",
                     "timestamp": utc_now_iso(),
                 })
             except Exception as exc:
@@ -4099,6 +4109,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if profile not in set(list_profiles()):
                     self._send_json({"ok": False, "message": f"Profile '{profile}' not found"}, 400)
                     return
+                # Phase 0: block switching to real/live execution profiles.
+                # A profile that enables live trading / explicit danger-zone
+                # opt-in elevates execution authority; the dashboard must not
+                # be able to reach that state. Real-account trading is enabled
+                # only via a reviewed deployment, never a dashboard click.
+                try:
+                    prof_cfg = load_profile_overlay(profile) or {}
+                    _exec = prof_cfg.get("execution", {}) or {}
+                    _mt5 = prof_cfg.get("mt5", {}) or {}
+                    _live = bool(_exec.get("live_trading_enabled", False)) or bool(_exec.get("mt5_trading_enabled", False))
+                    _danger = bool(_exec.get("explicit_opt_in_danger_zone", False))
+                    _account_mode = str(_mt5.get("account_mode") or _exec.get("account_mode") or "demo").lower()
+                except Exception:
+                    _live, _danger, _account_mode = False, False, "demo"
+                if _live or _danger or _account_mode == "real":
+                    self._send_json({
+                        "ok": False,
+                        "message": (
+                            f"Phase 0: cannot switch to profile '{profile}' — it enables "
+                            "live/real execution. Use a reviewed deployment instead."
+                        ),
+                    }, 403)
+                    return
+
                 # Phase 0: block switching with open MT5 positions
                 mt5_pos = read_json_state("mt5_positions.json", default={}) or {}
                 open_pos = (mt5_pos.get("positions") or [])

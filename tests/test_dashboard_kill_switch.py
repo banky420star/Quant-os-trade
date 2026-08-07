@@ -111,7 +111,10 @@ def _post_json(url: str, body: dict, *, origin: str | None = None):
     return urllib.request.urlopen(request, timeout=3)
 
 
-def test_kill_switch_http_endpoint_requires_same_origin_and_toggles(monkeypatch):
+def test_kill_switch_http_endpoint_requires_same_origin_and_stop_is_one_way(monkeypatch):
+    """Phase 0: STOP is instant and one-way via /api/kill-switch; RESUME only
+    via the verified /api/resume flow. Cross-origin and direct 'off' are both
+    rejected, and a stopped system stays stopped."""
     state = {"kill_switch": False}
     monkeypatch.setattr(server, "read_json_state", lambda _name, default=None: dict(state))
     monkeypatch.setattr(
@@ -127,6 +130,7 @@ def test_kill_switch_http_endpoint_requires_same_origin_and_toggles(monkeypatch)
     thread.start()
     base = f"http://127.0.0.1:{port}/api/kill-switch"
     try:
+        # Cross-origin STOP must be rejected and leave the system untouched.
         try:
             _post_json(base, {"action": "on"}, origin="https://evil.example")
         except urllib.error.HTTPError as exc:
@@ -135,6 +139,7 @@ def test_kill_switch_http_endpoint_requires_same_origin_and_toggles(monkeypatch)
         else:  # pragma: no cover - defensive assertion
             raise AssertionError("cross-origin request should be rejected")
 
+        # Same-origin STOP works instantly.
         response = _post_json(
             base,
             {"action": "on", "reason": "test stop"},
@@ -146,15 +151,22 @@ def test_kill_switch_http_endpoint_requires_same_origin_and_toggles(monkeypatch)
         assert payload["kill_switch"] is True
         assert state["source"] == "operator"
 
-        response = _post_json(
-            base,
-            {"action": "off"},
-            origin=f"http://127.0.0.1:{port}",
-        )
-        payload = json.loads(response.read().decode("utf-8"))
-        assert payload["ok"] is True
-        assert payload["kill_switch"] is False
-        assert state["kill_switch"] is False
+        # Phase 0: direct 'off' is one-way — it must be rejected and the kill
+        # switch must stay ON. Resume only happens through the verified
+        # /api/resume endpoint.
+        try:
+            _post_json(
+                base,
+                {"action": "off"},
+                origin=f"http://127.0.0.1:{port}",
+            )
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
+            assert "api/resume" in exc.read().decode("utf-8")
+            assert state["kill_switch"] is True, \
+                "direct off must not clear the operator kill switch"
+        else:  # pragma: no cover - defensive assertion
+            raise AssertionError("direct 'off' must be rejected in Phase 0")
     finally:
         httpd.shutdown()
         httpd.server_close()

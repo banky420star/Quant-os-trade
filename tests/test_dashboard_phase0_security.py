@@ -229,3 +229,92 @@ def test_dashboard_binds_loopback_by_default():
     """Dashboard must default to localhost binding."""
     source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
     assert 'DASH_HOST", "127.0.0.1"' in source
+
+
+# ---------------------------------------------------------------------------
+# 8. Correctness closure: reset-session must never clear safety gates, the
+#    dashboard cannot switch to live profiles, and the M1 shadow loop is wired.
+# ---------------------------------------------------------------------------
+def test_reset_session_preserves_safety_gates(monkeypatch):
+    """reset_session_memory(preserve_safety_gates=True) keeps the kill switch
+    on and never touches risk_state.json (no UNBLOCK/RESUME side-channel)."""
+    import scripts.reset_session_memory as rsm
+
+    calls: dict = {}
+    monkeypatch.setattr(rsm, "DELETE_FILES", ())  # never unlink real state files
+
+    def fake_write(name, data):
+        calls[name] = data
+
+    def fake_read(name, default=None):
+        if name == "kill_switch.json":
+            return {"kill_switch": True, "reason": "operator",
+                    "source": "operator",
+                    "activated_at": "2026-08-07T00:00:00+00:00"}
+        if name == "account.json":
+            return {}
+        return default
+
+    monkeypatch.setattr(rsm, "write_json_state", fake_write)
+    monkeypatch.setattr(rsm, "read_json_state", fake_read)
+    monkeypatch.setattr(rsm, "load_config", lambda: {
+        "execution": {"mode": "paper"},
+        "risk": {"max_total_exposure_usd": 1000.0,
+                 "max_symbol_exposure_usd": 300.0},
+        "practice": {"micro": {}, "growth": {}},
+    })
+
+    rsm.reset_session_memory(preserve_safety_gates=True)
+
+    assert calls["kill_switch.json"]["kill_switch"] is True, \
+        "kill switch was cleared by reset-session"
+    assert calls["kill_switch.json"].get("preserved_by_reset") is True
+    assert calls["kill_switch.json"].get("source") == "operator", \
+        "operator-stop source must survive a reset-session call"
+    assert "risk_state.json" not in calls, \
+        "reset-session must never rewrite risk gates"
+
+
+def test_reset_session_full_still_clears_gates(monkeypatch):
+    """The CLI/script path (preserve_safety_gates=False) keeps clearing gates."""
+    import scripts.reset_session_memory as rsm
+
+    calls: dict = {}
+    monkeypatch.setattr(rsm, "DELETE_FILES", ())
+    monkeypatch.setattr(rsm, "write_json_state",
+                        lambda name, data: calls.__setitem__(name, data))
+    monkeypatch.setattr(rsm, "read_json_state",
+                        lambda name, default=None: {} if name == "account.json" else default)
+    monkeypatch.setattr(rsm, "load_config", lambda: {
+        "execution": {"mode": "paper"},
+        "risk": {"max_total_exposure_usd": 1000.0,
+                 "max_symbol_exposure_usd": 300.0},
+        "practice": {"micro": {}, "growth": {}},
+    })
+
+    rsm.reset_session_memory(preserve_safety_gates=False)
+
+    assert calls["kill_switch.json"]["kill_switch"] is False
+    assert "risk_state.json" in calls
+    assert calls["risk_state.json"]["kill_switch"] is False
+
+
+def test_dashboard_reset_session_uses_preserve_safety_gates():
+    """The dashboard endpoint must call the preserve-gates path."""
+    source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
+    assert "reset_session_memory(preserve_safety_gates=True)" in source
+
+
+def test_switch_profile_blocks_live_execution_profiles():
+    """The dashboard cannot switch to live/real execution profiles in Phase 0."""
+    source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
+    assert "Phase 0: cannot switch to profile" in source
+    assert "load_profile_overlay" in source
+    assert "live_trading_enabled" in source
+
+
+def test_m1_structure_loop_registered_in_pipeline():
+    """The M1 shadow loop is registered so m1_structure_decisions.json is written."""
+    source = (ROOT / "core" / "pipeline.py").read_text(encoding="utf-8")
+    assert '"m1_structure_loop"' in source
+    assert "m1_structure_loop.run" in source
