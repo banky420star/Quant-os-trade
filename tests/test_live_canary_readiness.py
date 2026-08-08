@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import yaml
 
+from scripts import live_canary_preflight as preflight
+
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location(
-    "live_canary_preflight", ROOT / "scripts" / "live_canary_preflight.py"
-)
-assert SPEC and SPEC.loader
-preflight = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(preflight)
 
 
 def _profile() -> dict:
