@@ -22,7 +22,8 @@ A research candidate may:
 - be registered as a challenger;
 - be staged or rolled back as a shadow canary;
 - receive the same immutable market snapshots as the research champion;
-- produce telemetry and comparison evidence.
+- produce telemetry and comparison evidence;
+- become eligible for a human research-review proposal after sufficient paired evidence.
 
 A research candidate may **not**:
 
@@ -55,7 +56,8 @@ A research candidate may **not**:
 - point-in-time and leakage checks;
 - after-cost and doubled-cost stress evidence;
 - regime breakdowns and baseline comparisons;
-- deterministic promotion gates.
+- deterministic promotion gates;
+- uncertainty-aware challenger evidence review.
 
 ### Reimplemented from supreme-chainsaw concepts
 
@@ -107,7 +109,8 @@ Provides:
 - re-verification before shadow stage/rollback;
 - re-verification immediately before a shadow evaluator loads a file;
 - path-traversal and candidate-identity checks;
-- append-only shadow lifecycle audit records.
+- append-only shadow lifecycle audit records;
+- Windows-safe durability flushing for copied model payloads.
 
 A modified or missing artifact fails closed and cannot be staged or loaded.
 
@@ -171,6 +174,37 @@ shadow_only = true
 execution_authority_granted = false
 ```
 
+### `core/post_canary_policy.py`
+
+Evaluates paired, realized shadow outcomes after a challenger has accumulated
+forward evidence. It derives minimum sample requirements from the strategy's
+expected observation frequency instead of using one universal trade count.
+
+The policy requires:
+
+- sufficient paired observations and active market days;
+- independently represented regimes;
+- high outcome coverage;
+- low challenger error rate;
+- positive challenger total reward;
+- a positive lower confidence bound from a deterministic paired bootstrap;
+- acceptable drawdown degradation;
+- acceptable evaluation latency;
+- unique trace IDs and valid shadow-only observations.
+
+A pass produces only:
+
+```text
+eligible_for_operator_review = true
+operator_review_required = true
+live_promotion_eligible = false
+shadow_only = true
+execution_authority_granted = false
+```
+
+The review proposal is content-addressed and written atomically. No method in
+the module can stage a live model or change runtime authority.
+
 ## Validation principles
 
 Promotion fails closed when evidence is missing or weak. Current checks cover:
@@ -193,10 +227,13 @@ Promotion fails closed when evidence is missing or weak. Current checks cover:
 - test status;
 - account telemetry validity;
 - real-money lock;
-- immutable artifact integrity.
+- immutable artifact integrity;
+- post-canary active days and paired sample coverage;
+- paired bootstrap uncertainty;
+- challenger error, latency and drawdown guards.
 
-The numerical defaults are entry-to-canary gates, not claims that a candidate is
-safe or statistically proven for live capital.
+The numerical defaults are entry-to-canary or operator-review gates, not claims
+that a candidate is safe or statistically proven for live capital.
 
 ## Tests and CI
 
@@ -216,7 +253,11 @@ The harvest test group covers:
 - identical independent snapshots for champion and challenger;
 - evaluator exception, mutation and invalid-action fallback to `WAIT`;
 - artifact-integrity blocking before model evaluation;
-- append-only comparison evidence with no order/intent fields.
+- append-only comparison evidence with no order/intent fields;
+- frequency-aware post-canary sample requirements;
+- active-day, regime, coverage, error, latency and drawdown gates;
+- deterministic paired-bootstrap evidence;
+- operator-review proposals that can never grant execution authority.
 
 `.github/workflows/phase0-ci.yml` compiles the harvested modules and runs their
 broker-agnostic tests in a dedicated Linux job while the existing Windows
@@ -225,22 +266,21 @@ into `agent/p0-safety-closure` are included explicitly in the CI trigger.
 
 ## Next integration slices
 
-1. Post-canary evidence policy
-   - require strategy-frequency-aware forward evidence;
-   - require minimum active days and independent market regimes;
-   - calculate uncertainty rather than use a fixed confidence number;
-   - still end at an operator-reviewed promotion proposal;
-   - real execution enablement remains a separate explicit deployment decision.
-
-2. Research orchestration
+1. Research orchestration
    - generate experiment proposals and validation jobs;
    - never mutate production configuration directly;
    - never auto-promote beyond shadow roles.
 
-3. Dashboard research observability
+2. Dashboard research observability
    - show challenger artifact, data provenance and validation hash;
    - show same-snapshot decision agreement/conflict rates;
-   - remain read-only with no promotion or execution controls.
+   - show operator-review evidence without providing an approval or execution control;
+   - remain read-only.
+
+3. Deterministic replay bridge
+   - bind market snapshots, decisions, validation evidence and artifact hashes;
+   - reproduce one shadow comparison from its trace ID;
+   - remain disconnected from execution.
 
 ## Release rule
 
