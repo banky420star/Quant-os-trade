@@ -32,6 +32,8 @@ jobs:
             core/mt5_terminal_manager.py \
             core/data_collector.py \
             core/m1_structure_engine.py \
+            core/model_governance.py \
+            core/model_artifacts.py \
             core/pipeline.py \
             core/supervisor.py \
             loops/data_loop.py \
@@ -43,7 +45,9 @@ jobs:
             start.py \
             tests/test_phase0_invariants.py \
             tests/test_phase0_config_contract.py \
-            tests/test_market_data_feed.py
+            tests/test_market_data_feed.py \
+            tests/test_model_governance.py \
+            tests/test_model_artifacts.py
           echo "py_compile OK (no output above = clean)"
 
   # -------------------------------------------------------------------------
@@ -121,7 +125,33 @@ jobs:
           if-no-files-found: ignore
 
   # -------------------------------------------------------------------------
-  # 4. Broader non-MT5 regression net (same ignores as tests.yml). These
+  # 4. Shadow model governance.  These tests must remain broker-agnostic and
+  #    prove that research promotion can never grant execution authority.
+  # -------------------------------------------------------------------------
+  model-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependency
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: Model governance + immutable artifact integrity
+        run: >
+          python -m pytest
+          tests/test_model_governance.py
+          tests/test_model_artifacts.py
+          -q --tb=short
+
+  # -------------------------------------------------------------------------
+  # 5. Broader non-MT5 regression net (same ignores as tests.yml). These
   #    genuinely do not need a Windows MT5 terminal / real IPC.
   # -------------------------------------------------------------------------
   broader:
