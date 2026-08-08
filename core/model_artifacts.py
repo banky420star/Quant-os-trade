@@ -1,6 +1,6 @@
 """Immutable, shadow-only model artifact storage for Quant OS.
 
-This module is intentionally broker-agnostic.  It does not import MT5,
+This module is intentionally broker-agnostic. It does not import MT5,
 execution loops, order routers, profile mutation, or dashboard controls.
 
 The design harvests the useful model-integrity ideas from the older research
@@ -109,7 +109,7 @@ class ImmutableArtifactStore:
         """Copy a candidate bundle into the immutable object store.
 
         The resulting artifact ID binds file hashes, provenance, validation
-        evidence, and candidate identity.  Existing identical objects are
+        evidence, and candidate identity. Existing identical objects are
         reused only after they re-verify successfully.
         """
         if not candidate_id or candidate_id != provenance.candidate_id:
@@ -167,7 +167,12 @@ class ImmutableArtifactStore:
                     dst = payload_dir / Path(rel)
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
-                    with dst.open("rb") as handle:
+                    # Windows rejects fsync() on a read-only descriptor with
+                    # EBADF. Re-open the completed copy in read/write binary
+                    # mode solely for the durability flush. No bytes are
+                    # modified, and the file is hashed again before publish.
+                    with dst.open("r+b") as handle:
+                        handle.flush()
                         os.fsync(handle.fileno())
 
                 manifest = {
@@ -187,7 +192,7 @@ class ImmutableArtifactStore:
                     os.replace(tmp_dir, final_dir)
                 except FileExistsError:
                     # Another writer published the exact same content-addressed
-                    # object first.  Never overwrite it; verify and reuse it.
+                    # object first. Never overwrite it; verify and reuse it.
                     self.verify(artifact_id).require_ok()
                 return artifact_id
             finally:
@@ -291,8 +296,8 @@ class ImmutableArtifactStore:
 class ShadowArtifactGate:
     """Integrity gate between immutable artifacts and ShadowModelRegistry.
 
-    A successful call can only stage a shadow canary.  Rollback means selecting
-    an earlier *shadow* candidate again.  Neither action can grant broker or
+    A successful call can only stage a shadow canary. Rollback means selecting
+    an earlier *shadow* candidate again. Neither action can grant broker or
     execution authority.
     """
 
