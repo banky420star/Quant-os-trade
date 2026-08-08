@@ -4,7 +4,7 @@ Branch: `agent/quant-harvest-integration`
 
 ## Purpose
 
-Quant OS remains the only production/runtime spine.  This branch selectively
+Quant OS remains the only production/runtime spine. This branch selectively
 reimplements high-value research and model-governance ideas found in
 `super-lamp` and `supreme-chainsaw` without importing their legacy execution,
 operator-control, runtime-state, or auto-live-promotion behavior.
@@ -18,8 +18,9 @@ A research candidate may:
 
 - carry immutable dataset / feature / code provenance;
 - be evaluated against deterministic promotion gates;
+- be copied into an immutable content-addressed artifact store;
 - be registered as a challenger;
-- be staged as a shadow canary;
+- be staged or rolled back as a shadow canary;
 - produce telemetry and comparison evidence.
 
 A research candidate may **not**:
@@ -49,23 +50,28 @@ A research candidate may **not**:
 
 - feature-set and dataset provenance;
 - matrix fingerprints for ablation verification;
-- standardized validation evidence;
-- deterministic promotion gates;
-- future walk-forward / regime / stress evidence contracts.
+- purged walk-forward evidence contracts;
+- point-in-time and leakage checks;
+- after-cost and doubled-cost stress evidence;
+- regime breakdowns and baseline comparisons;
+- deterministic promotion gates.
 
 ### Reimplemented from supreme-chainsaw concepts
 
 - challenger / canary model lifecycle;
+- immutable content-addressed model objects;
 - artifact integrity hashes;
 - model/version provenance;
-- rollback/history concepts.
+- shadow rollback and lifecycle audit history.
 
-No files are copied wholesale from either repository.  The integration uses
+No files are copied wholesale from either repository. The integration uses
 Quant OS naming, safety semantics, tests, and state ownership.
 
 ## Current implementation
 
-`core/model_governance.py` provides:
+### `core/model_governance.py`
+
+Provides:
 
 - `ProvenanceManifest`
 - `ValidationArtifact`
@@ -89,9 +95,59 @@ execution_authority_granted = false
 The registry rewrites those safety fields on persisted state so a caller cannot
 smuggle execution authority through a crafted state payload.
 
+### `core/model_artifacts.py`
+
+Provides:
+
+- immutable content-addressed artifact objects;
+- hashes binding model files, provenance and validation evidence;
+- SHA-256 verification before publication;
+- re-verification before shadow stage/rollback;
+- re-verification immediately before a shadow evaluator loads a file;
+- path-traversal and candidate-identity checks;
+- append-only shadow lifecycle audit records.
+
+A modified or missing artifact fails closed and cannot be staged or loaded.
+
+### `research/validation/feature_ablation.py`
+
+Provides named, shape-preserving feature ablations with deterministic DataFrame
+fingerprints. A declared ablation raises immediately when it produces the same
+matrix as the control, catching broken column maps and no-op masks before an
+expensive training run is trusted.
+
+The same evaluator receives a deep copy of the control and each variant. The
+report records control/variant fingerprints, metrics, numeric deltas and one
+content-addressed evidence hash.
+
+### `research/validation/quant_harness.py`
+
+Builds the canonical `ValidationArtifact` from explicit research evidence:
+
+- net and gross validation returns;
+- observed after-cost return, profit factor, sample Sharpe and drawdown;
+- doubled-cost stress using the observed gross-to-net cost difference;
+- point-in-time feature audit;
+- future-target leakage scan;
+- walk-forward windows passed;
+- regime sample coverage;
+- random-policy and previous-champion baselines;
+- test, account-telemetry and real-money-lock attestations.
+
+Missing gross returns, features, targets, baselines, regimes, walk-forward
+windows, tests or telemetry do not receive optimistic defaults. They produce a
+failing artifact. The harness never assigns subjective confidence values.
+
+A validation bundle is written atomically and always persists:
+
+```text
+shadow_only = true
+execution_authority_granted = false
+```
+
 ## Validation principles
 
-Promotion fails closed when evidence is missing or weak.  Current checks cover:
+Promotion fails closed when evidence is missing or weak. Current checks cover:
 
 - MT5 source requirement;
 - spread data availability;
@@ -105,42 +161,55 @@ Promotion fails closed when evidence is missing or weak.  Current checks cover:
 - single-trade concentration;
 - walk-forward windows;
 - regime breakdown;
-- stress-test status;
+- doubled-cost stress;
 - random-policy baseline;
 - previous-champion baseline;
 - test status;
 - account telemetry validity;
-- real-money lock.
+- real-money lock;
+- immutable artifact integrity.
 
 The numerical defaults are entry-to-canary gates, not claims that a candidate is
 safe or statistically proven for live capital.
 
+## Tests and CI
+
+The harvest test group covers:
+
+- deterministic provenance and content fingerprints;
+- fail-closed promotion gates;
+- shadow-only registry state;
+- immutable artifact tamper detection;
+- re-verification before stage/load;
+- shadow rollback audit history;
+- missing-evidence failure behavior;
+- feature-ablation no-op detection;
+- evaluator isolation;
+- cost-stress and regime failures;
+- baseline and real-money-lock enforcement.
+
+`.github/workflows/phase0-ci.yml` compiles the harvested modules and runs their
+broker-agnostic tests in a dedicated Linux job while the existing Windows
+Phase 0, M1/feed and broader regression jobs remain unchanged.
+
 ## Next integration slices
 
-1. Model artifact store
-   - copy immutable candidate artifacts into a content-addressed registry;
-   - verify hashes again before loading/staging;
-   - retain champion/canary rollback history.
+1. Shadow challenger service
+   - feed research champion and challenger the same immutable market snapshot;
+   - issue one decision/trace ID for both evaluations;
+   - compare decisions and latencies without changing orders or risk;
+   - persist append-only evidence.
 
-2. Standard validation runner
-   - produce `ValidationArtifact` from Quant OS research jobs;
-   - include explicit costs, symbols, periods and code SHA;
-   - prohibit hard-coded confidence values.
-
-3. Ablation harness
-   - define named feature groups;
-   - fingerprint control and ablated matrices;
-   - fail when an ablation expected to change data produces the same hash.
-
-4. Shadow challenger service
-   - feed candidate and research champion the same immutable market snapshots;
-   - compare decisions without changing orders or risk;
-   - store decision IDs and evidence.
-
-5. Post-canary policy
+2. Post-canary evidence policy
    - require strategy-frequency-aware forward evidence;
+   - require minimum active days and independent market regimes;
    - still end at an operator-reviewed promotion proposal;
-   - live execution enablement remains a separate explicit deployment decision.
+   - real execution enablement remains a separate explicit deployment decision.
+
+3. Research orchestration
+   - generate experiment proposals and validation jobs;
+   - never mutate production configuration directly;
+   - never auto-promote beyond shadow roles.
 
 ## Release rule
 
