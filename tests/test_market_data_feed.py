@@ -386,14 +386,25 @@ class TestSingleWorkerNoConcurrentWrites:
 
 class TestDataLoopIntegration:
     def test_run_never_spawns_duplicate_worker_or_refreshes_while_fresh(self, monkeypatch):
+        """data_loop.run() must not spawn a second worker while the shared
+        process-owned worker is alive, and must not manually refresh while the
+        shared feed is fresh — it just returns True."""
         pytest.importorskip("pandas")
         from loops import data_loop as dl
 
-        started_calls = []
-        monkeypatch.setattr(
-            MT5TerminalManager, "start_event_loop",
-            lambda *a, **kw: started_calls.append(kw.get("candle_refresh_fn")) or False,
+        # A REAL shared worker is already running (spawned once, process-owned).
+        # Without it, feed_status()['worker_alive'] is False and run() would
+        # legitimately take the manual-refresh fallback instead.
+        mgr = MT5TerminalManager(_cfg(), _log_silent())
+        assert mgr.start_event_loop(
+            poll_interval_sec=0.02, candle_interval_sec=60.0, connect_now=False,
+        ) is True
+
+        # The worker refreshed successfully just now -> the feed is fresh.
+        MT5TerminalManager.record_candle_refresh_result(
+            ok=True, market_ts=_now_iso(10), attempted_at=utc_now_iso(),
         )
+
         refreshed = []
         monkeypatch.setattr(
             dl, "candle_refresh_now",
@@ -404,15 +415,54 @@ class TestDataLoopIntegration:
             lambda: {"mt5": {"timeframes": {"entry": "M5", "bias": "M15"}},
                      "m1_structure": {"enabled": True}},
         )
-        # Simulate a shared worker that refreshed successfully just now.
+        try:
+            assert dl.run() is True
+            assert dl.run() is True
+            assert refreshed == [], \
+                "run() must not manually refresh while the shared feed is fresh"
+            loops = [t for t in threading.enumerate()
+                     if t.name == "MT5TradeEventLoop" and t.is_alive()]
+            assert len(loops) == 1, "run() must never spawn a duplicate worker"
+        finally:
+            mgr.stop_event_loop(timeout=2.0)
+
+    def test_run_refreshes_once_when_feed_quiet(self, monkeypatch):
+        """run() falls back to exactly ONE manual refresh when the shared
+        feed's last success is older than the staleness threshold — and never
+        spawns a second worker to do it."""
+        pytest.importorskip("pandas")
+        from loops import data_loop as dl
+
+        mgr = MT5TerminalManager(_cfg(), _log_silent())
+        assert mgr.start_event_loop(
+            poll_interval_sec=0.02, candle_interval_sec=60.0, connect_now=False,
+        ) is True
+
+        # The feed's last successful refresh happened >30s ago -> quiet.
         MT5TerminalManager.record_candle_refresh_result(
-            ok=True, market_ts=_now_iso(10), attempted_at=utc_now_iso(),
+            ok=True, market_ts=_now_iso(200), attempted_at=_now_iso(200),
         )
-        assert dl.run() is True
-        assert dl.run() is True
-        assert len(started_calls) == 2, "run() must still call the (no-op) start"
-        assert refreshed == [], \
-            "run() must not manually refresh while the shared feed is fresh"
+
+        refreshed = []
+        monkeypatch.setattr(
+            dl, "candle_refresh_now",
+            lambda config=None, logger=None: refreshed.append(1) or {"ok": True},
+        )
+        monkeypatch.setattr(
+            dl, "load_config",
+            lambda: {"mt5": {"timeframes": {"entry": "M5", "bias": "M15"}},
+                     "m1_structure": {"enabled": True}},
+        )
+        try:
+            assert dl.run()  # dict result from the one manual refresh
+            assert len(refreshed) == 1, \
+                "exactly one manual refresh when the feed is quiet"
+            loops = [t for t in threading.enumerate()
+                     if t.name == "MT5TradeEventLoop" and t.is_alive()]
+            assert len(loops) == 1, \
+                "still exactly one worker — the fallback must not spawn another"
+        finally:
+            mgr.stop_event_loop(timeout=2.0)
 
     def test_candle_refresh_interval_config(self):
         pytest.importorskip("pandas")

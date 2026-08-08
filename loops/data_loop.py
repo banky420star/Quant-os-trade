@@ -275,7 +275,12 @@ def run() -> dict | bool:
             logger.warning("Event worker not alive; manual refresh once")
             return candle_refresh_now(config=config, logger=logger) or True
         last_success = feed.get("last_refresh_success_at")
-        if last_success and (time.time() - _parse_iso_age(last_success)) <= STALE_THRESHOLD_SEC:
+        # _parse_iso_age() already returns SECONDS since the recorded refresh
+        # (0.0 on parse error). Compare that age directly against the
+        # threshold — subtracting it from time.time() (an epoch) always
+        # exceeded the threshold and forced a manual refresh EVERY cycle,
+        # double-hitting MT5 exactly as the single-worker contract forbids.
+        if last_success and _parse_iso_age(last_success) <= STALE_THRESHOLD_SEC:
             return True  # worker is refreshing on cadence; do not double-hit MT5
         logger.info(
             "Feed quiet since %s; refreshing candles once", last_success,
