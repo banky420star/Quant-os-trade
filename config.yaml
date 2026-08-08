@@ -178,6 +178,10 @@ m1_structure:
   max_data_age_seconds: 90
   # Dedicated shadow-service cadence, independent of the sequential pipeline.
   loop_interval_seconds: 10
+  # Real market-data refresh cadence inside the single process-owned event
+  # worker (MT5TerminalManager). This is the actual candle feed that keeps
+  # state/latest_candles.json current — not the old synthetic 1Hz event.
+  candle_refresh_interval_seconds: 10
 fast_mode:
   enabled: true
   live_enabled: false

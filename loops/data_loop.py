@@ -30,6 +30,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -39,7 +40,7 @@ from core.data_collector import DataCollector
 from core.health_monitor import HealthMonitor
 from core.history_manager import HistoryManager
 from core.mt5_connection_manager import MT5ConnectionManager
-from core.mt5_terminal_manager import MT5TerminalManager
+from core.mt5_terminal_manager import MT5TerminalManager, latest_market_timestamp
 from core.symbol_manager import SymbolManager
 from core.utils import ensure_dirs, load_config, setup_logger, utc_now_iso, write_json_state
 
@@ -67,6 +68,27 @@ def _m1_tf_if_enabled(config: dict) -> str | None:
     """Return 'M1' when the M1 structure shadow engine is enabled, else None."""
     m1_cfg = config.get("m1_structure") or {}
     return "M1" if bool(m1_cfg.get("enabled", False)) else None
+
+
+def _candle_refresh_interval(config: dict) -> float:
+    """Cadence of the real market-data refresh inside the single event worker.
+
+    The M1 shadow engine consumes the freshest possible candle data; the
+    default 10s matches the M1 service cadence and keeps the current FORMING
+    M1 candle comfortably inside the max_data_age_seconds freshness gate.
+    Configurable via ``m1_structure.candle_refresh_interval_seconds``.
+    """
+    m1_cfg = config.get("m1_structure") or {}
+    return float(m1_cfg.get("candle_refresh_interval_seconds", 10))
+
+
+def _make_candle_refresh_fn(config: dict, logger) -> Any:
+    """The worker's real refresh path: pull via the shared MT5Owner session,
+    write state/latest_candles.json atomically, record feed health.
+    Returns the payload dict on success, False on failure."""
+    def _refresh() -> dict | bool:
+        return candle_refresh_now(config=config, logger=logger)
+    return _refresh
 
 
 def startup(*, logger=None) -> dict:
@@ -142,11 +164,15 @@ def startup(*, logger=None) -> dict:
             account["login"], account["account_mode"], total, timings,
         )
 
-        # Start the event-loop worker ONLY on first startup() call.
+        # Start the process-global event-loop worker ONLY on first startup()
+        # call. It runs the REAL candle refresh every
+        # m1_structure.candle_refresh_interval_seconds (default 10s), keeping
+        # latest_candles.json current independently of the slow pipeline.
         started = terminal_mgr.start_event_loop(
             poll_interval_sec=0.10,
-            candle_interval_sec=1.0,
+            candle_interval_sec=_candle_refresh_interval(config),
             connect_now=False,  # we already have a connection from above
+            candle_refresh_fn=_make_candle_refresh_fn(config, log),
         )
         log.info("Event loop worker start: %s (already running=%s)",
                  "spawned" if started else "already running",
@@ -174,9 +200,9 @@ def candle_refresh_now(config: dict | None = None, logger=None) -> dict | bool:
 
     Returns the data dict on success, False on failure (e.g. MT5
     disconnected). This is the SAME path that the event-loop worker
-    uses internally via ``mt5.copy_rates_from_pos``; centralizing
-    it here means tests + tools exercise the same code-path the worker
-    does in production.
+    uses internally; centralizing it here means tests + tools exercise
+    the same code-path the worker does in production. Records the outcome
+    in the shared feed-health state so observability stays coherent.
     """
     if config is None:
         config = load_config()
@@ -194,27 +220,31 @@ def candle_refresh_now(config: dict | None = None, logger=None) -> dict | bool:
         data = collector.pull_latest()
         _validate_payload(data, entry_tf, bias_tf, m1_tf)
         write_json_state("latest_candles.json", data)
+        MT5TerminalManager.record_candle_refresh_result(
+            ok=True, market_ts=latest_market_timestamp(data),
+        )
         return data
     except Exception as exc:
         log.warning("candle_refresh_now failed: %s", exc)
+        MT5TerminalManager.record_candle_refresh_result(ok=False, error=str(exc))
         return False
     finally:
         connection.disconnect()
 
 
 def run() -> dict | bool:
-    """Lightweight heartbeat — ensures the event-loop worker is alive
-    and writes health. Refreshes candles ONLY when the worker has
-    been quiet for too long (e.g. MT5 disconnected and reconnected).
+    """Lightweight heartbeat — ensures the single process-owned event worker
+    is alive and writes health. Refreshes candles ONLY when the feed is
+    genuinely stale (e.g. MT5 disconnected and reconnected).
 
-    The poll-cycle for this function is the supervisor's pipeline
-    interval (typically 30s). The much-faster 100ms MT5 transactions
-    poll + 1Hz candle_update events come from
-    ``MT5TerminalManager._event_loop_worker`` once startup() spawned
-    it — we deliberately do NOT call ``candle_refresh_now()`` per
-    cycle because that would double-hit MT5 (rate budget waste).
-    Only fall back to manual refresh when ``last_event.timestamp``
-    is older than ``STALE_THRESHOLD_SEC``.
+    Single-worker contract (2026-08-08): the event worker is owned at class
+    level inside MT5TerminalManager, so this function NEVER spawns a second
+    worker — repeated calls are no-ops while the shared worker is alive. The
+    worker itself performs the real candle refresh every
+    m1_structure.candle_interval_seconds (default 10s); we deliberately do
+    NOT call ``candle_refresh_now()`` per cycle because that would double-hit
+    MT5 (rate budget waste). Only fall back to manual refresh when the feed's
+    last successful refresh is older than ``STALE_THRESHOLD_SEC``.
     """
     STALE_THRESHOLD_SEC = 30.0
     ensure_dirs()
@@ -224,31 +254,33 @@ def run() -> dict | bool:
     try:
         terminal_mgr = MT5TerminalManager(config, logger)
         # If startup() hasn't been called yet (e.g. legacy supervisor),
-        # spin it up here so we never silently miss the event worker.
+        # spin up the process-global worker here so we never silently miss
+        # the event worker. Returns True only when a NEW worker was started.
         started = terminal_mgr.start_event_loop(
             poll_interval_sec=0.10,
-            candle_interval_sec=1.0,
+            candle_interval_sec=_candle_refresh_interval(config),
             connect_now=False,
+            candle_refresh_fn=_make_candle_refresh_fn(config, logger),
         )
         if started:
-            logger.info("Event-loop worker spawned lazily from run()")
-            # Run only one candle refresh on first start to seed latest_candles.json
-            # — the worker takes over from there.
+            logger.info("Event-loop worker spawned lazily from run() (single owner)")
+            # Run only one candle refresh on first start to seed
+            # latest_candles.json — the worker takes over from there.
             return candle_refresh_now(config=config, logger=logger) or True
 
-        # Standard heartbeat: check whether the worker's last event is fresh.
-        last = terminal_mgr.last_event
-        now = time.time()
-        if last is None or (
-            last.timestamp
-            and (now - _parse_iso_age(last.timestamp)) > STALE_THRESHOLD_SEC
-        ):
-            logger.info(
-                "Event worker stale (last=%s); refreshing candles once",
-                getattr(last, "timestamp", None),
-            )
+        # Worker already running. Refresh manually ONLY when the feed is
+        # genuinely stale — the worker does continuous refreshes itself.
+        feed = terminal_mgr.feed_status()
+        if not feed.get("worker_alive"):
+            logger.warning("Event worker not alive; manual refresh once")
             return candle_refresh_now(config=config, logger=logger) or True
-        return True
+        last_success = feed.get("last_refresh_success_at")
+        if last_success and (time.time() - _parse_iso_age(last_success)) <= STALE_THRESHOLD_SEC:
+            return True  # worker is refreshing on cadence; do not double-hit MT5
+        logger.info(
+            "Feed quiet since %s; refreshing candles once", last_success,
+        )
+        return candle_refresh_now(config=config, logger=logger) or True
     except Exception as exc:
         logger.error("Data Loop run() failed (non-fatal): %s", exc)
         logger.debug(traceback.format_exc())

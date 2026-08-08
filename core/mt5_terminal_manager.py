@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from core.utils import PROJECT_ROOT, utc_now_iso
+from core.utils import PROJECT_ROOT, utc_now_iso, write_json_state
 
 try:
     import psutil
@@ -53,6 +53,27 @@ def _session_id_for_pid(pid: int | None) -> int | None:
 
 def get_python_session_id() -> int | None:
     return _session_id_for_pid(os.getpid())
+
+
+def latest_market_timestamp(payload: dict[str, Any] | None) -> str | None:
+    """Newest candle bar time across every symbol/timeframe in a collector
+    payload (state/latest_candles.json doc). ISO timestamps sort
+    lexicographically, so a plain max works. This — NOT the application clock
+    — is the only source of market-data freshness."""
+    best: str | None = None
+    symbols = (payload or {}).get("symbols") or {}
+    for tf_map in symbols.values():
+        if not isinstance(tf_map, dict):
+            continue
+        for rows in tf_map.values():
+            if not isinstance(rows, list):
+                continue
+            for bar in rows:
+                if isinstance(bar, dict) and bar.get("time"):
+                    ts = str(bar["time"])
+                    if best is None or ts > best:
+                        best = ts
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +186,34 @@ class MT5TerminalManager:
     _shared_pending_open: set[str] = set()
     _pending_open_lock: threading.Lock = threading.Lock()
 
+    # ------------------------------------------------------------------
+    # Process-global event-loop worker ownership (2026-08-08)
+    # ------------------------------------------------------------------
+    # The event-loop worker is owned at CLASS level: at most ONE worker thread
+    # may run per process, no matter how many MT5TerminalManager instances
+    # exist. Previously the worker was per-instance, so data_loop.run() — which
+    # constructs a fresh MT5TerminalManager every pipeline cycle — spawned a
+    # NEW daemon worker each cycle and left every older one polling forever
+    # (duplicate candle/trade workers hammering MT5). Now repeated
+    # start_event_loop() calls from ANY instance are no-ops while the shared
+    # worker is alive, a dead worker is deterministically restarted by the
+    # next call, and stop_event_loop() terminates THE worker (the only one).
+    _event_thread: "threading.Thread | None" = None
+    _shutdown_event: "threading.Event" = threading.Event()
+    _started_at: "float | None" = None
+    # RLock: start_event_loop() holds it while persisting feed state, and
+    # feed_status()/record_candle_refresh_result() re-enter it from the same
+    # thread. A plain Lock would deadlock on that path.
+    _event_worker_lock: "threading.RLock" = threading.RLock()
+    # Shared last event: any instance (e.g. a fresh one created by
+    # data_loop.run()) sees the worker's activity.
+    last_event: "MT5TradeEvent | None" = None
+    # Live market-data feed health. Single writer (the event worker, plus the
+    # manual refresh path via record_candle_refresh_result), single file
+    # (state/market_data_feed.json). Dashboard reads it via feed_status().
+    _FEED_HEALTH_FILE = "market_data_feed.json"
+    _feed_health: "dict[str, Any]" = {}
+
     def __init__(self, config: dict[str, Any], logger: logging.Logger | None = None):
         self.config = config
         self.logger = logger or logging.getLogger("mt5_terminal_manager")
@@ -174,13 +223,11 @@ class MT5TerminalManager:
         # multiple MT5TerminalManager() objects coexist in a process.
         self.trade_lock: threading.RLock = MT5TerminalManager._shared_trade_lock
         self.intent_queue: _queue_mod.Queue = MT5TerminalManager._shared_intent_queue
-        # Per-instance subscriber list + event-loop worker.
+        # Per-instance subscriber list. The event-loop worker itself is shared
+        # at class level (single-worker contract above); do NOT create
+        # per-instance worker state here.
         self._subscribers: list[Callable[[MT5TradeEvent], None]] = []
         self._subscribers_lock = threading.Lock()
-        self._event_thread: threading.Thread | None = None
-        self._shutdown_event = threading.Event()
-        self._started_at: float | None = None
-        self.last_event: MT5TradeEvent | None = None
         self._last_positions_hash: str = ""
         self._last_orders_hash: str = ""
         self._last_deals_hash: str = ""
@@ -309,52 +356,71 @@ class MT5TerminalManager:
         poll_interval_sec: float = 0.10,
         candle_interval_sec: float = 1.0,
         connect_now: bool = True,
+        candle_refresh_fn: Callable[[], Any] | None = None,
     ) -> bool:
-        """Spawn the background poller. Returns True if a new thread was started.
+        """Spawn the process-global background poller. Returns True only when
+        a NEW worker thread was actually started.
 
-        The worker connects to MT5 once at start and reuses the connection
-        until ``stop_event_loop()`` is called (reconnect on transient drops).
-        Safe to call multiple times — subsequent calls are no-ops if the
-        thread is already alive.
+        Single-worker contract (2026-08-08): the worker is owned at class
+        level, so repeated calls from ANY MT5TerminalManager instance are
+        no-ops while the shared worker is alive. A dead worker is
+        deterministically restarted by the next call. ``candle_refresh_fn``
+        is invoked by the worker every ``candle_interval_sec`` and is the
+        ONLY writer of the real candle feed (see loops.data_loop).
         """
-        if self._event_thread is not None and self._event_thread.is_alive():
-            return False
-        self._shutdown_event.clear()
-        self._started_at = _time_mod.monotonic()
-        self._event_thread = threading.Thread(
-            target=self._event_loop_worker,
-            kwargs={
-                "poll_interval_sec": poll_interval_sec,
-                "candle_interval_sec": candle_interval_sec,
-                "connect_now": connect_now,
-            },
-            daemon=True,
-            name="MT5TradeEventLoop",
-        )
-        self._event_thread.start()
+        with MT5TerminalManager._event_worker_lock:
+            if (
+                MT5TerminalManager._event_thread is not None
+                and MT5TerminalManager._event_thread.is_alive()
+            ):
+                return False
+            MT5TerminalManager._shutdown_event.clear()
+            MT5TerminalManager._started_at = _time_mod.monotonic()
+            MT5TerminalManager._event_thread = threading.Thread(
+                target=self._event_loop_worker,
+                kwargs={
+                    "poll_interval_sec": poll_interval_sec,
+                    "candle_interval_sec": candle_interval_sec,
+                    "connect_now": connect_now,
+                    "candle_refresh_fn": candle_refresh_fn,
+                },
+                daemon=True,
+                name="MT5TradeEventLoop",
+            )
+            MT5TerminalManager._event_thread.start()
+            MT5TerminalManager._feed_health.update({
+                "worker_alive": True,
+                "worker_started_at": utc_now_iso(),
+            })
+            self._write_feed_state()
         self.logger.info(
             "start_event_loop: poll=%.0fms candle=%.0fs connect=%s thread=%s",
             poll_interval_sec * 1000, candle_interval_sec, connect_now,
-            self._event_thread.name,
+            MT5TerminalManager._event_thread.name,
         )
         return True
 
     def stop_event_loop(self, *, timeout: float = 5.0) -> bool:
-        """Signal the worker to shutdown and wait for it to drain."""
-        self._shutdown_event.set()
-        if self._event_thread is not None:
-            self._event_thread.join(timeout=timeout)
-            if self._event_thread.is_alive():
+        """Signal the process-global worker to shutdown and wait for it to drain."""
+        MT5TerminalManager._shutdown_event.set()
+        thread = MT5TerminalManager._event_thread
+        if thread is not None:
+            thread.join(timeout=timeout)
+            if thread.is_alive():
                 self.logger.warning(
                     "stop_event_loop: worker did not exit within %.1fs", timeout,
                 )
                 return False
-            self._event_thread = None
+            MT5TerminalManager._event_thread = None
+            MT5TerminalManager._feed_health["worker_alive"] = False
+            self._write_feed_state()
         return True
 
     def _dispatch_event(self, event: MT5TradeEvent) -> None:
         """Fan-out an event to every registered subscriber synchronously."""
-        self.last_event = event
+        # Shared (class-level): any instance, including fresh ones created by
+        # data_loop.run(), observes the worker's most recent event.
+        MT5TerminalManager.last_event = event
         with self._subscribers_lock:
             subs = list(self._subscribers)
         for cb in subs:
@@ -512,14 +578,23 @@ class MT5TerminalManager:
         poll_interval_sec: float,
         candle_interval_sec: float,
         connect_now: bool,
+        candle_refresh_fn: Callable[[], Any] | None = None,
     ) -> None:
-        """Background worker: connect once, poll, dispatch events.
+        """Background worker: connect once, poll, dispatch events, and run the
+        real market-data refresh on its own cadence.
 
         The lock + connect are best-effort; if MT5 ever drops, the worker
         backs off and tries again on the next tick. Tests inject a stub
         via ``attach_mt5`` indirectly (via the ``attach_mt5`` kwarg on
         ``_maybe_poll_event``); production paths go through the real
         MetaTrader5 package import.
+
+        Market-data freshness: every ``candle_interval_sec`` the worker
+        invokes ``candle_refresh_fn`` (the ONLY writer of
+        state/latest_candles.json). A synthetic ``candle_update`` event is
+        still dispatched for backward compatibility, now carrying the refresh
+        outcome. Feed health (attempts, successes, consecutive failures, last
+        market timestamp) is recorded so a connected-but-stale feed is visible.
         """
         mt5_mod = None
         if connect_now:
@@ -536,17 +611,129 @@ class MT5TerminalManager:
                 self.logger.debug("event worker: MT5 owner acquire failed: %s", exc)
 
         last_candle_tick = 0.0
-        while not self._shutdown_event.is_set():
+        while not MT5TerminalManager._shutdown_event.is_set():
             self._maybe_poll_event(attach_mt5=mt5_mod)
             if _time_mod.monotonic() - last_candle_tick >= candle_interval_sec:
-                self._dispatch_event(MT5TradeEvent(
-                    event_type="candle_update",
-                    timestamp=utc_now_iso(),
-                    meta={"interval_sec": candle_interval_sec},
-                ))
+                self._candle_tick(candle_refresh_fn, candle_interval_sec)
                 last_candle_tick = _time_mod.monotonic()
             _time_mod.sleep(poll_interval_sec)
+        MT5TerminalManager._feed_health["worker_alive"] = False
+        self._write_feed_state()
         self.logger.info("event_loop_worker: shutdown complete")
+
+    def _candle_tick(
+        self,
+        candle_refresh_fn: Callable[[], Any] | None,
+        interval_sec: float,
+    ) -> None:
+        """One candle-refresh tick: run the real market-data refresh (when
+        wired), record feed health, and emit the backward-compatible synthetic
+        ``candle_update`` event with the refresh outcome."""
+        attempt = utc_now_iso()
+        outcome = "noop"
+        error: str | None = None
+        market_ts: str | None = None
+        if candle_refresh_fn is None:
+            # No refresh function wired (e.g. a bare start_event_loop caller):
+            # nothing was attempted, so do NOT record feed health — a phantom
+            # failure counter would pollute the shared observability state.
+            self._dispatch_event(MT5TradeEvent(
+                event_type="candle_update",
+                timestamp=attempt,
+                meta={"interval_sec": interval_sec, "refresh": "noop"},
+            ))
+            return
+        outcome = "failed"
+        try:
+            payload = candle_refresh_fn()
+            if not payload:
+                error = "refresh returned no payload"
+            else:
+                market_ts = latest_market_timestamp(payload)
+                if market_ts:
+                    outcome = "ok"
+                else:
+                    # A "successful" pull that recovered no market timestamp is
+                    # not fresh — flag it so a connected-but-degenerate feed is
+                    # visible at the feed layer, not just at the engine layer.
+                    error = "refresh produced no market timestamp"
+        except Exception as exc:
+            error = str(exc)
+            self.logger.warning("candle refresh failed: %s", exc)
+        MT5TerminalManager.record_candle_refresh_result(
+            ok=outcome == "ok", error=error, market_ts=market_ts, attempted_at=attempt,
+        )
+        self._dispatch_event(MT5TradeEvent(
+            event_type="candle_update",
+            timestamp=attempt,
+            meta={"interval_sec": interval_sec, "refresh": outcome},
+        ))
+
+    @classmethod
+    def _worker_alive(cls) -> bool:
+        thread = cls._event_thread
+        return thread is not None and thread.is_alive()
+
+    @classmethod
+    def feed_status(cls) -> dict[str, Any]:
+        """Live snapshot of the process-global market-data feed health.
+
+        Freshness is NOT implied by the worker running or a file being
+        rewritten — the market timestamp (last_market_timestamp, sourced from
+        the newest candle bar) is the only thing that makes a feed fresh.
+        """
+        with cls._event_worker_lock:
+            status = dict(cls._feed_health)
+        status["worker_alive"] = cls._worker_alive()
+        status["updated_at"] = status.get("updated_at") or utc_now_iso()
+        return status
+
+    @classmethod
+    def record_candle_refresh_result(
+        cls,
+        *,
+        ok: bool,
+        error: str | None = None,
+        market_ts: str | None = None,
+        attempted_at: str | None = None,
+    ) -> None:
+        """Update the shared feed health from a refresh attempt. The event
+        worker calls this every candle tick; data_loop.candle_refresh_now()
+        (manual /api refresh) calls it too, so observability never diverges.
+        """
+        now = attempted_at or utc_now_iso()
+        with cls._event_worker_lock:
+            health = cls._feed_health
+            health["updated_at"] = now
+            health["last_refresh_attempt_at"] = now
+            if ok:
+                health["last_refresh_success_at"] = now
+                health["refresh_failures_consecutive"] = 0
+                health["last_refresh_error"] = None
+                if market_ts:
+                    health["last_market_timestamp"] = market_ts
+            else:
+                health["refresh_failures_consecutive"] = int(
+                    health.get("refresh_failures_consecutive", 0)
+                ) + 1
+                health["last_refresh_error"] = error or "unknown refresh failure"
+            health["worker_alive"] = cls._worker_alive()
+            health.setdefault("worker_started_at", None)
+        try:
+            write_json_state(cls._FEED_HEALTH_FILE, cls.feed_status())
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.getLogger("mt5_terminal_manager").debug(
+                "feed state write skipped: %s", exc,
+            )
+
+    def _write_feed_state(self) -> None:
+        """Persist current feed health to state/market_data_feed.json."""
+        try:
+            write_json_state(
+                MT5TerminalManager._FEED_HEALTH_FILE, self.feed_status(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.debug("feed state write skipped: %s", exc)
 
     def list_processes(self) -> list[dict[str, Any]]:
         processes: list[dict[str, Any]] = []
