@@ -16,6 +16,16 @@ Design principles (Phase 0 + M1 correctness closure):
   - Touches are counted only for CLOSED candles strictly after the defining
     candle, deduplicated per bar time. Current-candle interaction is reported
     separately as a provisional touch.
+  - Touch accounting is candle-idempotent: every confirmed touch is persisted
+    as an identity (event_id + candle timestamp) in ``touch_times``, so
+    replaying the same candle snapshot can never increment confirmed or
+    provisional touch counts. ``touches`` is always the size of the identity
+    set, and a forming candle that closes in the zone converts to exactly one
+    confirmed touch.
+  - Touch identities are written to the immutable ledger as ``<event_id>:TOUCH:
+    <candle time>`` records, so a restart / ledger restore preserves already-
+    counted touches and legacy ledger records without the new field load
+    safely (their stale counts self-heal from candle history).
   - Invalidated zones get status ``INVALIDATED`` and can never trigger again.
   - The compressed decision stays WAIT until a full confirmation chain holds:
     2+ confirmed structures on one side, the most recent confirmation on that
@@ -82,6 +92,11 @@ class StructureEvent:
     candle_closed: bool  # True once a bar newer than the defining candle exists
     later_modified: bool  # True when the event was invalidated
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Candle-idempotency: the set of candle timestamps already counted as
+    # confirmed touches. `touches` is always len(touch_times), so replaying an
+    # unchanged candle snapshot can never inflate the count. Persisted on the
+    # event and in the ledger (backward compatible: absent -> empty).
+    touch_times: list[str] = field(default_factory=list)
     # --- correctness-closure fields ---
     event_id: str = ""  # deterministic: symbol|type|side|defining_candle_time
     defining_candle_time: Any = None  # bar time of the candle that formed it
@@ -106,6 +121,7 @@ class StructureEvent:
             "candle_closed": self.candle_closed,
             "later_modified": self.later_modified,
             "defining_candle_time": self.defining_candle_time,
+            "touch_times": list(self.touch_times),
             "metadata": self.metadata,
         }
 
@@ -116,6 +132,11 @@ class StructureEvent:
         if not all(k in rec for k in required):
             return None
         try:
+            touch_times = [str(x) for x in (rec.get("touch_times") or [])]
+            # The confirmed-touch count is the size of the identity set whenever
+            # identity state exists in the record. Legacy records without the
+            # field keep their stored count; it self-heals on the next pass.
+            touches = len(touch_times) if "touch_times" in rec else int(rec.get("touches", 0))
             return cls(
                 event_type=str(rec["event_type"]),
                 symbol=str(rec["symbol"]),
@@ -128,13 +149,14 @@ class StructureEvent:
                 price=float(rec.get("price", 0.0)),
                 top=float(rec.get("top", 0.0)),
                 bottom=float(rec.get("bottom", 0.0)),
-                touches=int(rec.get("touches", 0)),
+                touches=touches,
                 provisional_touches=int(rec.get("provisional_touches", 0)),
                 candle_closed=bool(rec.get("candle_closed", False)),
                 later_modified=bool(rec.get("later_modified", False)),
                 metadata=dict(rec.get("metadata") or {}),
                 event_id=str(rec.get("event_id", "")),
                 defining_candle_time=rec.get("defining_candle_time"),
+                touch_times=touch_times,
             )
         except (TypeError, ValueError):
             return None
@@ -523,8 +545,17 @@ class M1StructureEngine:
         """Update touch counts on active zones.
 
         Confirmed touches are only counted for CLOSED candles strictly after
-        the defining candle, deduplicated per bar time. Current-candle
-        interaction is tracked as a provisional touch instead.
+        the defining candle, deduplicated per candle identity (event_id +
+        candle timestamp). Current-candle interaction is tracked as a
+        provisional touch instead.
+
+        Every confirmed touch is appended to ``event.touch_times`` — the
+        authoritative identity set — and persisted to the ledger as an
+        idempotent ``<event_id>:TOUCH:<candle time>`` record. ``touches`` is
+        always ``len(touch_times)``, so replaying the same stored candle
+        snapshot (stale or not) can never increment the count: each touching
+        candle is counted exactly once, and a forming candle that closes in
+        the zone converts to exactly one confirmed touch.
 
         The M1 feed (MT5 copy_rates) contains only completed candles, so the
         last bar counts as closed; if a feed ever included the forming candle,
@@ -559,10 +590,24 @@ class M1StructureEngine:
                     continue
                 if event.bottom <= close <= event.top:
                     bar_time = bar.get("time")
-                    # Dedupe per bar time (read fresh each iteration).
-                    if bar_time != event.metadata.get("last_touch_time"):
-                        event.touches += 1
-                        event.metadata["last_touch_time"] = bar_time
+                    if bar_time is None or bar_time in event.touch_times:
+                        # Same candle replayed from an unchanged snapshot —
+                        # already counted, never count it again.
+                        continue
+                    event.touch_times.append(bar_time)
+                    # Keep the counter in sync with the identity set so the
+                    # persisted record is never written with a stale count.
+                    event.touches = len(event.touch_times)
+                    event.metadata["last_touch_time"] = bar_time
+                    # Persist the touch identity (idempotent per event_id +
+                    # candle timestamp) so restart/ledger restore keeps it.
+                    write_structure_event(
+                        event, transition="TOUCH", touch_time=bar_time
+                    )
+            # The confirmed-touch counter is ALWAYS the size of the identity
+            # set. This both prevents drift from replayed snapshots and lets a
+            # legacy ledger record with a stale count self-heal on this pass.
+            event.touches = len(event.touch_times)
 
     # ------------------------------------------------------------------
     # Invalidation
@@ -812,19 +857,39 @@ class M1StructureEngine:
 LEDGER_NAME = "m1_structure_events"
 
 
-def write_structure_event(event: StructureEvent) -> None:
+def write_structure_event(
+    event: StructureEvent,
+    *,
+    transition: str | None = None,
+    touch_time: Any = None,
+) -> None:
     """Append one structure-event lifecycle record to the immutable JSONL ledger.
 
-    Idempotent per (event_id, status) via the archive transaction_id: the same
-    transition is never appended twice, while the full create/confirm/invalidate
-    stream is preserved (each transition is a distinct status).
+    Idempotent per (event_id, transition) via the archive transaction_id: the
+    same create/confirm/invalidate transition is never appended twice, while
+    the full lifecycle stream is preserved (each transition is a distinct
+    status). Touch identities are persisted per candle timestamp — the
+    transaction_id becomes ``<event_id>:TOUCH:<candle time>`` — so replaying
+    the same touching candle is a dedup no-op while every genuinely new touch
+    is recorded exactly once.
     """
     try:
         from core.utils import append_archive_record
 
         record = event.to_dict()
+        # Invariant: the confirmed-touch counter is always the identity-set
+        # size. Enforce it at persist time so a record can never carry a
+        # count that drifts from the touches it actually tracked.
+        record["touches"] = len(record.get("touch_times") or [])
         eid = event.event_id or "unknown"
-        record["transaction_id"] = f"{eid}:{event.status}"
+        if touch_time is not None:
+            transition = "TOUCH"
+            record["transaction_id"] = f"{eid}:TOUCH:{touch_time}"
+        else:
+            if transition is None:
+                transition = event.status
+            record["transaction_id"] = f"{eid}:{transition}"
+        record["transition"] = transition
         append_archive_record(LEDGER_NAME, record)
     except Exception as exc:  # noqa: BLE001 — audit failure must stay visible
         _LOG.warning("Failed to write structure event to ledger: %s", exc)
