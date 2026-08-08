@@ -21,6 +21,7 @@ A research candidate may:
 - be copied into an immutable content-addressed artifact store;
 - be registered as a challenger;
 - be staged or rolled back as a shadow canary;
+- receive the same immutable market snapshots as the research champion;
 - produce telemetry and comparison evidence.
 
 A research candidate may **not**:
@@ -62,7 +63,8 @@ A research candidate may **not**:
 - immutable content-addressed model objects;
 - artifact integrity hashes;
 - model/version provenance;
-- shadow rollback and lifecycle audit history.
+- shadow rollback and lifecycle audit history;
+- same-snapshot champion/challenger comparison.
 
 No files are copied wholesale from either repository. The integration uses
 Quant OS naming, safety semantics, tests, and state ownership.
@@ -145,6 +147,30 @@ shadow_only = true
 execution_authority_granted = false
 ```
 
+### `core/shadow_challenger.py`
+
+Runs the research champion and challenger against independent copies of one
+content-addressed immutable market snapshot.
+
+The service:
+
+- verifies both model artifacts before either evaluator runs;
+- issues one shared trace ID and snapshot ID;
+- measures per-model evaluation latency;
+- normalizes decisions to `BUY`, `SELL`, or `WAIT`;
+- rejects invalid actions;
+- detects evaluator mutation of its input snapshot;
+- converts evaluator exceptions and invalid inputs to `WAIT`;
+- classifies agreement, conflict and unavailable decisions;
+- appends comparison evidence without storing raw market payloads.
+
+The comparison object has no executable intent and always forces:
+
+```text
+shadow_only = true
+execution_authority_granted = false
+```
+
 ## Validation principles
 
 Promotion fails closed when evidence is missing or weak. Current checks cover:
@@ -186,30 +212,35 @@ The harvest test group covers:
 - feature-ablation no-op detection;
 - evaluator isolation;
 - cost-stress and regime failures;
-- baseline and real-money-lock enforcement.
+- baseline and real-money-lock enforcement;
+- identical independent snapshots for champion and challenger;
+- evaluator exception, mutation and invalid-action fallback to `WAIT`;
+- artifact-integrity blocking before model evaluation;
+- append-only comparison evidence with no order/intent fields.
 
 `.github/workflows/phase0-ci.yml` compiles the harvested modules and runs their
 broker-agnostic tests in a dedicated Linux job while the existing Windows
-Phase 0, M1/feed and broader regression jobs remain unchanged.
+Phase 0, M1/feed and broader regression jobs remain unchanged. Pull requests
+into `agent/p0-safety-closure` are included explicitly in the CI trigger.
 
 ## Next integration slices
 
-1. Shadow challenger service
-   - feed research champion and challenger the same immutable market snapshot;
-   - issue one decision/trace ID for both evaluations;
-   - compare decisions and latencies without changing orders or risk;
-   - persist append-only evidence.
-
-2. Post-canary evidence policy
+1. Post-canary evidence policy
    - require strategy-frequency-aware forward evidence;
    - require minimum active days and independent market regimes;
+   - calculate uncertainty rather than use a fixed confidence number;
    - still end at an operator-reviewed promotion proposal;
    - real execution enablement remains a separate explicit deployment decision.
 
-3. Research orchestration
+2. Research orchestration
    - generate experiment proposals and validation jobs;
    - never mutate production configuration directly;
    - never auto-promote beyond shadow roles.
+
+3. Dashboard research observability
+   - show challenger artifact, data provenance and validation hash;
+   - show same-snapshot decision agreement/conflict rates;
+   - remain read-only with no promotion or execution controls.
 
 ## Release rule
 
