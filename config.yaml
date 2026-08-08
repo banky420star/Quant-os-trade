@@ -176,6 +176,8 @@ m1_structure:
   # Stale-data safety gate: oldest the last market bar may be while a
   # BUY/SELL decision is valid. Stale feeds always produce WAIT.
   max_data_age_seconds: 90
+  # Dedicated shadow-service cadence, independent of the sequential pipeline.
+  loop_interval_seconds: 10
 fast_mode:
   enabled: true
   live_enabled: false

@@ -367,8 +367,15 @@ def test_switch_profile_blocks_live_execution_profiles():
     assert "live_trading_enabled" in source
 
 
-def test_m1_structure_loop_registered_in_pipeline():
-    """The M1 shadow loop is registered so m1_structure_decisions.json is written."""
-    source = (ROOT / "core" / "pipeline.py").read_text(encoding="utf-8")
-    assert '"m1_structure_loop"' in source
+def test_m1_structure_loop_registered_as_supervisor_service():
+    """The M1 shadow loop is registered as a dedicated supervisor service in
+    start.py (NOT inside the sequential pipeline) so m1_structure_decisions.json
+    is written on its own fast cadence."""
+    source = (ROOT / "start.py").read_text(encoding="utf-8")
+    assert "m1_structure" in source
+    assert "M1 Structure" in source
     assert "m1_structure_loop.run" in source
+    assert "loop_interval_seconds" in source
+    # The loop must be absent from the sequential pipeline.
+    pipeline_source = (ROOT / "core" / "pipeline.py").read_text(encoding="utf-8")
+    assert "\"m1_structure_loop\", m1_structure_loop.run" not in pipeline_source

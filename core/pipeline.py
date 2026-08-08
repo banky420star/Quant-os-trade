@@ -21,10 +21,9 @@ ANALYTICAL_LOOPS: set[str] = {
     "news_sentiment_loop",
     # Read-only aggregation of the specialized-setup shadow fire ledger.
     "specialized_shadow_loop",
-    # NOTE: m1_structure_loop deliberately NOT here — it is part of the live
-    # market-state layer and must run on EVERY pipeline cycle so the current
-    # FORMING M1 candle stays fresh. It is shadow-only and gated on
-    # m1_structure.enabled, so running it every cycle never touches orders.
+    # NOTE: m1_structure_loop is NOT a pipeline loop at all — it runs as a
+    # dedicated supervisor service (start.py) on its own fast cadence so M1
+    # structure evaluation is never delayed behind this sequential pipeline.
 }
 
 
@@ -49,7 +48,6 @@ def _init_loops() -> list[tuple[str, Any]]:
         babysit_loop,
         news_sentiment_loop,
         specialized_shadow_loop,
-        m1_structure_loop,
     )
     return [
         ("data_loop", data_loop.run),
@@ -82,10 +80,10 @@ def _init_loops() -> list[tuple[str, Any]]:
         # per-symbol/per-setup/per-session report. Read-only, analytical, gated
         # on signals.specialized_setups.shadow.
         ("specialized_shadow_loop", specialized_shadow_loop.run),
-        # 2026-08-06 — forward-only M1 smart-money structure shadow engine.
-        # Writes state/m1_structure_decisions.json for the dashboard. Read-only,
-        # gated on m1_structure.enabled (disabled by default in Phase 0).
-        ("m1_structure_loop", m1_structure_loop.run),
+        # NOTE: m1_structure_loop deliberately absent — it runs as a dedicated
+        # supervisor service (start.py) at m1_structure.loop_interval_seconds
+        # (default 10s) so the FORMING M1 candle stays fresh even when this
+        # sequential pipeline runs longer than the app loop interval.
         ("health_loop", lambda: health_loop.run(connect=True)),
     ]
 

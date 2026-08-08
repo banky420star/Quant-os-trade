@@ -18,6 +18,7 @@ file untouched.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from core.utils import load_config, read_json_state, utc_now_iso, write_json_state
@@ -25,6 +26,10 @@ from core.utils import load_config, read_json_state, utc_now_iso, write_json_sta
 _LOG = logging.getLogger("m1_structure_loop")
 
 M1_TF = "M1"
+
+# Non-overlap guard: the dedicated shadow service may never stack two passes.
+# A run that finds another pass still in flight is skipped (never queued).
+_RUN_LOCK = threading.Lock()
 
 # Persistent across pipeline cycles; lazily built from the ledger on first run.
 _ENGINE: Any = None
@@ -119,17 +124,27 @@ def _run_structure_pass(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def run() -> dict[str, Any] | None:
-    """Pipeline entry point. Reads-only, shadow-only, fault-isolated."""
-    try:
-        config = load_config()
-        result = _run_structure_pass(config)
-        write_json_state("m1_structure_decisions.json", result)
-        n = len(result.get("decisions") or {})
-        _LOG.info(
-            "M1 structure loop: decisions=%d enabled=%s",
-            n, result.get("enabled"),
-        )
-        return result
-    except Exception as exc:  # noqa: BLE001 — analytical loop must not break the pipeline
-        _LOG.warning("M1 structure loop failed: %s", exc)
+    """Shadow service entry point. Reads-only, shadow-only, fault-isolated.
+
+    Non-reentrant: if a previous pass is still running, this call returns None
+    immediately (never queues or overlaps).
+    """
+    if not _RUN_LOCK.acquire(blocking=False):
+        _LOG.warning("M1 structure loop: previous run still in progress — skipping")
         return None
+    try:
+        try:
+            config = load_config()
+            result = _run_structure_pass(config)
+            write_json_state("m1_structure_decisions.json", result)
+            n = len(result.get("decisions") or {})
+            _LOG.info(
+                "M1 structure loop: decisions=%d enabled=%s",
+                n, result.get("enabled"),
+            )
+            return result
+        except Exception as exc:  # noqa: BLE001 — shadow service must never break the app
+            _LOG.warning("M1 structure loop failed: %s", exc)
+            return None
+    finally:
+        _RUN_LOCK.release()

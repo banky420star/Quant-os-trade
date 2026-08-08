@@ -274,6 +274,40 @@ def start(once: bool = False, profile: str | None = None) -> None:
     pipeline_svc._on_result = supervisor._record_loop_results
     supervisor.register(pipeline_svc)
 
+    # M1 structure shadow service — dedicated, fully independent of the
+    # sequential trading pipeline. The pipeline can run much longer than the
+    # app loop interval; M1 must evaluate every few seconds so the current
+    # FORMING M1 candle stays fresh. Shadow-only by construction: it reads
+    # state/latest_candles.json and writes state/m1_structure_decisions.json;
+    # it never starts MT5, never sends orders, and never touches the kill
+    # switch. Internally gated on m1_structure.enabled (disabled in Phase 0).
+    m1_cfg = config.get("m1_structure") or {}
+    m1_interval = float(m1_cfg.get("loop_interval_seconds", 10))
+
+    def _m1_structure() -> dict:
+        from loops import m1_structure_loop
+        result = m1_structure_loop.run()
+        if result is None:
+            # Non-overlap guard skipped this pass — report it honestly.
+            return {"m1_structure_loop": "SKIPPED"}
+        return {"m1_structure_loop": "OK"}
+
+    m1_svc = ManagedService(
+        "m1_structure",
+        "M1 Structure",
+        _m1_structure,
+        m1_interval,
+        logger,
+        run_once=once,
+    )
+    m1_svc._on_result = supervisor._record_loop_results
+    supervisor.register(m1_svc)
+    logger.info(
+        "M1 structure shadow service registered (interval=%.1fs, shadow-only, "
+        "enabled=%s)",
+        m1_interval, m1_cfg.get("enabled", False),
+    )
+
     if not once:
         supervisor.register(ManagedService(
             "history_engine",

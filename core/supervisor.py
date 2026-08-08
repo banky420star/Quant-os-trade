@@ -158,8 +158,12 @@ class Supervisor:
             for stale in STALE_LOOPS:
                 self._loop_states.pop(stale, None)
             active = set(results.keys())
+            # Loops owned by dedicated services (not the pipeline) must not be
+            # dropped by the pipeline's own-loop cleanup — e.g. m1_structure_loop
+            # runs as its own supervisor service on a fast cadence.
+            EXTERNAL_SERVICE_LOOPS = {"m1_structure_loop"}
             for name in list(self._loop_states):
-                if name not in active:
+                if name not in active and name not in EXTERNAL_SERVICE_LOOPS:
                     self._loop_states.pop(name, None)
 
     def _collect_system_metrics(self) -> dict[str, Any]:

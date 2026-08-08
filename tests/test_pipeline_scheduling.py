@@ -1,8 +1,10 @@
 """Pipeline scheduling regression tests.
 
-Guards the live market-state layer: m1_structure_loop must execute on EVERY
-pipeline cycle (so the current FORMING M1 candle stays fresh), while the slow
-policy/adaptation loops remain throttled to ANALYTICS_EVERY_N cycles.
+Guards the runtime architecture: m1_structure_loop is NOT part of the
+sequential trading pipeline at all — it runs as a dedicated supervisor
+service (start.py) on its own fast cadence so M1 structure evaluation is
+never delayed behind the slow analytical loops. The slow policy/adaptation
+loops remain throttled to ANALYTICS_EVERY_N cycles.
 """
 
 from __future__ import annotations
@@ -33,10 +35,23 @@ def _reset_cycle_counter(monkeypatch):
 
 
 def test_m1_structure_loop_not_in_analytical_set():
-    """M1 is live market-state, not a slow analytical loop."""
+    """M1 is a dedicated service, so it is not an analytical pipeline loop."""
     import core.pipeline as pipeline_mod
 
     assert "m1_structure_loop" not in pipeline_mod.ANALYTICAL_LOOPS
+
+
+def test_m1_loop_not_part_of_pipeline_loops():
+    """M1 must NOT run inside the sequential pipeline — it is a separate
+    supervisor service so slow analytical loops can never delay it."""
+    # Importing the loop registry pulls in loops.data_loop, which transitively
+    # imports pandas (core.history_manager) — absent in this sandbox, present
+    # in the production env (Windows/MT5).
+    pytest.importorskip("pandas")
+    from core.pipeline import _init_loops
+
+    names = [name for name, _fn in _init_loops()]
+    assert "m1_structure_loop" not in names
 
 
 def test_slow_loops_still_throttled():
@@ -46,11 +61,11 @@ def test_slow_loops_still_throttled():
     assert {"policy_detection_loop", "policy_optimizer_loop", "adaptation_loop"} <= pipeline_mod.ANALYTICAL_LOOPS
 
 
-def test_m1_runs_every_cycle_policy_only_every_fifth(monkeypatch):
-    """5 cycles: M1 runs 5x, policy optimizer runs exactly once (cycle 5)."""
+def test_policy_optimizer_still_throttled_every_fifth(monkeypatch):
+    """5 cycles: policy optimizer runs exactly once (cycle 5) even without M1."""
     import core.pipeline as pipeline_mod
 
-    calls = {"m1_structure_loop": 0, "policy_optimizer_loop": 0}
+    calls = {"policy_optimizer_loop": 0}
 
     def make(name: str):
         def _fn():
@@ -62,7 +77,6 @@ def test_m1_runs_every_cycle_policy_only_every_fifth(monkeypatch):
         pipeline_mod,
         "PIPELINE_LOOPS",
         [
-            ("m1_structure_loop", make("m1_structure_loop")),
             ("policy_optimizer_loop", make("policy_optimizer_loop")),
         ],
     )
@@ -71,32 +85,12 @@ def test_m1_runs_every_cycle_policy_only_every_fifth(monkeypatch):
     for _ in range(5):
         pipeline_mod.run_pipeline({}, logger)
 
-    assert calls["m1_structure_loop"] == 5
     assert calls["policy_optimizer_loop"] == 1
 
 
-def test_m1_runs_on_first_cycle_before_analytics_kick_in(monkeypatch):
-    """Cycle 1 (analytics still skipped) must still run M1."""
-    import core.pipeline as pipeline_mod
-
-    calls = {"m1_structure_loop": 0, "policy_optimizer_loop": 0}
-
-    def make(name: str):
-        def _fn():
-            calls[name] += 1
-
-        return _fn
-
-    monkeypatch.setattr(
-        pipeline_mod,
-        "PIPELINE_LOOPS",
-        [
-            ("m1_structure_loop", make("m1_structure_loop")),
-            ("policy_optimizer_loop", make("policy_optimizer_loop")),
-        ],
-    )
-
-    pipeline_mod.run_pipeline({}, _QuietLogger())
-
-    assert calls["m1_structure_loop"] == 1
-    assert calls["policy_optimizer_loop"] == 0
+def test_m1_service_exempt_from_pipeline_stale_cleanup():
+    """The pipeline's own-loop cleanup must never drop the dedicated M1 loop
+    from supervisor status — it belongs to its own service."""
+    source = (ROOT / "core" / "supervisor.py").read_text(encoding="utf-8")
+    assert "EXTERNAL_SERVICE_LOOPS" in source
+    assert '"m1_structure_loop"' in source
