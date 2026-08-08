@@ -9,6 +9,8 @@ if errorlevel 1 (
 call scripts\kill_agent.bat
 echo.
 echo  *** WARNING: auto-detected profile may enable LIVE order routing ***
+echo  *** NOT PART OF PHASE 0 -- reviewed deployment only. ***
+echo  Phase 0 validation must stay on the validation profile with zero orders.
 echo  Ctrl+C to stop
 echo.
 "%MT5_PYTHON_EXE%" start.py %*

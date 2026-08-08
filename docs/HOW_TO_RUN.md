@@ -1,224 +1,201 @@
-# MT5 Quant OS — How to Run
+# MT5 Quant OS — How to Run (Phase 0)
 
 Back to [README](../README.md).
 
-Repo: https://github.com/banky420star/Quant-os-trade.git  
-Active branch: `blue-guardian`
+Repo: https://github.com/banky420star/Quant-os-trade.git
+Phase 0 working branch: `agent/p0-safety-closure`
+
+> **Phase 0 posture.** The only sanctioned run state is the **validation
+> profile with zero execution authority**. Validation attaches to your MT5
+> terminal for market data, features, the M1 structure shadow engine, and the
+> dashboard — it sends **no orders**. Live/demo order routing, live fast
+> scalping, and real-account profiles are **NOT part of Phase 0**; they are
+> reviewed-deployment-only and are clearly marked in the launchers.
 
 ## Prerequisites
 
 | Requirement | Notes |
 |-------------|--------|
 | **Windows** | MT5 Python API is Windows-only |
-| **Python 3.10+** | Tested on 3.14; use a venv if you prefer |
-| **MetaTrader 5** | Logged into the account you want to trade |
-| **Algo Trading ON** | MT5 toolbar → **Algo Trading** must be enabled (green) |
+| **Python 3.10+** | Tested on 3.12/3.14; use a venv if you prefer |
+| **MetaTrader 5** | Logged into the account you want to observe |
+| **Algo Trading** | **NOT required for validation.** Only execution profiles need MT5 Algo Trading ON. Keep it OFF for Phase 0 validation/smoke tests. |
 | **Same session** | Bot attaches to the MT5 terminal in your Windows session (use `MT5Agent` terminal if running headless/RDP) |
 
-Install dependencies from the project root. The Windows launcher selects a Python interpreter that can import `MetaTrader5` before starting the bot:
+Install dependencies from the project root. The Windows launcher selects a
+Python interpreter that can import `MetaTrader5` before starting the bot:
 
 ```powershell
 cd Quant-os-trade
-C:\Python314\python.exe -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-If you use another Python installation, install the same requirements into that exact interpreter. The selector checks `MT5_PYTHON_OVERRIDE`, then `C:\Python314\python.exe`, then `py -3.14`, then `python`. To force a different interpreter:
+## Safe Windows startup (validation)
 
-```bat
-set MT5_PYTHON_OVERRIDE=C:\path\to\python.exe
+```powershell
+cd "C:\Users\Administrator\Desktop\new task"
+.\scripts\kill_agent.bat
+python scripts\preflight.py
 START_AGENT.bat
 ```
 
-## First-time setup
+`START_AGENT.bat` defaults to `--profile validation` (read-only, zero orders).
+To be explicit:
 
-1. **Clone and enter the repo**
+```powershell
+python start.py --profile validation
+```
 
-   ```powershell
-   git clone https://github.com/banky420star/Quant-os-trade.git
-   cd Quant-os-trade
-   git checkout blue-guardian
-   ```
+The dashboard is at **http://127.0.0.1:8080**.
 
-2. **Local overrides (optional, not committed)**
+### How to verify zero execution authority
 
-   Create `config.local.yaml` in the project root if you need machine-specific settings:
+```powershell
+python -c "import core.mt5_owner as o; print('gate blocked =', o.execution_gate_blocked())"
+```
 
+Expected: `gate blocked = True`. While blocked, every `order_send` path returns
+`None` — no broker mutation is possible regardless of dashboard clicks, state
+files, or presets. The safety matrix on the dashboard should read
+**DISARMED** / `execution_allowed: false`.
+
+## Safe Windows shutdown
+
+```powershell
+.\scripts\kill_agent.bat
+```
+
+Always use `kill_agent.bat` before starting again — duplicate `start.py`
+processes cause stale state. Never leave two agents running.
+
+## Temporary M1 shadow smoke (optional)
+
+M1 structure is **disabled by default** and stays disabled unless you are
+running a deliberate shadow smoke. To run one:
+
+1. Stop the agent.
+2. In `config.yaml`, change only:
    ```yaml
-   mt5:
-     use_logged_in_account: true
-     ignore_stored_credentials: true
-   app:
-     remote_access:
-       enabled: false
+   m1_structure:
+     enabled: true
    ```
+   Keep `max_data_age_seconds: 90` and `loop_interval_seconds: 10` unchanged.
+3. Start with `START_AGENT.bat` (validation profile) with **Algo Trading OFF**.
+4. Verify the M1 card: `state/m1_structure_decisions.json` updates about every
+   10 seconds; fresh data → `WAIT`/`BUY`/`SELL`; the current M1 candle is
+   `FORMING`/provisional and only closes after a newer bar arrives.
+5. Watch `state/market_data_feed.json`: `worker_alive: true`,
+   `last_refresh_success_at` ticking, `last_market_timestamp` advancing while
+   the market is open.
 
-   The bot uses **whichever account is logged into your MT5 window**. Do not put passwords in config files.
-
-3. **Log into MT5** on the terminal the bot will attach to (`C:\Users\Administrator\MT5Agent\terminal64.exe` or your default MT5).
-
-4. **Enable Algo Trading** in that terminal.
-
-## Profiles
-
-Profiles live in `profiles/*.yaml`. Pick one with `--profile`:
-
-| Profile | Use case |
-|---------|----------|
-| `validation` | **Default — read-only**. MT5 data/features/journal only. Zero orders. Safe everywhere. |
-| `30-real` | Micro live — XAU, Oil, UK100; requires explicit opt-in |
-| `30` | Micro paper-style gates — no external orders |
-| `growth` | Growth / practice campaign (demo); requires explicit opt-in |
-| `live` | Full live plan; requires explicit opt-in |
-
-Set explicitly (recommended):
-
-```powershell
-C:\Python314\python.exe start.py --profile validation
-```
-
-To enable order routing, the profile must set `execution.explicit_opt_in_danger_zone: true`.
-
-Or use the batch launcher, which selects the MT5-capable interpreter automatically:
-
-```bat
-START_AGENT.bat
-START_AGENT.bat --profile growth
-LAUNCH.bat --profile 30-real
-```
-
-## Start the bot
-
-**Recommended (single instance):**
-
-```powershell
-cd Quant-os-trade
-.\scripts\kill_agent.bat
-C:\Python314\python.exe scripts\preflight.py
-C:\Python314\python.exe start.py --profile validation
-```
-
-**Windows shortcut:**
-
-```powershell
-.\START_AGENT.bat
-```
-
-`START_AGENT.bat` kills old processes, selects a Python interpreter that can import `MetaTrader5`, and forwards arguments to `start.py`.
-
-**One pipeline cycle only (smoke test):**
-
-```powershell
-C:\Python314\python.exe start.py --profile 30-real --once
-```
-
-## Stop the bot
+## Restore M1 to disabled
 
 ```powershell
 .\scripts\kill_agent.bat
 ```
 
-Or `Ctrl+C` in the terminal running `start.py`.
+Then in `config.yaml`:
 
-Always use `kill_agent.bat` before starting again — duplicate `start.py` processes cause stale state and double orders.
-
-## Dashboard
-
-Default URL: **http://127.0.0.1:8080**
-
-Started automatically with `start.py`. Shows equity, positions, signals, health, and supervisor status.
-
-### Reset session state
-
-Clears kill switch, daily baselines, edge memory, and signal history. **Does not close MT5 positions.**
-
-- Top bar → **Reset state** link, or  
-- **Settings** → **Reset session state** button
-
-CLI equivalent:
-
-```powershell
-C:\Python314\python.exe scripts\reset_session_memory.py
+```yaml
+m1_structure:
+  enabled: false
 ```
 
-Use this after switching MT5 login/account so drawdown and daily-loss baselines match the new equity.
+Verify the config is untouched:
 
-## Switching MT5 accounts
+```powershell
+git diff -- config.yaml
+```
 
-1. Log into the new account in MT5 (same terminal path the bot uses).
-2. Run `.\scripts\kill_agent.bat`
-3. Run `C:\Python314\python.exe scripts\reset_session_memory.py` (or dashboard reset).
-4. Start again: `.\START_AGENT.bat --profile 30-real`
+No output = clean. Do **not** commit the temporary M1 enable.
 
-The risk loop auto-rebaselines on login change, but a manual reset avoids stale kill-switch state.
+## Kill-switch behavior (STOP)
+
+The dashboard **STOP TRADING** button is instant and **one-way**:
+
+* It writes `state/kill_switch.json` with `source: operator`.
+* It cannot be reversed from the kill-switch endpoint — a direct "off" is
+  rejected with a message pointing at the verified RESUME flow.
+* The risk manager never clears an operator stop.
+
+## RESUME behavior
+
+RESUME is a separate, **verified** path (`/api/resume`):
+
+* The confirmation phrase is derived **server-side** (`RESUME DEMO <login>`).
+* The dashboard never accepts a client-supplied expected value.
+* Demo resume requires an explicit execution opt-in, healthy status, a fresh
+  heartbeat, and a connected account — plus the exact typed confirmation.
+* Real-account resume is **disabled during Phase 0**.
+
+## Reset behavior
+
+The **Reset state** action is fail-safe in Phase 0:
+
+* Refuses with a `409` while any MT5 or paper position is open.
+* Calls `reset_session_memory(preserve_safety_gates=True)` — it preserves the
+  operator kill switch, risk gates, and `position_management.json`.
+* The only way to clear safety gates is the explicit out-of-band CLI flag:
+
+```powershell
+python scripts\reset_session_memory.py --full
+```
+
+Do not use reset as a way to re-enable trading after STOP — use verified
+RESUME instead.
+
+## Stale-data behavior
+
+Market-data freshness comes from the **real market bar timestamp**, never from
+"the worker ran" or "a file was rewritten":
+
+* Fresh (last M1 bar ≤ 90 s old) → normal `WAIT` / `BUY` / `SELL` evaluation.
+* Stale (> 90 s) or unknown timestamp → **mandatory `WAIT`**, `data_fresh:
+  false`, countdown zeroed, trigger set to `Stale M1 data`.
+
+A connected terminal with stale prices is not valid trading input.
+
+## What "WAIT" means
+
+`WAIT` is a decision state, not a failure. It means the structure engine has
+no confirmed entry chain: only forming structures, conflicting evidence,
+insufficient confirmation, stale data, or the engine being disabled. No signal
+is emitted from a `WAIT` state.
+
+## What Phase 0 does NOT approve
+
+Phase 0 does **not** approve: live order routing, fast-mode live execution,
+real-account profiles, automatic M1 execution, `30-real` as a normal path,
+clearing the kill switch via reset, or any dashboard execution-authority
+shortcut. Those are later phases behind a reviewed deployment.
 
 ## Logs and state
 
 | Path | Purpose |
 |------|---------|
-| `logs/` | Loop logs (`verifier_loop.log`, `execution_loop.log`, …) |
-| `state/` | Runtime JSON (positions, signals, risk, account) |
-| `state/health.json` | Last health check |
-| `state/paper_positions.json` | Synced MT5 positions in live mode |
+| `logs/` | Loop logs (`system.log`, `data_loop.log`, `m1_structure_loop.log` via `system.log`) |
+| `state/latest_candles.json` | Current M5/M15 (+ M1 when enabled) candle snapshot |
+| `state/market_data_feed.json` | Feed health: worker alive, refresh attempts/successes, consecutive failures, last market timestamp |
+| `state/m1_structure_decisions.json` | Per-symbol `WAIT`/`BUY`/`SELL` decisions (shadow) |
+| `state/m1_structure_events.jsonl` | Append-only structure event ledger |
+| `state/health.json` | Health check output |
 
 ## Common issues
 
 | Symptom | Fix |
 |---------|-----|
-| `MetaTrader5 is unavailable in this Python runtime` | Use `.\START_AGENT.bat`, or install with `C:\Python314\python.exe -m pip install -r requirements.txt` |
-| Dashboard shows BUY, no trade | Check `state/rejected_signals.json` for `failure_codes`; verify Algo Trading is ON |
-| `MT5 Algo Trading is OFF` | Enable Algo Trading in MT5 toolbar |
-| Kill switch / daily loss pause | Dashboard **Reset state** or `reset_session_memory.py` after account change |
-| 100% exposure with one small position | Restart bot after pull — risk loop uses SL-risk not notional (fixed on `blue-guardian`) |
+| `MetaTrader5 is unavailable in this Python runtime` | Use `.\START_AGENT.bat`, or install into that interpreter with `python -m pip install -r requirements.txt` |
+| Dashboard shows M1 `WAIT` with `data_fresh: false` | Feed is stale — check `market_data_feed.json`; MT5 terminal may be disconnected or the market closed |
+| Kill switch ON from operator STOP | Use the verified RESUME flow (typed confirmation), never reset |
+| Reset refuses with 409 | Close/manage open positions first |
 | Two bots running | `.\scripts\kill_agent.bat` then one `START_AGENT.bat` |
-| Gold blocked, other symbols open | Ensure profile has `independent_symbol_exposure: true` (`30-real` does) |
-
-## Push your changes to GitHub
-
-```powershell
-git add -A
-git commit -m "your message"
-git push origin blue-guardian
-```
 
 ## Pre-flight check
 
-Before starting (or after switching accounts):
-
 ```powershell
-C:\Python314\python.exe scripts\preflight.py
+python scripts\preflight.py
 ```
 
 Exits 0 when ready; reports kill switch, health, and `trade_allowed` blockers.
-
-## Pipeline architecture
-
-See **[PIPELINE.md](PIPELINE.md)** for the full loop diagram, entry strategy flow, and hardening roadmap.  
-Repository layout: **[STRUCTURE.md](STRUCTURE.md)**.
-
-## Ops alerts (optional)
-
-Enable Discord/Slack-style webhooks in `config.yaml`:
-
-```yaml
-ops:
-  alerts:
-    enabled: true
-    webhook_url: "https://discord.com/api/webhooks/..."
-```
-
-Alerts fire on kill switch, health degradation, and execution errors. Audit trail: `state/audit_log.jsonl`.
-
-## Quick reference
-
-```powershell
-# Full restart (demo micro)
-.\scripts\kill_agent.bat
-C:\Python314\python.exe scripts\reset_session_memory.py   # optional, after account switch
-.\START_AGENT.bat --profile 30-real
-
-# Dashboard
-start http://127.0.0.1:8080
-
-# Tests
-C:\Python314\python.exe -m pytest tests/test_exposure.py -q
-```
+Without `--full`, `reset_session_memory` preserves the kill switch, risk gates,
+and position management by default.

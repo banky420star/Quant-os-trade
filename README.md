@@ -3,7 +3,14 @@
 Evidence-first MT5 trading agent for Windows: sequential pipeline loops, strategy-pinned entries, live verifier gates, and a real-time dashboard.
 
 **Repo:** https://github.com/banky420star/Quant-os-trade.git  
-**Branch:** `blue-guardian`
+**Branch:** `agent/p0-safety-closure` (Phase 0 validation release candidate)
+
+> **PHASE 0 (fail-closed).** The sanctioned run state is the **validation
+> profile with zero execution authority** — market data, features, the M1
+> structure shadow engine, and the dashboard only; **no orders**. Live/demo
+> order routing, live fast scalping, and real-account profiles are
+> **reviewed-deployment-only and NOT part of Phase 0**. MT5 Algo Trading is
+> **not required** for validation; keep it OFF during Phase 0 smoke tests.
 
 ## Quick start
 
@@ -16,7 +23,7 @@ python start.py --profile validation
 
 Open **http://127.0.0.1:8080**. The validation profile is **read-only** — it connects to MT5 for data/features/journal but sends **zero orders**. Safe to run on any account.
 
-To enable demo trading, use `--profile growth`. To enable live trading, use `--profile 30-real` or `--profile 100` — each requires an explicit opt-in via `execution.explicit_opt_in_danger_zone: true` in the profile.
+Demo (`--profile growth`) and live (`--profile 30-real`, `--profile 100`) trading require an explicit opt-in via `execution.explicit_opt_in_danger_zone: true` in the profile — these are **reviewed-deployment-only and NOT part of Phase 0**.
 
 ## Documentation
 
