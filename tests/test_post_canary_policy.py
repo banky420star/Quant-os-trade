@@ -167,7 +167,7 @@ def test_missing_paired_outcomes_reduce_coverage_and_fail():
 
 
 def test_challenger_errors_are_counted_and_gated():
-    rows = _observations(challenger_error_indices={1, 2, 3, 4})
+    rows = _observations(challenger_error_indices=set(range(6)))
     decision = _policy().evaluate(
         candidate_id="challenger",
         champion_id="champion",
