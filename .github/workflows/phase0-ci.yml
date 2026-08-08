@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, "MT5_Quant_Agent_P0_Repaired_2026-08-04", "agent/*"]
   pull_request:
-    branches: [main, "MT5_Quant_Agent_P0_Repaired_2026-08-04"]
+    branches: [main, "MT5_Quant_Agent_P0_Repaired_2026-08-04", "agent/p0-safety-closure"]
 
 concurrency:
   group: phase0-ci-${{ github.ref }}
@@ -34,6 +34,7 @@ jobs:
             core/m1_structure_engine.py \
             core/model_governance.py \
             core/model_artifacts.py \
+            core/shadow_challenger.py \
             core/pipeline.py \
             core/supervisor.py \
             loops/data_loop.py \
@@ -51,7 +52,8 @@ jobs:
             tests/test_model_governance.py \
             tests/test_model_artifacts.py \
             tests/test_feature_ablation.py \
-            tests/test_quant_validation_harness.py
+            tests/test_quant_validation_harness.py \
+            tests/test_shadow_challenger.py
           echo "py_compile OK (no output above = clean)"
 
   # -------------------------------------------------------------------------
@@ -129,8 +131,8 @@ jobs:
           if-no-files-found: ignore
 
   # -------------------------------------------------------------------------
-  # 4. Shadow model governance + research evidence.  This job deliberately
-  #    installs only research/test dependencies, not MetaTrader5.  These
+  # 4. Shadow model governance + research evidence. This job deliberately
+  #    installs only research/test dependencies, not MetaTrader5. These
   #    modules must stay broker-agnostic and execution-disabled.
   # -------------------------------------------------------------------------
   model-governance:
@@ -148,13 +150,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest numpy pandas
 
-      - name: Governance, immutable artifacts, ablation and validation evidence
+      - name: Governance, artifacts, ablation, validation and shadow comparison
         run: >
           python -m pytest
           tests/test_model_governance.py
           tests/test_model_artifacts.py
           tests/test_feature_ablation.py
           tests/test_quant_validation_harness.py
+          tests/test_shadow_challenger.py
           -q --tb=short
 
   # -------------------------------------------------------------------------
