@@ -1,14 +1,34 @@
-"""Validation — walk-forward, lookahead checks, recursive tests, parameter stability, cost stress."""
+"""Validation — walk-forward, leakage, cost stress, ablation and governance evidence."""
 
 from .cost_stress import double_cost_test, spread_stress_test
+from .feature_ablation import (
+    AblationGroup,
+    AblationReport,
+    AblationVariantResult,
+    FeatureAblationLab,
+    fingerprint_frame,
+)
 from .lookahead_check import detect_lookahead, point_in_time_audit
 from .parameter_stability import neighbourhood_stability, parameter_surface
+from .quant_harness import (
+    QuantValidationConfig,
+    QuantValidationHarness,
+    ValidationBundle,
+)
 from .recursive_check import recursive_one_step_ahead
 from .walk_forward import purged_walk_forward, walk_forward_report
 
 __all__ = [
+    "AblationGroup",
+    "AblationReport",
+    "AblationVariantResult",
+    "FeatureAblationLab",
+    "QuantValidationConfig",
+    "QuantValidationHarness",
+    "ValidationBundle",
     "detect_lookahead",
     "double_cost_test",
+    "fingerprint_frame",
     "neighbourhood_stability",
     "parameter_surface",
     "point_in_time_audit",
