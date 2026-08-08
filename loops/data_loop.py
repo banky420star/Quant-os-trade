@@ -84,10 +84,19 @@ def _candle_refresh_interval(config: dict) -> float:
 
 def _make_candle_refresh_fn(config: dict, logger) -> Any:
     """The worker's real refresh path: pull via the shared MT5Owner session,
-    write state/latest_candles.json atomically, record feed health.
-    Returns the payload dict on success, False on failure."""
+    write state/latest_candles.json atomically. Returns the payload dict on
+    success; on failure the underlying exception PROPAGATES to the worker's
+    ``_candle_tick`` so the REAL error message is recorded.
+
+    Health recording is DEFERRED to the worker's ``_candle_tick`` (single
+    owner — the refresh function must NOT also record, or every tick would
+    count twice). Manual callers (run() fallback, tests) still pass
+    ``record_health=True`` and record themselves.
+    """
     def _refresh() -> dict | bool:
-        return candle_refresh_now(config=config, logger=logger)
+        return candle_refresh_now(
+            config=config, logger=logger, record_health=False,
+        )
     return _refresh
 
 
@@ -195,14 +204,27 @@ def startup(*, logger=None) -> dict:
         connection.disconnect()
 
 
-def candle_refresh_now(config: dict | None = None, logger=None) -> dict | bool:
-    """Manual one-shot candle refresh — used by /api endpoints + tests.
+def candle_refresh_now(
+    config: dict | None = None,
+    logger=None,
+    *,
+    record_health: bool = True,
+) -> dict | bool:
+    """Manual one-shot candle refresh — used by run()'s fallback paths + tests.
 
     Returns the data dict on success, False on failure (e.g. MT5
-    disconnected). This is the SAME path that the event-loop worker
-    uses internally; centralizing it here means tests + tools exercise
-    the same code-path the worker does in production. Records the outcome
-    in the shared feed-health state so observability stays coherent.
+    disconnected). This is the SAME path the event-loop worker uses
+    internally; centralizing it here means tests + tools exercise
+    the same code-path the worker does in production.
+
+    ``record_health`` (single-owner health, 2026-08-08): when True (manual
+    callers) this function records the outcome in the shared feed-health
+    state itself. When False (the event worker's cadence via
+    ``_make_candle_refresh_fn``) recording is left to the worker's
+    ``_candle_tick`` — never BOTH, or a failed tick would count as two
+    consecutive failures. On failure with ``record_health=False`` the
+    original exception is re-raised so the worker can record the REAL error
+    message; manual callers keep the return-False contract.
     """
     if config is None:
         config = load_config()
@@ -220,14 +242,20 @@ def candle_refresh_now(config: dict | None = None, logger=None) -> dict | bool:
         data = collector.pull_latest()
         _validate_payload(data, entry_tf, bias_tf, m1_tf)
         write_json_state("latest_candles.json", data)
-        MT5TerminalManager.record_candle_refresh_result(
-            ok=True, market_ts=latest_market_timestamp(data),
-        )
+        if record_health:
+            MT5TerminalManager.record_candle_refresh_result(
+                ok=True, market_ts=latest_market_timestamp(data),
+            )
         return data
     except Exception as exc:
-        log.warning("candle_refresh_now failed: %s", exc)
-        MT5TerminalManager.record_candle_refresh_result(ok=False, error=str(exc))
-        return False
+        if record_health:
+            log.warning("candle_refresh_now failed: %s", exc)
+            MT5TerminalManager.record_candle_refresh_result(ok=False, error=str(exc))
+            return False
+        # Worker path: re-raise WITHOUT logging here — the worker's
+        # _candle_tick logs and records the real error exactly once, so the
+        # failure is not logged twice on a cadence that can fail every 10s.
+        raise
     finally:
         connection.disconnect()
 

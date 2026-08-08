@@ -697,9 +697,14 @@ class MT5TerminalManager:
         market_ts: str | None = None,
         attempted_at: str | None = None,
     ) -> None:
-        """Update the shared feed health from a refresh attempt. The event
-        worker calls this every candle tick; data_loop.candle_refresh_now()
-        (manual /api refresh) calls it too, so observability never diverges.
+        """Update the shared feed health from a refresh attempt.
+
+        SINGLE-OWNER rule (2026-08-08): exactly one caller records per refresh
+        attempt. On the worker cadence, ``_candle_tick`` is the sole recorder
+        (the worker's refresh fn runs with record_health=False); manual
+        callers (run() fallback, tests) record through
+        data_loop.candle_refresh_now(record_health=True). Never both — a
+        failed tick would count twice.
         """
         now = attempted_at or utc_now_iso()
         with cls._event_worker_lock:

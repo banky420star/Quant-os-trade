@@ -163,12 +163,22 @@ def _agent_lock_allows_write(filename: str) -> bool:
     return lock_pid == os.getpid()
 
 
-def write_json_state(filename: str, data: Any) -> Path:
+def write_json_state(filename: str, data: Any) -> Path | None:
     """Write JSON state file atomically with per-file locking and Windows-safe retries.
 
     Supports nested relative paths (e.g. ``culturing/XAUUSDm.json``) by creating
     parent directories under STATE_DIR. Top-level filenames are unaffected (their
     parent is STATE_DIR, which already exists).
+
+    Atomicity is absolute (2026-08-08, Agent 6): the target path is ONLY ever
+    updated via ``os.replace`` of a fully-written temp file. There is NO
+    fallback to writing the target directly — a reader must never observe a
+    half-written JSON file, especially at the moment of a lock/replace failure
+    where state integrity matters most. If every retry fails, this function
+    fails CLOSED: it logs the error, removes the stale temp file, keeps the
+    last valid state on disk, and returns None (callers treat the return as
+    advisory; the old state remains valid — possibly stale — until a later
+    write succeeds).
     """
     if not _agent_lock_allows_write(filename):
         return STATE_DIR / filename
@@ -191,16 +201,16 @@ def write_json_state(filename: str, data: Any) -> Path:
                 last_err = exc
                 if attempt < 9:
                     time.sleep(0.04 * (2 ** attempt))
-                else:
-                    try:
-                        path.write_text(payload, encoding="utf-8")
-                        tmp_path.unlink(missing_ok=True)
-                        return path
-                    except OSError:
-                        raise last_err from exc
-        if last_err:
-            raise last_err
-    return path
+        logging.getLogger("utils").error(
+            "write_json_state FAILED after 10 attempts filename=%s err=%s — "
+            "kept previous state; target NOT updated (no non-atomic fallback)",
+            filename, last_err,
+        )
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
 
 def fail_safe_missing(filename: str, logger: logging.Logger) -> bool:

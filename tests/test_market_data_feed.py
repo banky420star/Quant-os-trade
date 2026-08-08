@@ -572,3 +572,254 @@ class TestDataLoopIntegration:
         feed = MT5TerminalManager.feed_status()
         assert feed["refresh_failures_consecutive"] >= 1
         assert "No IPC connection" in (feed["last_refresh_error"] or "")
+
+    def test_candle_refresh_now_record_health_false_defers_recording(self, monkeypatch):
+        """Bug 2 (single-owner health): a refresh fn run with
+        record_health=False must NOT touch feed health — the worker's
+        _candle_tick is the sole recorder on that path."""
+        pytest.importorskip("pandas")
+        from loops import data_loop as dl
+
+        class _Conn:
+            def __init__(self, *a, **kw):
+                self.connected = True
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+        class _Symbols:
+            def __init__(self, *a, **kw):
+                pass
+
+            def discover(self):
+                return {"resolved": {"XAUUSDm": "XAUUSDm"}}
+
+        class _Collector:
+            def __init__(self, *a, **kw):
+                pass
+
+            def pull_latest(self):
+                return {
+                    "timestamp": "t", "source": "mt5",
+                    "symbol_map": {"XAUUSDm": "XAUUSDm"}, "account": {},
+                    "symbols": {"XAUUSDm": {
+                        "broker_symbol": "XAUUSDm",
+                        "M5": [{"open": 1, "high": 2, "low": 1, "close": 1.5,
+                                "time": _now_iso(10)}],
+                        "M15": [],
+                    }},
+                }
+
+        monkeypatch.setattr(dl, "MT5ConnectionManager", _Conn)
+        monkeypatch.setattr(dl, "SymbolManager", _Symbols)
+        monkeypatch.setattr(dl, "DataCollector", _Collector)
+        monkeypatch.setattr(dl, "write_json_state", lambda *a, **k: None)
+        monkeypatch.setattr(dl, "_validate_payload", lambda *a, **k: None)
+
+        before = MT5TerminalManager.feed_status().get("last_refresh_attempt_at")
+        out = dl.candle_refresh_now(
+            config=_cfg(), logger=_log_silent(), record_health=False,
+        )
+        assert out is not False
+        after = MT5TerminalManager.feed_status().get("last_refresh_attempt_at")
+        assert after == before, \
+            "record_health=False must NOT record feed health"
+
+    def test_candle_refresh_now_record_health_false_reraises_real_error(self, monkeypatch):
+        """Bug 2: on failure the record_health=False path re-raises the REAL
+        error (instead of returning a generic False) so the worker records the
+        actual cause — and it records nothing itself."""
+        pytest.importorskip("pandas")
+        from loops import data_loop as dl
+
+        class _Conn:
+            def __init__(self, *a, **kw):
+                self.connected = True
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+        class _Symbols:
+            def __init__(self, *a, **kw):
+                pass
+
+            def discover(self):
+                return {"resolved": {"XAUUSDm": "XAUUSDm"}}
+
+        class _FailingCollector:
+            def __init__(self, *a, **kw):
+                pass
+
+            def pull_latest(self):
+                raise RuntimeError("Not logged in to MT5: (-10004, 'No IPC connection')")
+
+        monkeypatch.setattr(dl, "MT5ConnectionManager", _Conn)
+        monkeypatch.setattr(dl, "SymbolManager", _Symbols)
+        monkeypatch.setattr(dl, "DataCollector", _FailingCollector)
+
+        with pytest.raises(RuntimeError, match="No IPC connection"):
+            dl.candle_refresh_now(
+                config=_cfg(), logger=_log_silent(), record_health=False,
+            )
+        feed = MT5TerminalManager.feed_status()
+        assert feed.get("refresh_failures_consecutive", 0) == 0, \
+            "record_health=False must not record — the worker records instead"
+
+    def test_worker_success_records_health_exactly_once_per_tick(self, monkeypatch):
+        """Bug 2 regression (success side): a SUCCESSFUL worker tick must also
+        record feed health exactly once. Before the fix both
+        candle_refresh_now() and _candle_tick() recorded, so one successful
+        refresh caused duplicate health writes."""
+        pytest.importorskip("pandas")
+        from loops import data_loop as dl
+        from core import mt5_terminal_manager as mt
+
+        class _Conn:
+            def __init__(self, *a, **kw):
+                self.connected = True
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+        class _Symbols:
+            def __init__(self, *a, **kw):
+                pass
+
+            def discover(self):
+                return {"resolved": {"XAUUSDm": "XAUUSDm"}}
+
+        class _Collector:
+            calls = 0
+
+            def __init__(self, *a, **kw):
+                pass
+
+            def pull_latest(self):
+                type(self).calls += 1
+                return {
+                    "timestamp": "t", "source": "mt5",
+                    "symbol_map": {"XAUUSDm": "XAUUSDm"}, "account": {},
+                    "symbols": {"XAUUSDm": {
+                        "broker_symbol": "XAUUSDm",
+                        "M5": [{"open": 1, "high": 2, "low": 1, "close": 1.5,
+                                "time": _now_iso(5)}],
+                        "M1": [{"open": 1, "high": 2, "low": 1, "close": 1.5,
+                                "time": _now_iso(2)}],
+                        "M15": [],
+                    }},
+                }
+
+        monkeypatch.setattr(dl, "MT5ConnectionManager", _Conn)
+        monkeypatch.setattr(dl, "SymbolManager", _Symbols)
+        monkeypatch.setattr(dl, "DataCollector", _Collector)
+        monkeypatch.setattr(dl, "write_json_state", lambda *a, **k: None)
+        monkeypatch.setattr(dl, "_validate_payload", lambda *a, **k: None)
+
+        records = []
+        orig = mt.MT5TerminalManager.record_candle_refresh_result
+
+        def _counting(cls, **kw):
+            result = orig(**kw)
+            records.append(kw)
+            return result
+
+        monkeypatch.setattr(
+            mt.MT5TerminalManager, "record_candle_refresh_result",
+            classmethod(_counting),
+        )
+
+        mgr = MT5TerminalManager(_cfg(), _log_silent())
+        mgr.start_event_loop(
+            poll_interval_sec=0.02, candle_interval_sec=0.05, connect_now=False,
+            candle_refresh_fn=dl._make_candle_refresh_fn(_cfg(), _log_silent()),
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if len(records) == _Collector.calls and _Collector.calls >= 2:
+                    break
+                time.sleep(0.02)
+            feed = mgr.feed_status()
+            assert _Collector.calls >= 2, f"expected >=2 ticks; got {_Collector.calls}"
+            assert len(records) == _Collector.calls, (
+                "each SUCCESSFUL tick must record exactly once — duplicate "
+                f"success writes would give records={len(records)} ticks={_Collector.calls}"
+            )
+            assert all(r.get("ok") for r in records), records
+            assert feed.get("refresh_failures_consecutive", 0) == 0
+            assert feed["last_refresh_success_at"]
+        finally:
+            mgr.stop_event_loop(timeout=2.0)
+
+    def test_worker_path_records_health_exactly_once_per_tick(self, monkeypatch):
+        """Bug 2 regression: the REAL worker refresh path (candle_refresh_now
+        via _make_candle_refresh_fn) must record feed health exactly once per
+        tick. Before the fix, candle_refresh_now() recorded internally AND
+        _candle_tick() recorded again — a failed tick counted TWICE."""
+        pytest.importorskip("pandas")
+        from loops import data_loop as dl
+
+        class _Conn:
+            def __init__(self, *a, **kw):
+                self.connected = True
+
+            def connect(self):
+                return True
+
+            def disconnect(self):
+                return None
+
+        class _Symbols:
+            def __init__(self, *a, **kw):
+                pass
+
+            def discover(self):
+                return {"resolved": {"XAUUSDm": "XAUUSDm"}}
+
+        class _FailingCollector:
+            calls = 0
+
+            def __init__(self, *a, **kw):
+                pass
+
+            def pull_latest(self):
+                type(self).calls += 1
+                raise RuntimeError("Not logged in to MT5: (-10004, 'No IPC connection')")
+
+        monkeypatch.setattr(dl, "MT5ConnectionManager", _Conn)
+        monkeypatch.setattr(dl, "SymbolManager", _Symbols)
+        monkeypatch.setattr(dl, "DataCollector", _FailingCollector)
+
+        mgr = MT5TerminalManager(_cfg(), _log_silent())
+        mgr.start_event_loop(
+            poll_interval_sec=0.02, candle_interval_sec=0.05, connect_now=False,
+            candle_refresh_fn=dl._make_candle_refresh_fn(_cfg(), _log_silent()),
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                feed = mgr.feed_status()
+                if (feed.get("refresh_failures_consecutive", 0) == _FailingCollector.calls
+                        and _FailingCollector.calls >= 2):
+                    break
+                time.sleep(0.02)
+            feed = mgr.feed_status()
+            assert _FailingCollector.calls >= 2, \
+                f"expected >=2 failed ticks; got {_FailingCollector.calls}"
+            assert feed["refresh_failures_consecutive"] == _FailingCollector.calls, (
+                "each failed tick must count EXACTLY once — double recording "
+                f"would make failures={feed['refresh_failures_consecutive']} "
+                f"outrun ticks={_FailingCollector.calls}"
+            )
+            assert "No IPC connection" in (feed["last_refresh_error"] or "")
+        finally:
+            mgr.stop_event_loop(timeout=2.0)
