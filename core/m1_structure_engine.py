@@ -157,6 +157,7 @@ class DecisionState:
     bear_trigger: str  # what would confirm bearish
     candle_close_seconds: int  # seconds until M1 candle closes (UTC clock)
     data_age_seconds: float  # age of the last market bar (not the update call)
+    data_fresh: bool  # False when the last market bar is stale/unknown
     updated_at: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +175,7 @@ class DecisionState:
             "bear_trigger": self.bear_trigger,
             "candle_close_seconds": self.candle_close_seconds,
             "data_age_seconds": round(self.data_age_seconds, 1),
+            "data_fresh": self.data_fresh,
             "updated_at": self.updated_at,
         }
 
@@ -199,6 +201,9 @@ class M1StructureEngine:
         self.min_displacement_atr = float(m1_cfg.get("min_displacement_atr", 0.5))
         self.min_fvg_atr = float(m1_cfg.get("min_fvg_atr", 0.25))
         self.ob_lookback = int(m1_cfg.get("ob_lookback", 20))
+        # Stale-data safety gate: the oldest the last market bar may be while a
+        # BUY/SELL decision is still considered valid. Stale feeds always WAIT.
+        self.max_data_age_seconds = float(m1_cfg.get("max_data_age_seconds", 90))
         # Per-symbol state: {symbol: [StructureEvent, ...]} in detection order.
         self._events: dict[str, list[StructureEvent]] = {}
         # Per-symbol decision state
@@ -721,10 +726,23 @@ class M1StructureEngine:
         now_dt = datetime.now(timezone.utc)
         next_boundary = now_dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
         candle_close_seconds = max(0, int((next_boundary - now_dt).total_seconds()))
-        if data_age > 90:
-            # Stale feed — no live candle is actually in flight; don't pretend
-            # a countdown exists when the last market bar is minutes old.
+
+        # Data freshness is an INDEPENDENT safety gate: a connected terminal
+        # with stale prices is not valid trading input. Stale (or unknown-age)
+        # M1 data forces the decision back to WAIT regardless of any confirmed
+        # structure chain — an old confirmed chain must never keep publishing
+        # BUY/SELL while no current market data exists.
+        max_age = self.max_data_age_seconds
+        data_fresh = data_age >= 0 and data_age <= max_age
+        if not data_fresh:
+            state = "WAIT"
             candle_close_seconds = 0
+            if data_age < 0:
+                bull_trigger = "M1 data age unknown"
+                bear_trigger = "M1 data age unknown"
+            else:
+                bull_trigger = "Stale M1 data"
+                bear_trigger = "Stale M1 data"
 
         return DecisionState(
             symbol=symbol,
@@ -740,6 +758,7 @@ class M1StructureEngine:
             bear_trigger=bear_trigger,
             candle_close_seconds=candle_close_seconds,
             data_age_seconds=data_age,
+            data_fresh=data_fresh,
             updated_at=now_iso,
         )
 
@@ -781,6 +800,7 @@ class M1StructureEngine:
             bear_trigger="Engine disabled",
             candle_close_seconds=0,
             data_age_seconds=-1,
+            data_fresh=False,
             updated_at=utc_now_iso(),
         )
 

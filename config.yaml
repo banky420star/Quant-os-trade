@@ -173,6 +173,9 @@ m1_structure:
   min_displacement_atr: 0.5
   min_fvg_atr: 0.25
   ob_lookback: 20
+  # Stale-data safety gate: oldest the last market bar may be while a
+  # BUY/SELL decision is valid. Stale feeds always produce WAIT.
+  max_data_age_seconds: 90
 fast_mode:
   enabled: true
   live_enabled: false

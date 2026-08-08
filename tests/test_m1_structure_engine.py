@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -44,10 +44,26 @@ from core.utils import STATE_DIR
 
 _COUNTER = {"n": 0}
 
+# Captured once per test process, so every _t(minute) call returns an IDENTICAL
+# timestamp (tests compare regenerated times against the engine's captured
+# defining_candle_time) while staying inside the freshness window: _t(13) is
+# the import moment (age ~0s) and the M1 suite runs in well under the
+# 90s max_data_age_seconds gate.
+_ANCHOR = datetime.now(timezone.utc).replace(microsecond=0)
+
 
 def _t(minute: int) -> str:
-    """ISO bar time for a fixed test day."""
-    return f"2026-08-07T12:{minute:02d}:00+00:00"
+    """ISO bar time: minute 13 ~= import time, minute 0 = 13 minutes earlier.
+
+    Relative ordering is preserved: larger minutes are always later than
+    smaller ones, and the values are deterministic within a test process.
+    """
+    return (_ANCHOR - timedelta(minutes=13 - minute)).isoformat()
+
+
+def _fresh_iso(age_seconds: float) -> str:
+    """ISO timestamp `age_seconds` before now — explicit freshness control."""
+    return (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
 
 
 def _bar(o: float, h: float, l: float, c: float, t: str) -> dict:
@@ -56,8 +72,12 @@ def _bar(o: float, h: float, l: float, c: float, t: str) -> dict:
 
 
 def _unique_sym(prefix: str) -> str:
+    # The structure ledger is persistent on disk and idempotent per event_id,
+    # so the symbol (and any event_id embedding it) must be unique ACROSS test
+    # processes too — otherwise a rerun would collide with (and be suppressed
+    # by) records written by an earlier run.
     _COUNTER["n"] += 1
-    return f"{prefix}{_COUNTER['n']}"
+    return f"{prefix}{_COUNTER['n']}_{time.time_ns()}"
 
 
 def _engine(config: dict | None = None) -> M1StructureEngine:
@@ -502,7 +522,7 @@ class TestDecisionChain:
             _confirmed_event("bos", "bullish", 101.4, 101.2, "T|bos|bullish|t10", _t(10)),
             _confirmed_event("fvg", "bullish", 101.6, 100.6, "T|fvg|bullish|t11", _t(11)),
         ]
-        bars = [_bar(101.5, 101.8, 101.4, 101.7, _t(12))]  # close 101.7 >= fvg top 101.6
+        bars = [_bar(101.5, 101.8, 101.4, 101.7, _fresh_iso(30))]  # fresh: close 101.7 >= fvg top 101.6
         eng.update("T", bars, 101.7, atr=1.0)
         dec = eng.get_decision("T")
         assert dec["state"] == "BUY", dec
@@ -514,7 +534,7 @@ class TestDecisionChain:
             _confirmed_event("bos", "bearish", 109.0, 108.6, "T|bos|bearish|t10", _t(10)),
             _confirmed_event("fvg", "bearish", 109.2, 108.8, "T|fvg|bearish|t11", _t(11)),
         ]
-        bars = [_bar(108.7, 108.9, 108.4, 108.6, _t(12))]  # close <= fvg bottom 108.8
+        bars = [_bar(108.7, 108.9, 108.4, 108.6, _fresh_iso(30))]  # fresh: close <= fvg bottom 108.8
         eng.update("T", bars, 108.6, atr=1.0)
         dec = eng.get_decision("T")
         assert dec["state"] == "SELL", dec
@@ -543,12 +563,13 @@ class TestDecisionChain:
             _confirmed_event("fvg", "bullish", 101.6, 100.6, "T|fvg|bullish|t11", _t(11)),
         ]
         bars = [
-            _bar(101.2, 101.4, 101.0, 101.3, _t(12)),  # CLOSED: below level 101.6
-            _bar(101.6, 101.9, 101.5, 101.8, _t(13)),  # FORMING: above level
+            _bar(101.2, 101.4, 101.0, 101.3, _fresh_iso(120)),  # CLOSED: below level 101.6
+            _bar(101.6, 101.9, 101.5, 101.8, _fresh_iso(30)),   # FORMING: above level
         ]
         eng.update("T", bars, 101.8, atr=1.0)
         dec = eng.get_decision("T")
         assert dec["state"] == "WAIT", dec
+        assert dec["data_fresh"] is True
 
     def test_close_back_below_zone_breaks_chain(self):
         """Close below the newest bullish level (reclaim failed) -> WAIT."""
@@ -557,11 +578,12 @@ class TestDecisionChain:
             _confirmed_event("bos", "bullish", 101.4, 101.2, "T|bos|bullish|t10", _t(10)),
             _confirmed_event("fvg", "bullish", 101.6, 100.6, "T|fvg|bullish|t11", _t(11)),
         ]
-        bars = [_bar(101.2, 101.4, 101.0, 101.3, _t(12))]  # close 101.3 < fvg top 101.6
+        bars = [_bar(101.2, 101.4, 101.0, 101.3, _fresh_iso(30))]  # fresh; close 101.3 < fvg top 101.6
         eng.update("T", bars, 101.3, atr=1.0)
         dec = eng.get_decision("T")
         assert dec["state"] == "WAIT", dec
         assert dec["bias"] == "Bullish"
+        assert dec["data_fresh"] is True
 
     def test_disabled_engine_returns_wait(self):
         eng = _engine({"m1_structure": {"enabled": False}})
@@ -580,7 +602,7 @@ class TestDecisionChain:
             "symbol", "state", "bias", "active_zone", "zone_type",
             "zone_age_minutes", "touches_confirmed", "touches_provisional",
             "price_location", "bull_trigger", "bear_trigger",
-            "candle_close_seconds", "data_age_seconds", "updated_at",
+            "candle_close_seconds", "data_age_seconds", "data_fresh", "updated_at",
         ]
         for field in required:
             assert field in dec, f"Missing field: {field}"
@@ -588,10 +610,11 @@ class TestDecisionChain:
     def test_candle_close_countdown_is_live_utc(self):
         """Countdown derives from the UTC clock: 0..60 seconds to minute close."""
         eng = _engine()
-        bars = [_bar(100, 101, 99, 100.5, _t(i)) for i in range(5)]
+        bars = [_bar(100, 101, 99, 100.5, _fresh_iso(30))]  # fresh: not gated
         eng.update("T", bars, 100.5, atr=1.0)
         dec = eng.get_decision("T")
         assert 0 <= dec["candle_close_seconds"] <= 60
+        assert dec["data_fresh"] is True
 
     def test_data_age_uses_market_timestamp(self):
         """data_age reflects the market bar age, not the update call time."""
@@ -609,6 +632,127 @@ class TestDecisionChain:
         eng.update("T", bars, 100.5, atr=1.0)
         dec = eng.get_decision("T")
         assert dec["data_age_seconds"] == -1.0
+        assert dec["data_fresh"] is False
+
+
+# ===========================================================================
+# 6b. Stale-data fail-closed: a stale feed ALWAYS produces WAIT
+# ===========================================================================
+
+
+class TestStaleDataFailClosed:
+    """Stale M1 data is an independent safety gate.
+
+    A connected terminal with stale prices is not valid trading input, so no
+    confirmed structure chain may publish BUY/SELL while the last market bar
+    is older than max_data_age_seconds. The gate also zeroes the candle-close
+    countdown (no live candle is actually in flight) and exposes the reason in
+    the decision output (data_fresh + stale triggers).
+    """
+
+    @staticmethod
+    def _bullish_chain(eng: M1StructureEngine) -> None:
+        eng._events["T"] = [
+            _confirmed_event("bos", "bullish", 101.4, 101.2, "T|bos|bullish|t10", _t(10)),
+            _confirmed_event("fvg", "bullish", 101.6, 100.6, "T|fvg|bullish|t11", _t(11)),
+        ]
+
+    @staticmethod
+    def _bearish_chain(eng: M1StructureEngine) -> None:
+        eng._events["T"] = [
+            _confirmed_event("bos", "bearish", 109.0, 108.6, "T|bos|bearish|t10", _t(10)),
+            _confirmed_event("fvg", "bearish", 109.2, 108.8, "T|fvg|bearish|t11", _t(11)),
+        ]
+
+    def test_fresh_bullish_chain_produces_buy(self):
+        """Fresh data + full bullish chain -> BUY."""
+        eng = _engine()
+        self._bullish_chain(eng)
+        bars = [_bar(101.5, 101.8, 101.4, 101.7, _fresh_iso(30))]
+        eng.update("T", bars, 101.7, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "BUY", dec
+        assert dec["data_fresh"] is True
+
+    def test_fresh_bearish_chain_produces_sell(self):
+        """Fresh data + full bearish chain -> SELL."""
+        eng = _engine()
+        self._bearish_chain(eng)
+        bars = [_bar(108.7, 108.9, 108.4, 108.6, _fresh_iso(30))]
+        eng.update("T", bars, 108.6, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "SELL", dec
+        assert dec["data_fresh"] is True
+
+    def test_91s_stale_bullish_chain_forced_wait(self):
+        """91s-old bar + full bullish chain -> WAIT with stale semantics."""
+        eng = _engine()
+        self._bullish_chain(eng)
+        bars = [_bar(101.5, 101.8, 101.4, 101.7, _fresh_iso(91))]
+        eng.update("T", bars, 101.7, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "WAIT", dec
+        assert dec["data_fresh"] is False
+        assert dec["candle_close_seconds"] == 0
+        assert dec["bull_trigger"] == "Stale M1 data"
+        assert dec["bear_trigger"] == "Stale M1 data"
+
+    def test_91s_stale_bearish_chain_forced_wait(self):
+        """91s-old bar + full bearish chain -> WAIT."""
+        eng = _engine()
+        self._bearish_chain(eng)
+        bars = [_bar(108.7, 108.9, 108.4, 108.6, _fresh_iso(91))]
+        eng.update("T", bars, 108.6, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "WAIT", dec
+        assert dec["data_fresh"] is False
+        assert dec["candle_close_seconds"] == 0
+        assert dec["bull_trigger"] == "Stale M1 data"
+        assert dec["bear_trigger"] == "Stale M1 data"
+
+    def test_12h_stale_any_structure_is_wait(self):
+        """12h-old bars: even a full bullish chain stays WAIT."""
+        eng = _engine()
+        self._bullish_chain(eng)
+        bars = [_bar(101.5, 101.8, 101.4, 101.7, _fresh_iso(12 * 3600))]
+        eng.update("T", bars, 101.7, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "WAIT", dec
+        assert dec["data_fresh"] is False
+        assert dec["candle_close_seconds"] == 0
+
+    def test_stale_threshold_is_configurable(self):
+        """max_data_age_seconds is config-driven, not hard-coded at 90."""
+        eng = _engine({"m1_structure": {"enabled": True, "max_data_age_seconds": 10}})
+        self._bullish_chain(eng)
+        bars = [_bar(101.5, 101.8, 101.4, 101.7, _fresh_iso(30))]
+        eng.update("T", bars, 101.7, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "WAIT", dec  # 30s > 10s threshold -> stale
+        assert dec["data_fresh"] is False
+
+    def test_default_threshold_is_90_seconds(self):
+        eng = _engine()
+        assert eng.max_data_age_seconds == 90.0
+
+    def test_unknown_data_age_fails_closed(self):
+        """Bars without a timestamp cannot be confirmed fresh -> WAIT."""
+        eng = _engine()
+        self._bullish_chain(eng)
+        bars = [{"open": 101.5, "high": 101.8, "low": 101.4, "close": 101.7}]
+        eng.update("T", bars, 101.7, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["state"] == "WAIT", dec
+        assert dec["data_fresh"] is False
+        assert dec["candle_close_seconds"] == 0
+        assert dec["bull_trigger"] == "M1 data age unknown"
+
+    def test_disabled_engine_decision_reports_not_fresh(self):
+        eng = _engine({"m1_structure": {"enabled": False}})
+        eng.update("T", _bull_swings(), 105.0, atr=1.0)
+        dec = eng.get_decision("T")
+        assert dec["data_fresh"] is False
+        assert dec["state"] == "WAIT"
 
 
 # ===========================================================================
@@ -781,19 +925,21 @@ class TestM1StructureLoop:
         loop writes per-symbol decisions to m1_structure_decisions.json."""
         from loops import m1_structure_loop as msl
 
+        # Fresh bar times (last bar well inside max_data_age_seconds) so the
+        # loop exercises a real decision path rather than the stale WAIT gate.
         m1_bars = [
             {"open": 100.0, "high": 100.4, "low": 99.7, "close": 100.2,
-             "time": "2026-08-07T12:00:00+00:00"},
+             "time": _fresh_iso(360)},
             {"open": 100.2, "high": 100.6, "low": 100.0, "close": 100.4,
-             "time": "2026-08-07T12:01:00+00:00"},
+             "time": _fresh_iso(300)},
             {"open": 100.4, "high": 100.9, "low": 100.2, "close": 100.7,
-             "time": "2026-08-07T12:02:00+00:00"},
+             "time": _fresh_iso(240)},
             {"open": 100.6, "high": 101.0, "low": 100.4, "close": 100.8,
-             "time": "2026-08-07T12:03:00+00:00"},
+             "time": _fresh_iso(180)},
             {"open": 100.8, "high": 101.3, "low": 100.6, "close": 101.1,
-             "time": "2026-08-07T12:04:00+00:00"},
+             "time": _fresh_iso(120)},
             {"open": 101.0, "high": 101.5, "low": 100.9, "close": 101.4,
-             "time": "2026-08-07T12:05:00+00:00"},
+             "time": _fresh_iso(60)},
         ]
         written = {}
         monkeypatch.setattr(msl, "load_config",
