@@ -1,0 +1,162 @@
+name: Phase 0 CI
+
+on:
+  push:
+    branches: [main, "MT5_Quant_Agent_P0_Repaired_2026-08-04", "agent/*"]
+  pull_request:
+    branches: [main, "MT5_Quant_Agent_P0_Repaired_2026-08-04"]
+
+concurrency:
+  group: phase0-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1. Syntax gate — compile every safety-critical module (no import needed,
+  #    so this job is fast and runs anywhere).
+  # -------------------------------------------------------------------------
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile safety-critical modules
+        run: |
+          python -m py_compile \
+            core/mt5_owner.py \
+            core/mt5_terminal_manager.py \
+            core/data_collector.py \
+            core/m1_structure_engine.py \
+            core/pipeline.py \
+            core/supervisor.py \
+            loops/data_loop.py \
+            loops/m1_structure_loop.py \
+            dashboard/server.py \
+            dashboard/safety.py \
+            scripts/reset_session_memory.py \
+            scripts/preflight.py \
+            start.py \
+            tests/test_phase0_invariants.py \
+            tests/test_phase0_config_contract.py \
+            tests/test_market_data_feed.py
+          echo "py_compile OK (no output above = clean)"
+
+  # -------------------------------------------------------------------------
+  # 2. Phase 0 safety — dashboard authority, kill switch, profiles, invariants
+  # -------------------------------------------------------------------------
+  phase0-safety:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Phase 0 safety + invariants
+        run: >
+          python -m pytest
+          tests/test_dashboard_phase0_security.py
+          tests/test_dashboard_kill_switch.py
+          tests/test_dashboard_profiles.py
+          tests/test_phase0_invariants.py
+          tests/test_phase0_config_contract.py
+          -q --tb=short
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-safety-logs
+          path: logs/
+          if-no-files-found: ignore
+
+  # -------------------------------------------------------------------------
+  # 3. M1 structure + dedicated service + live data feed (pandas present here,
+  #    so the pandas-gated feed tests run instead of skipping).
+  # -------------------------------------------------------------------------
+  m1-feed:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: M1 structure + service + scheduling + data feed
+        run: >
+          python -m pytest
+          tests/test_m1_structure_engine.py
+          tests/test_m1_service.py
+          tests/test_pipeline_scheduling.py
+          tests/test_market_data_feed.py
+          -q --tb=short
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-feed-logs
+          path: logs/
+          if-no-files-found: ignore
+
+  # -------------------------------------------------------------------------
+  # 4. Broader non-MT5 regression net (same ignores as tests.yml). These
+  #    genuinely do not need a Windows MT5 terminal / real IPC.
+  # -------------------------------------------------------------------------
+  broader:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest psutil
+
+      - name: Broader non-MT5 regression suite
+        run: >
+          python -m pytest tests/ -q
+          --ignore=tests/test_end_to_end.py
+          --ignore=tests/test_performance_benchmark.py
+          --ignore=tests/test_performance_projection.py
+          --ignore=tests/test_platform.py
+          --ignore=tests/test_system.py
+          --ignore=tests/test_replay_lookahead.py
+          --ignore=tests/test_news_sentiment.py
+          --ignore=tests/test_walk_forward_microtest.py
+          --tb=short
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: broader-logs
+          path: logs/
+          if-no-files-found: ignore
