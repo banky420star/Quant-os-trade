@@ -41,10 +41,12 @@ jobs:
             scripts/reset_session_memory.py \
             scripts/preflight.py \
             scripts/live_canary_preflight.py \
+            scripts/phase1_demo_preflight.py \
             start.py \
             tests/test_phase0_invariants.py \
             tests/test_phase0_config_contract.py \
             tests/test_live_canary_readiness.py \
+            tests/test_phase1_demo_validation.py \
             tests/test_market_data_feed.py \
             tests/test_model_governance.py \
             tests/test_model_artifacts.py \
@@ -67,7 +69,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
-      - name: Phase 0 safety + invariants + live-canary readiness
+      - name: Phase 0 safety + live readiness + Phase 1 demo gate
         run: >
           python -m pytest
           tests/test_dashboard_phase0_security.py
@@ -76,6 +78,7 @@ jobs:
           tests/test_phase0_invariants.py
           tests/test_phase0_config_contract.py
           tests/test_live_canary_readiness.py
+          tests/test_phase1_demo_validation.py
           -q --tb=short
       - name: Upload logs on failure
         if: failure()
