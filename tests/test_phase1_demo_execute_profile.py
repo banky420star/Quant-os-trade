@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import yaml
@@ -19,6 +18,9 @@ def test_phase1_demo_execute_profile_is_bounded_and_demo_only():
     assert cfg["practice"]["require_top_ranked_setup"] is False
     assert cfg["mt5"]["account_mode"] == "demo"
     assert cfg["mt5"]["symbols"] == ["XAUUSDm"]
+    assert cfg["quant"]["strategy_ranking_enabled"] is True
+    assert cfg["quant"]["require_top_ranked_setup"] is False
+    assert cfg["quant"]["per_symbol"]["XAUUSDm"]["require_top_ranked_setup"] is False
 
     execution = cfg["execution"]
     assert execution["mode"] == "mt5"
@@ -40,7 +42,8 @@ def test_phase1_demo_execute_profile_is_bounded_and_demo_only():
     assert cfg["thesis_reviewer"]["live_close_enabled"] is False
 
 
-def test_effective_config_keeps_xau_scope_and_ranking_enabled_but_not_top1(monkeypatch):
+def test_effective_config_keeps_xau_scope_and_resolved_ranker_not_top1(monkeypatch):
+    from core.strategy_ranker import StrategyRanker
     from core.utils import load_config
 
     monkeypatch.setenv("MT5_QUANT_PROFILE", "phase1-demo-execute")
@@ -50,5 +53,11 @@ def test_effective_config_keeps_xau_scope_and_ranking_enabled_but_not_top1(monke
     assert cfg["mt5"]["symbols"] == ["XAUUSDm"]
     assert cfg["quant"]["strategy_ranking_enabled"] is True
     assert cfg["quant"]["require_top_ranked_setup"] is False
+    assert cfg["quant"]["per_symbol"]["XAUUSDm"]["require_top_ranked_setup"] is False
+
+    ranker = StrategyRanker(cfg)
+    params = ranker._ranking_params_for_symbol("XAUUSDm")
+    assert params["require_top"] is False
+
     assert cfg["execution"]["allow_live_account"] is False
     assert float(cfg["execution"]["max_lot"]) == 0.01
