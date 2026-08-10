@@ -1,0 +1,92 @@
+label: "Phase 1 Demo Execution Canary"
+description: >-
+  Explicitly armed Phase 1 demo-routing canary. This profile is never selected
+  automatically. It is XAUUSDm-only, demo-account-only, capped at 0.01 lot and
+  one open position, with fast mode, pyramiding, adaptive exits and autonomous
+  learning disabled. Use only after the unarmed phase1-demo freshness and M1
+  service checks pass.
+mode: practice
+practice:
+  micro:
+    enabled: false
+  growth:
+    enabled: false
+mt5:
+  account_mode: demo
+  use_logged_in_account: true
+  ignore_stored_credentials: true
+  symbols:
+  - XAUUSDm
+execution:
+  mode: mt5
+  live_trading_enabled: true
+  mt5_trading_enabled: true
+  explicit_opt_in_danger_zone: true
+  allow_live_account: false
+  default_lot: 0.01
+  max_lot: 0.01
+  magic_number: 20250625
+fast_mode:
+  enabled: false
+  live_enabled: false
+  symbols:
+  - XAUUSDm
+  max_open_positions: 1
+m1_structure:
+  enabled: true
+  max_data_age_seconds: 90
+  loop_interval_seconds: 10
+  candle_refresh_interval_seconds: 10
+trading:
+  aggressive_mode: false
+  allow_pyramiding: false
+  max_open_per_symbol: 1
+  max_session_trades_per_symbol: 1
+  regime_flip_replace_enabled: false
+  dynamic_entries:
+    enabled: false
+  adaptive_exit:
+    enabled: false
+  break_even:
+    enabled: false
+  trailing:
+    enabled: false
+  exits:
+    partial_tp:
+      enabled: false
+learning:
+  enabled: true
+  mode: observe_only
+adaptation:
+  enabled: false
+policy_optimizer:
+  enabled: true
+  mode: shadow
+policy_detection:
+  enabled: true
+  mode: shadow
+signals:
+  specialized_setups:
+    enabled: false
+    shadow: true
+strategy_arena:
+  enabled: false
+blue_guardian:
+  enabled: false
+canary:
+  enabled: false
+trade_manager:
+  enabled: false
+  ghost_enabled: false
+  promote_enabled: false
+  stale_close_enabled: false
+self_learning:
+  adaptive_symbol_learning:
+    enabled: false
+thesis_reviewer:
+  live_close_enabled: false
+app:
+  remote_access:
+    enabled: false
+  dashboard:
+    host: 127.0.0.1
