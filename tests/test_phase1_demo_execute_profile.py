@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -14,6 +15,8 @@ def test_phase1_demo_execute_profile_is_bounded_and_demo_only():
     assert_profile(cfg)
 
     assert cfg["mode"] == "practice"
+    assert cfg["practice"]["symbols"] == ["XAUUSDm"]
+    assert cfg["practice"]["require_top_ranked_setup"] is False
     assert cfg["mt5"]["account_mode"] == "demo"
     assert cfg["mt5"]["symbols"] == ["XAUUSDm"]
 
@@ -35,3 +38,17 @@ def test_phase1_demo_execute_profile_is_bounded_and_demo_only():
     assert cfg["adaptation"]["enabled"] is False
     assert cfg["trade_manager"]["enabled"] is False
     assert cfg["thesis_reviewer"]["live_close_enabled"] is False
+
+
+def test_effective_config_keeps_xau_scope_and_ranking_enabled_but_not_top1(monkeypatch):
+    from core.utils import load_config
+
+    monkeypatch.setenv("MT5_QUANT_PROFILE", "phase1-demo-execute")
+    cfg = load_config()
+
+    assert cfg["active_profile"] == "phase1-demo-execute"
+    assert cfg["mt5"]["symbols"] == ["XAUUSDm"]
+    assert cfg["quant"]["strategy_ranking_enabled"] is True
+    assert cfg["quant"]["require_top_ranked_setup"] is False
+    assert cfg["execution"]["allow_live_account"] is False
+    assert float(cfg["execution"]["max_lot"]) == 0.01

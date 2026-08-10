@@ -9,6 +9,7 @@ mode: practice
 practice:
   symbols:
   - XAUUSDm
+  require_top_ranked_setup: false
   micro:
     enabled: false
   growth:
