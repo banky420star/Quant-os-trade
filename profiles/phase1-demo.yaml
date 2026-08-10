@@ -4,7 +4,7 @@ description: >-
   shadow structure service and a single-symbol demo data path, but no MT5
   order may be sent until the operator explicitly arms the existing execution
   gates for a demo-only routing rehearsal.
-mode: phase1_demo
+mode: practice
 practice:
   micro:
     enabled: false
