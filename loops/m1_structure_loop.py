@@ -21,11 +21,17 @@ import logging
 import threading
 from typing import Any
 
+from core.m1_archive_accelerator import install as install_m1_archive_accelerator
 from core.utils import load_config, read_json_state, utc_now_iso, write_json_state
 
 _LOG = logging.getLogger("m1_structure_loop")
 
 M1_TF = "M1"
+
+# Install before the structure engine imports append_archive_record. The
+# dispatcher accelerates ONLY m1_structure_events; every other archive retains
+# the generic append path unchanged.
+install_m1_archive_accelerator()
 
 # Non-overlap guard: the dedicated shadow service may never stack two passes.
 # A run that finds another pass still in flight is skipped (never queued).
