@@ -4,6 +4,7 @@ from pathlib import Path
 
 import yaml
 
+from core.profile_guard import assert_profile
 from scripts import phase1_demo_preflight as preflight
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,6 +53,7 @@ def _by_name(checks):
 def test_profile_ships_unarmed_and_single_symbol():
     cfg = _profile()
     execution = cfg["execution"]
+    assert cfg["mode"] == "practice"
     assert execution["live_trading_enabled"] is False
     assert execution["mt5_trading_enabled"] is False
     assert execution["explicit_opt_in_danger_zone"] is False
@@ -60,6 +62,10 @@ def test_profile_ships_unarmed_and_single_symbol():
     assert cfg["m1_structure"]["enabled"] is True
     assert cfg["fast_mode"]["live_enabled"] is False
     assert cfg["learning"]["mode"] == "observe_only"
+
+
+def test_profile_passes_startup_guard():
+    assert_profile(_profile())
 
 
 def test_unarmed_fresh_demo_passes():
