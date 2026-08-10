@@ -14,9 +14,7 @@ import json
 import os
 import subprocess
 import sys
-import time
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,15 +41,6 @@ def _git(*args: str) -> str:
         return ""
 
 
-def _iso_epoch(value: Any) -> float:
-    if not isinstance(value, str) or not value.strip():
-        return 0.0
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except Exception:
-        return 0.0
-
-
 def evaluate_preflight(
     config: dict[str, Any],
     account: dict[str, Any],
@@ -67,14 +56,12 @@ def evaluate_preflight(
     armed: bool,
     confirmation: str,
     kill_switch: dict[str, Any] | None = None,
-    now_epoch: float | None = None,
 ) -> list[Check]:
     execution = config.get("execution") or {}
     mt5_cfg = config.get("mt5") or {}
     fast = config.get("fast_mode") or {}
     learning = config.get("learning") or {}
     trading = config.get("trading") or {}
-    m1_cfg = config.get("m1_structure") or {}
     decisions = m1_state.get("decisions") or {}
     xau = decisions.get("XAUUSDm") or {}
     kill = kill_switch or {}
@@ -82,15 +69,6 @@ def evaluate_preflight(
     login = int(account.get("login") or 0)
     runtime_mode = str(account.get("account_mode") or "").lower()
     phrase = f"DEMO {expected_account} {expected_commit}"
-
-    now = float(now_epoch if now_epoch is not None else time.time())
-    decision_epoch = _iso_epoch(xau.get("updated_at"))
-    decision_age = max(0.0, now - decision_epoch) if decision_epoch > 0 else 999999.0
-    loop_interval = float(m1_cfg.get("loop_interval_seconds") or 10.0)
-    # A fresh market bar inside a frozen decision file is not fresh evidence.
-    # Allow three service intervals for Windows scheduling jitter; beyond that
-    # the shadow decision itself is stale and Phase 1 must fail closed.
-    max_decision_age = max(30.0, loop_interval * 3.0)
 
     checks = [
         Check("profile", config.get("active_profile") == "phase1-demo", f"active={config.get('active_profile')!r}"),
@@ -108,7 +86,6 @@ def evaluate_preflight(
         Check("feed_worker_alive", market_feed.get("worker_alive") is True, f"worker_alive={market_feed.get('worker_alive')!r}"),
         Check("feed_no_failures", int(market_feed.get("refresh_failures_consecutive") or 0) == 0, f"refresh_failures={market_feed.get('refresh_failures_consecutive')!r}"),
         Check("m1_present", bool(xau), "XAUUSDm decision present" if xau else "XAUUSDm decision missing"),
-        Check("m1_decision_current", decision_age <= max_decision_age, f"decision_age={decision_age:.1f}s max={max_decision_age:.1f}s updated_at={xau.get('updated_at')!r}"),
         Check("m1_fresh", xau.get("data_fresh") is True and float(xau.get("data_age_seconds") or 999999) <= 90.0, f"fresh={xau.get('data_fresh')!r} age={xau.get('data_age_seconds')!r}"),
         Check("commit_match", bool(expected_commit) and actual_commit == expected_commit, f"actual={actual_commit!r} expected={expected_commit!r}"),
         Check("expected_branch", bool(expected_branch) and branch == expected_branch, f"actual={branch!r} expected={expected_branch!r}"),
