@@ -57,6 +57,12 @@ trading:
   exits:
     partial_tp:
       enabled: false
+quant:
+  strategy_ranking_enabled: true
+  require_top_ranked_setup: false
+  per_symbol:
+    XAUUSDm:
+      require_top_ranked_setup: false
 learning:
   enabled: true
   mode: observe_only
