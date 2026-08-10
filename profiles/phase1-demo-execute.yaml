@@ -7,6 +7,8 @@ description: >-
   service checks pass.
 mode: practice
 practice:
+  symbols:
+  - XAUUSDm
   micro:
     enabled: false
   growth:
