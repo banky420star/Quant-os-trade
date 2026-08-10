@@ -28,6 +28,40 @@ def _position_stop_risk(position: dict) -> float | None:
     return None
 
 
+def _freshness_timestamp(account: dict, portfolio: dict) -> tuple[str, str]:
+    """Return the safest current timestamp and its source for the dashboard.
+
+    The account/portfolio snapshots are intentionally slower than the market
+    feed. Treating their timestamps as market freshness made an armed demo
+    executor display DISARMED for minutes while quotes were current. Prefer the
+    canonical market feed only when its worker is alive and error-free; if the
+    feed is unhealthy or unavailable, fall back to the existing snapshots so
+    the dashboard remains fail-closed.
+    """
+    try:
+        from core.utils import read_json_state
+
+        feed = read_json_state("market_data_feed.json", default={}) or {}
+    except Exception:
+        feed = {}
+
+    feed_ok = (
+        feed.get("worker_alive") is True
+        and int(feed.get("refresh_failures_consecutive") or 0) == 0
+    )
+    market_ts = str(feed.get("last_market_timestamp") or "").strip()
+    if feed_ok and market_ts:
+        return market_ts, "market_data_feed"
+
+    fallback = (
+        portfolio.get("updated_at")
+        or account.get("timestamp")
+        or account.get("updated_at")
+        or ""
+    )
+    return str(fallback or ""), "portfolio_or_account"
+
+
 def build_safety_header(
     account: dict,
     config: dict | None = None,
@@ -60,12 +94,7 @@ def build_safety_header(
         or "unknown"
     ).lower()
 
-    data_updated = (
-        portfolio.get("updated_at")
-        or account.get("timestamp")
-        or account.get("updated_at")
-        or ""
-    )
+    data_updated, freshness_source = _freshness_timestamp(account, portfolio)
     data_age_s = -1.0
     if data_updated:
         try:
@@ -151,4 +180,6 @@ def build_safety_header(
         "data_source": portfolio.get("source"),
         "data_freshness": freshness,
         "data_age_seconds": data_age_s,
+        "data_freshness_source": freshness_source,
+        "data_updated_at": data_updated,
     }
