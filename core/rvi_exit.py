@@ -15,7 +15,7 @@ SELL closes on a bullish crossover (RVI main crosses above signal).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.mt5_broker import MT5Broker
@@ -136,11 +136,14 @@ def evaluate_position_rvi_exit(
     if len(completed) < minimum:
         return {"close": False, "reason": "insufficient_m15_bars", "bars": len(completed)}
 
-    last_time = _bar_time(completed[-1])
-    if last_time is None:
+    last_open_time = _bar_time(completed[-1])
+    if last_open_time is None:
         return {"close": False, "reason": "missing_m15_timestamp"}
     ref = now or datetime.now(timezone.utc)
-    age = max(0.0, (ref - last_time.astimezone(timezone.utc)).total_seconds())
+    # MT5 candle timestamps represent BAR OPEN time. Freshness for a completed
+    # M15 decision must therefore be measured from the candle CLOSE time.
+    last_close_time = last_open_time.astimezone(timezone.utc) + timedelta(minutes=15)
+    age = max(0.0, (ref - last_close_time).total_seconds())
     max_age = float(cfg.get("max_data_age_seconds", 1200))
     if age > max_age:
         return {"close": False, "reason": "stale_m15_data", "data_age_seconds": round(age, 1)}
