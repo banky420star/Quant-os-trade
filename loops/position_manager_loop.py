@@ -25,6 +25,7 @@ from core.position_manager import (
     manage_partial_tp_paper,
 )
 from core.position_sync import fetch_mt5_agent_positions
+from core.rvi_exit import manage_mt5_rvi_exits
 from core.trade_manager import run_trade_manager_cycle
 from core.trade_history import trade_history_filename
 from core.utils import load_config, read_json_state, setup_logger, write_json_state
@@ -79,8 +80,20 @@ def run() -> dict:
                 partial_summary = manage_partial_tp_mt5(config, positions, features, logger)
                 if partial_summary.get("partial_closes"):
                     positions = fetch_mt5_agent_positions(config, logger)
+
+            # RVI is an independent confirmed M15 exit. It can only reduce risk:
+            # it never creates or resizes a position. Re-sync after closes so the
+            # trailing/BE manager never tries to modify a ticket RVI just closed.
+            if fixed_exit_only:
+                rvi_summary = {"checked": 0, "closed": 0, "actions": [], "errors": [], "skipped": "fixed_exit_only"}
+            else:
+                rvi_summary = manage_mt5_rvi_exits(config, positions, logger)
+                if rvi_summary.get("closed"):
+                    positions = fetch_mt5_agent_positions(config, logger)
+
             summary = manage_mt5_positions(config, positions, features, logger)
             summary["partial_tp"] = partial_summary
+            summary["rvi_exit"] = rvi_summary
             if positions:
                 write_json_state("paper_positions.json", {
                     "timestamp": summary["timestamp"],
@@ -97,9 +110,10 @@ def run() -> dict:
             )
             summary["trade_manager"] = tm
             logger.info(
-                "Position manager MT5: %d updated, %d errors, ghosts=%s stale=%d",
+                "Position manager MT5: %d updated, %d errors, rvi_closed=%d ghosts=%s stale=%d",
                 summary.get("updated", 0),
                 len(summary.get("errors", [])),
+                rvi_summary.get("closed", 0),
                 (tm.get("ghost") or {}).get("ghosts_scored"),
                 len(tm.get("stale_candidates") or []),
             )
