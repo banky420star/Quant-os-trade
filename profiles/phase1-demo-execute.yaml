@@ -5,6 +5,7 @@ description: >-
   entries and pyramiding, restores break-even plus trailing management, and uses
   per-symbol SL/TP and trail settings. Gold uses a fixed 2100-point trail and BTC
   a fixed 8000-point trail once price moves at least one broker point in profit.
+  Every symbol also has a confirmed M15 Relative Vigor Index crossover exit.
   Normal verifier, broker margin checks, kill-switch, duplicate-order, and
   account-mode protections remain in force. Real accounts remain refused by
   allow_live_account=false.
@@ -91,8 +92,6 @@ execution:
   explicit_opt_in_danger_zone: true
   allow_live_account: false
   default_lot: 0.01
-  # High-throughput DEMO ceiling. The sizing engine and MT5 margin/order checks
-  # still determine whether a requested volume is executable for each symbol.
   max_lot: 100.0
   magic_number: 20250625
 fast_mode:
@@ -109,6 +108,43 @@ trading:
   max_open_per_symbol: 5
   max_session_trades_per_symbol: 50
   regime_flip_replace_enabled: false
+  rvi_exit:
+    enabled: true
+    timeframe: M15
+    period: 10
+    confirmed_closed_candle_only: true
+    max_data_age_seconds: 1200
+    per_symbol:
+      XAUUSDm: {period: 10}
+      XAGUSDm: {period: 10}
+      BTCUSDm: {period: 10}
+      ETHUSDm: {period: 10}
+      USOILm: {period: 10}
+      UKOILm: {period: 10}
+      XNGUSDm: {period: 10}
+      EURUSDm: {period: 10}
+      GBPUSDm: {period: 10}
+      USDJPYm: {period: 10}
+      USDCHFm: {period: 10}
+      AUDUSDm: {period: 10}
+      USDCADm: {period: 10}
+      NZDUSDm: {period: 10}
+      EURJPYm: {period: 10}
+      GBPJPYm: {period: 10}
+      EURGBPm: {period: 10}
+      EURAUDm: {period: 10}
+      EURCADm: {period: 10}
+      AUDJPYm: {period: 10}
+      CADJPYm: {period: 10}
+      US500m: {period: 10}
+      US30m: {period: 10}
+      NAS100m: {period: 10}
+      UK100m: {period: 10}
+      FR40m: {period: 10}
+      DE30m: {period: 10}
+      JP225m: {period: 10}
+      HK50m: {period: 10}
+      AUS200m: {period: 10}
   strategy_entries:
     enabled: true
     use_limit_orders: false
