@@ -1,15 +1,32 @@
-label: "Phase 1 Demo Execution Canary"
+label: "Phase 1 Full Demo Execution"
 description: >-
-  Explicitly armed Phase 1 demo-routing canary. This profile is never selected
-  automatically. It is XAUUSDm-only, demo-account-only, capped at 0.01 lot and
-  one open position, with fast mode, pyramiding, adaptive exits and autonomous
-  learning disabled. Use only after the unarmed phase1-demo freshness and M1
-  service checks pass.
+  Explicitly armed DEMO-only execution profile for broad forward testing across
+  the full configured symbol universe. It removes the one-symbol / one-position /
+  0.01-lot canary clamps, allows multiple concurrent entries and pyramiding, and
+  restores break-even plus trailing management. Normal verifier, broker-native
+  sizing, kill-switch, duplicate-order, and account-mode protections remain in
+  force. Real accounts remain refused by allow_live_account=false.
 mode: practice
 practice:
   symbols:
   - XAUUSDm
+  - USOILm
+  - BTCUSDm
+  - EURUSDm
+  - GBPUSDm
+  - USDJPYm
+  - USDCHFm
+  - AUDUSDm
+  - US500m
+  - US30m
+  - NAS100m
+  - UK100m
+  - FR40m
+  - JP225m
   require_top_ranked_setup: false
+  max_symbol_exposure_usd: 1000000
+  max_total_exposure_usd: 10000000
+  max_drawdown_pct: 100
   micro:
     enabled: false
   growth:
@@ -20,6 +37,19 @@ mt5:
   ignore_stored_credentials: true
   symbols:
   - XAUUSDm
+  - USOILm
+  - BTCUSDm
+  - EURUSDm
+  - GBPUSDm
+  - USDJPYm
+  - USDCHFm
+  - AUDUSDm
+  - US500m
+  - US30m
+  - NAS100m
+  - UK100m
+  - FR40m
+  - JP225m
 execution:
   mode: mt5
   live_trading_enabled: true
@@ -27,33 +57,30 @@ execution:
   explicit_opt_in_danger_zone: true
   allow_live_account: false
   default_lot: 0.01
-  max_lot: 0.01
+  max_lot: 0.5
   magic_number: 20250625
 fast_mode:
   enabled: false
   live_enabled: false
-  symbols:
-  - XAUUSDm
-  max_open_positions: 1
 m1_structure:
   enabled: true
   max_data_age_seconds: 90
   loop_interval_seconds: 10
   candle_refresh_interval_seconds: 10
 trading:
-  aggressive_mode: false
-  allow_pyramiding: false
-  max_open_per_symbol: 1
-  max_session_trades_per_symbol: 1
+  aggressive_mode: true
+  allow_pyramiding: true
+  max_open_per_symbol: 5
+  max_session_trades_per_symbol: 50
   regime_flip_replace_enabled: false
   dynamic_entries:
-    enabled: false
+    enabled: true
   adaptive_exit:
-    enabled: false
+    enabled: true
   break_even:
-    enabled: false
+    enabled: true
   trailing:
-    enabled: false
+    enabled: true
   exits:
     partial_tp:
       enabled: false
