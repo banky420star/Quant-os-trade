@@ -13,54 +13,74 @@ try:
 except ImportError:
     mt5 = None  # type: ignore
 
-# Asset class -> broker name patterns (priority order)
+# Asset class -> broker name patterns (priority order).
+# The phase1 demo profile uses logical names so Exness/server-specific aliases
+# can be resolved without changing strategy/risk state keys.
 ASSET_PATTERNS: dict[str, list[str]] = {
     "XAU": [r"^XAUUSDm$", r"^XAUUSD\.?$", r"^XAUUSD[a-z]?$", r"^GOLD", r"XAUUSD"],
-    "OIL": [r"^USOILm$", r"^USOIL\.?$", r"^WTI$", r"^BRENT$", r"^UKOIL", r"^XTIUSD", r"USOIL", r"WTI", r"BRENT", r"OIL"],
+    "XAG": [r"^XAGUSDm$", r"^XAGUSD\.?$", r"^XAGUSD[a-z]?$", r"^SILVER", r"XAGUSD"],
     "BTC": [r"^BTCUSDm$", r"^BTCUSD\.?$", r"^BTCUSD[a-z]?$", r"BTCUSD"],
+    "ETH": [r"^ETHUSDm$", r"^ETHUSD\.?$", r"^ETHUSD[a-z]?$", r"ETHUSD"],
+    "USOIL": [r"^USOILm$", r"^USOIL\.?$", r"^USOIL[a-z]?$", r"^XTIUSD", r"^WTI$", r"WTI"],
+    "UKOIL": [r"^UKOILm$", r"^UKOIL\.?$", r"^UKOIL[a-z]?$", r"^XBRUSD", r"^BRENT$", r"BRENT"],
+    "XNG": [r"^XNGUSDm$", r"^XNGUSD\.?$", r"^XNGUSD[a-z]?$", r"^NATGAS", r"^NGAS", r"XNGUSD"],
     "EURUSD": [r"^EURUSDm$", r"^EURUSD\.?$", r"^EURUSD[a-z]?$", r"EURUSD"],
     "GBPUSD": [r"^GBPUSDm$", r"^GBPUSD\.?$", r"^GBPUSD[a-z]?$", r"GBPUSD"],
     "USDJPY": [r"^USDJPYm$", r"^USDJPY\.?$", r"^USDJPY[a-z]?$", r"USDJPY"],
     "USDCHF": [r"^USDCHFm$", r"^USDCHF\.?$", r"^USDCHF[a-z]?$", r"USDCHF"],
     "AUDUSD": [r"^AUDUSDm$", r"^AUDUSD\.?$", r"^AUDUSD[a-z]?$", r"AUDUSD"],
-    "US500": [r"^US500m$", r"^US500\.?$", r"^SPX500", r"^US500"],
-    "US30": [r"^US30m$", r"^US30\.?$", r"^DJ30", r"^US30"],
-    "NAS100": [r"^NAS100m$", r"^NAS100\.?$", r"^USTEC", r"^NDX", r"^NAS100"],
-    "UK100": [r"^UK100m$", r"^UK100\.?$", r"^FTSE", r"^UK100"],
-    "FR40": [r"^FR40m$", r"^FR40\.?$", r"^GER40$", r"^CAC40", r"^AUS200$", r"GER40", r"FR40", r"CAC"],
-    "JP225": [r"^JP225m$", r"^JP225\.?$", r"^NI225", r"^JPN225", r"^N225", r"JP225", r"NI225"],
+    "USDCAD": [r"^USDCADm$", r"^USDCAD\.?$", r"^USDCAD[a-z]?$", r"USDCAD"],
+    "NZDUSD": [r"^NZDUSDm$", r"^NZDUSD\.?$", r"^NZDUSD[a-z]?$", r"NZDUSD"],
+    "EURJPY": [r"^EURJPYm$", r"^EURJPY\.?$", r"^EURJPY[a-z]?$", r"EURJPY"],
+    "GBPJPY": [r"^GBPJPYm$", r"^GBPJPY\.?$", r"^GBPJPY[a-z]?$", r"GBPJPY"],
+    "EURGBP": [r"^EURGBPm$", r"^EURGBP\.?$", r"^EURGBP[a-z]?$", r"EURGBP"],
+    "EURAUD": [r"^EURAUDm$", r"^EURAUD\.?$", r"^EURAUD[a-z]?$", r"EURAUD"],
+    "EURCAD": [r"^EURCADm$", r"^EURCAD\.?$", r"^EURCAD[a-z]?$", r"EURCAD"],
+    "AUDJPY": [r"^AUDJPYm$", r"^AUDJPY\.?$", r"^AUDJPY[a-z]?$", r"AUDJPY"],
+    "CADJPY": [r"^CADJPYm$", r"^CADJPY\.?$", r"^CADJPY[a-z]?$", r"CADJPY"],
+    "US500": [r"^US500m$", r"^US500\.?$", r"^US500[a-z]?$", r"^SPX500", r"^SP500", r"^US500"],
+    "US30": [r"^US30m$", r"^US30\.?$", r"^US30[a-z]?$", r"^DJ30", r"^WS30", r"^US30"],
+    "NAS100": [r"^NAS100m$", r"^NAS100\.?$", r"^NAS100[a-z]?$", r"^USTEC", r"^US100", r"^NDX", r"^NAS100"],
+    "UK100": [r"^UK100m$", r"^UK100\.?$", r"^UK100[a-z]?$", r"^FTSE", r"^UK100"],
+    "FR40": [r"^FR40m$", r"^FR40\.?$", r"^FR40[a-z]?$", r"^CAC40", r"^FRA40", r"FR40", r"CAC"],
+    "DE30": [r"^DE30m$", r"^DE30\.?$", r"^DE30[a-z]?$", r"^GER40", r"^DE40", r"^DAX", r"DE30"],
+    "JP225": [r"^JP225m$", r"^JP225\.?$", r"^JP225[a-z]?$", r"^NI225", r"^JPN225", r"^N225", r"JP225", r"NI225"],
+    "HK50": [r"^HK50m$", r"^HK50\.?$", r"^HK50[a-z]?$", r"^HKG50", r"^HSI", r"HK50"],
+    "AUS200": [r"^AUS200m$", r"^AUS200\.?$", r"^AUS200[a-z]?$", r"^AU200", r"^ASX200", r"AUS200"],
 }
 
-# Config logical key -> asset class
+# Config logical key -> asset class.
 LOGICAL_ASSET_MAP: dict[str, str] = {
-    "XAUUSDm": "XAU",
-    "XAUUSD": "XAU",
-    "USOILm": "OIL",
-    "USOIL": "OIL",
-    "BTCUSDm": "BTC",
-    "BTCUSD": "BTC",
-    "EURUSDm": "EURUSD",
-    "EURUSD": "EURUSD",
-    "GBPUSDm": "GBPUSD",
-    "GBPUSD": "GBPUSD",
-    "USDJPYm": "USDJPY",
-    "USDJPY": "USDJPY",
-    "USDCHFm": "USDCHF",
-    "USDCHF": "USDCHF",
-    "AUDUSDm": "AUDUSD",
-    "AUDUSD": "AUDUSD",
-    "US500m": "US500",
-    "US500": "US500",
-    "US30m": "US30",
-    "US30": "US30",
-    "NAS100m": "NAS100",
-    "NAS100": "NAS100",
-    "UK100m": "UK100",
-    "UK100": "UK100",
-    "FR40m": "FR40",
-    "FR40": "FR40",
-    "JP225m": "JP225",
-    "JP225": "JP225",
+    "XAUUSDm": "XAU", "XAUUSD": "XAU",
+    "XAGUSDm": "XAG", "XAGUSD": "XAG",
+    "BTCUSDm": "BTC", "BTCUSD": "BTC",
+    "ETHUSDm": "ETH", "ETHUSD": "ETH",
+    "USOILm": "USOIL", "USOIL": "USOIL",
+    "UKOILm": "UKOIL", "UKOIL": "UKOIL",
+    "XNGUSDm": "XNG", "XNGUSD": "XNG",
+    "EURUSDm": "EURUSD", "EURUSD": "EURUSD",
+    "GBPUSDm": "GBPUSD", "GBPUSD": "GBPUSD",
+    "USDJPYm": "USDJPY", "USDJPY": "USDJPY",
+    "USDCHFm": "USDCHF", "USDCHF": "USDCHF",
+    "AUDUSDm": "AUDUSD", "AUDUSD": "AUDUSD",
+    "USDCADm": "USDCAD", "USDCAD": "USDCAD",
+    "NZDUSDm": "NZDUSD", "NZDUSD": "NZDUSD",
+    "EURJPYm": "EURJPY", "EURJPY": "EURJPY",
+    "GBPJPYm": "GBPJPY", "GBPJPY": "GBPJPY",
+    "EURGBPm": "EURGBP", "EURGBP": "EURGBP",
+    "EURAUDm": "EURAUD", "EURAUD": "EURAUD",
+    "EURCADm": "EURCAD", "EURCAD": "EURCAD",
+    "AUDJPYm": "AUDJPY", "AUDJPY": "AUDJPY",
+    "CADJPYm": "CADJPY", "CADJPY": "CADJPY",
+    "US500m": "US500", "US500": "US500",
+    "US30m": "US30", "US30": "US30",
+    "NAS100m": "NAS100", "NAS100": "NAS100",
+    "UK100m": "UK100", "UK100": "UK100",
+    "FR40m": "FR40", "FR40": "FR40",
+    "DE30m": "DE30", "DE30": "DE30",
+    "JP225m": "JP225", "JP225": "JP225",
+    "HK50m": "HK50", "HK50": "HK50",
+    "AUS200m": "AUS200", "AUS200": "AUS200",
 }
 
 
@@ -98,8 +118,8 @@ class SymbolManager:
         candidates: dict[str, list[str]] = {}
 
         for logical in logical_symbols:
-            asset = LOGICAL_ASSET_MAP.get(logical, logical.replace("m", "").replace("USD", ""))
-            patterns = ASSET_PATTERNS.get(asset, [logical])
+            asset = LOGICAL_ASSET_MAP.get(logical, logical)
+            patterns = ASSET_PATTERNS.get(asset, [rf"^{re.escape(logical)}$"])
             matches = self._find_matches(patterns, names)
             candidates[logical] = matches
 

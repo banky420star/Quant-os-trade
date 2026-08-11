@@ -47,12 +47,38 @@ def profile_path(name: str) -> Path:
     return path
 
 
+def _apply_phase1_demo_runtime_contract(name: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Attach strict runtime-only contracts for the full demo execution profile.
+
+    The RVI configuration is generated from the profile's symbol universe so
+    every symbol has an independent M15 RVI state without duplicating 30 YAML
+    blocks. This remains demo-only because the profile itself keeps
+    execution.allow_live_account=false.
+    """
+    if name != "phase1-demo-execute":
+        return data
+
+    trading = data.setdefault("trading", {})
+    symbols = list((data.get("mt5") or {}).get("symbols") or [])
+    rvi = trading.setdefault("rvi_exit", {})
+    rvi.setdefault("enabled", True)
+    rvi.setdefault("timeframe", "M15")
+    rvi.setdefault("period", 10)
+    # A completed M15 candle can be up to about one bar old. 20 minutes keeps
+    # normal bar-close scheduling valid while stale/weekend snapshots fail shut.
+    rvi.setdefault("max_data_age_seconds", 1200)
+    per_symbol = rvi.setdefault("per_symbol", {})
+    for symbol in symbols:
+        per_symbol.setdefault(symbol, {"period": 10})
+    return data
+
+
 def load_profile_overlay(name: str) -> dict[str, Any]:
     with profile_path(name).open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Profile {name} must be a YAML mapping")
-    return data
+    return _apply_phase1_demo_runtime_contract(name, data)
 
 
 def set_active_profile(name: str) -> dict[str, Any]:
