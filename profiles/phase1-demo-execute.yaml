@@ -1,28 +1,46 @@
 label: "Phase 1 Full Demo Execution"
 description: >-
   Explicitly armed DEMO-only execution profile for broad forward testing across
-  the full configured symbol universe. It removes the one-symbol / one-position /
-  0.01-lot canary clamps, allows multiple concurrent entries and pyramiding, and
-  restores break-even plus trailing management. Normal verifier, broker-native
-  sizing, kill-switch, duplicate-order, and account-mode protections remain in
-  force. Real accounts remain refused by allow_live_account=false.
+  30 liquid, fast-moving Exness-style instruments. It allows multiple concurrent
+  entries and pyramiding, restores break-even plus trailing management, and uses
+  per-symbol SL/TP and trail settings. Gold uses a fixed 2100-point trail and BTC
+  a fixed 8000-point trail once price moves at least one broker point in profit.
+  Normal verifier, broker margin checks, kill-switch, duplicate-order, and
+  account-mode protections remain in force. Real accounts remain refused by
+  allow_live_account=false.
 mode: practice
 practice:
   symbols:
   - XAUUSDm
-  - USOILm
+  - XAGUSDm
   - BTCUSDm
+  - ETHUSDm
+  - USOILm
+  - UKOILm
+  - XNGUSDm
   - EURUSDm
   - GBPUSDm
   - USDJPYm
   - USDCHFm
   - AUDUSDm
+  - USDCADm
+  - NZDUSDm
+  - EURJPYm
+  - GBPJPYm
+  - EURGBPm
+  - EURAUDm
+  - EURCADm
+  - AUDJPYm
+  - CADJPYm
   - US500m
   - US30m
   - NAS100m
   - UK100m
   - FR40m
+  - DE30m
   - JP225m
+  - HK50m
+  - AUS200m
   require_top_ranked_setup: false
   max_symbol_exposure_usd: 1000000
   max_total_exposure_usd: 10000000
@@ -37,19 +55,35 @@ mt5:
   ignore_stored_credentials: true
   symbols:
   - XAUUSDm
-  - USOILm
+  - XAGUSDm
   - BTCUSDm
+  - ETHUSDm
+  - USOILm
+  - UKOILm
+  - XNGUSDm
   - EURUSDm
   - GBPUSDm
   - USDJPYm
   - USDCHFm
   - AUDUSDm
+  - USDCADm
+  - NZDUSDm
+  - EURJPYm
+  - GBPJPYm
+  - EURGBPm
+  - EURAUDm
+  - EURCADm
+  - AUDJPYm
+  - CADJPYm
   - US500m
   - US30m
   - NAS100m
   - UK100m
   - FR40m
+  - DE30m
   - JP225m
+  - HK50m
+  - AUS200m
 execution:
   mode: mt5
   live_trading_enabled: true
@@ -57,7 +91,9 @@ execution:
   explicit_opt_in_danger_zone: true
   allow_live_account: false
   default_lot: 0.01
-  max_lot: 0.5
+  # High-throughput DEMO ceiling. The sizing engine and MT5 margin/order checks
+  # still determine whether a requested volume is executable for each symbol.
+  max_lot: 100.0
   magic_number: 20250625
 fast_mode:
   enabled: false
@@ -73,17 +109,109 @@ trading:
   max_open_per_symbol: 5
   max_session_trades_per_symbol: 50
   regime_flip_replace_enabled: false
+  strategy_entries:
+    enabled: true
+    use_limit_orders: false
+    refresh_each_cycle: true
+    sl_tp:
+      sl_atr_mult: 0.55
+      risk_floor_atr_mult: 1.35
+      tp1_rr: 1.30
+      tp2_rr: 2.10
+      per_symbol:
+        XAUUSDm: {sl_atr_mult: 0.65, risk_floor_atr_mult: 1.30, tp1_rr: 1.35, tp2_rr: 2.20}
+        XAGUSDm: {sl_atr_mult: 0.72, risk_floor_atr_mult: 1.40, tp1_rr: 1.40, tp2_rr: 2.30}
+        BTCUSDm: {sl_atr_mult: 0.85, risk_floor_atr_mult: 1.60, tp1_rr: 1.45, tp2_rr: 2.60}
+        ETHUSDm: {sl_atr_mult: 0.82, risk_floor_atr_mult: 1.55, tp1_rr: 1.45, tp2_rr: 2.50}
+        USOILm: {sl_atr_mult: 0.65, risk_floor_atr_mult: 1.30, tp1_rr: 1.35, tp2_rr: 2.20}
+        UKOILm: {sl_atr_mult: 0.68, risk_floor_atr_mult: 1.35, tp1_rr: 1.35, tp2_rr: 2.20}
+        XNGUSDm: {sl_atr_mult: 0.95, risk_floor_atr_mult: 1.80, tp1_rr: 1.55, tp2_rr: 2.70}
+        EURUSDm: {sl_atr_mult: 0.45, risk_floor_atr_mult: 1.20, tp1_rr: 1.20, tp2_rr: 1.80}
+        GBPUSDm: {sl_atr_mult: 0.50, risk_floor_atr_mult: 1.25, tp1_rr: 1.25, tp2_rr: 1.90}
+        USDJPYm: {sl_atr_mult: 0.45, risk_floor_atr_mult: 1.20, tp1_rr: 1.20, tp2_rr: 1.80}
+        USDCHFm: {sl_atr_mult: 0.45, risk_floor_atr_mult: 1.20, tp1_rr: 1.20, tp2_rr: 1.80}
+        AUDUSDm: {sl_atr_mult: 0.48, risk_floor_atr_mult: 1.25, tp1_rr: 1.22, tp2_rr: 1.85}
+        USDCADm: {sl_atr_mult: 0.48, risk_floor_atr_mult: 1.25, tp1_rr: 1.22, tp2_rr: 1.85}
+        NZDUSDm: {sl_atr_mult: 0.50, risk_floor_atr_mult: 1.30, tp1_rr: 1.25, tp2_rr: 1.90}
+        EURJPYm: {sl_atr_mult: 0.55, risk_floor_atr_mult: 1.35, tp1_rr: 1.30, tp2_rr: 2.00}
+        GBPJPYm: {sl_atr_mult: 0.65, risk_floor_atr_mult: 1.50, tp1_rr: 1.40, tp2_rr: 2.20}
+        EURGBPm: {sl_atr_mult: 0.42, risk_floor_atr_mult: 1.20, tp1_rr: 1.18, tp2_rr: 1.75}
+        EURAUDm: {sl_atr_mult: 0.58, risk_floor_atr_mult: 1.40, tp1_rr: 1.32, tp2_rr: 2.05}
+        EURCADm: {sl_atr_mult: 0.56, risk_floor_atr_mult: 1.38, tp1_rr: 1.30, tp2_rr: 2.00}
+        AUDJPYm: {sl_atr_mult: 0.55, risk_floor_atr_mult: 1.35, tp1_rr: 1.30, tp2_rr: 2.00}
+        CADJPYm: {sl_atr_mult: 0.55, risk_floor_atr_mult: 1.35, tp1_rr: 1.30, tp2_rr: 2.00}
+        US500m: {sl_atr_mult: 0.68, risk_floor_atr_mult: 1.60, tp1_rr: 1.45, tp2_rr: 2.35}
+        US30m: {sl_atr_mult: 0.72, risk_floor_atr_mult: 1.70, tp1_rr: 1.50, tp2_rr: 2.45}
+        NAS100m: {sl_atr_mult: 0.75, risk_floor_atr_mult: 1.70, tp1_rr: 1.50, tp2_rr: 2.50}
+        UK100m: {sl_atr_mult: 0.68, risk_floor_atr_mult: 1.60, tp1_rr: 1.42, tp2_rr: 2.30}
+        FR40m: {sl_atr_mult: 0.68, risk_floor_atr_mult: 1.60, tp1_rr: 1.42, tp2_rr: 2.30}
+        DE30m: {sl_atr_mult: 0.70, risk_floor_atr_mult: 1.65, tp1_rr: 1.45, tp2_rr: 2.35}
+        JP225m: {sl_atr_mult: 0.75, risk_floor_atr_mult: 1.75, tp1_rr: 1.50, tp2_rr: 2.45}
+        HK50m: {sl_atr_mult: 0.80, risk_floor_atr_mult: 1.85, tp1_rr: 1.55, tp2_rr: 2.55}
+        AUS200m: {sl_atr_mult: 0.68, risk_floor_atr_mult: 1.60, tp1_rr: 1.42, tp2_rr: 2.30}
   dynamic_entries:
     enabled: true
   adaptive_exit:
     enabled: true
   break_even:
     enabled: true
+    trigger_profit_usd: null
+    trigger_atr_mult: 0.30
+    lock_profit_atr_mult: 0.05
   trailing:
     enabled: true
+    activation_profit_usd: null
+    activation_atr_mult: 0.35
+    trail_max_r: 0.80
+    per_symbol:
+      XAUUSDm:
+        activation_profit_usd: null
+        activation_points: 1
+        activation_atr_mult: 0.0
+        trail_points: 2100
+        trail_points_atr_mult: null
+        trail_max_r: 0
+      XAGUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.40, trail_points: null, trail_points_atr_mult: 0.38, trail_max_r: 0.85}
+      BTCUSDm:
+        activation_profit_usd: null
+        activation_points: 1
+        activation_atr_mult: 0.0
+        trail_points: 8000
+        trail_points_atr_mult: null
+        trail_max_r: 0
+      ETHUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.45, trail_points: null, trail_points_atr_mult: 0.42, trail_max_r: 0.90}
+      USOILm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.38, trail_points: null, trail_points_atr_mult: 0.34, trail_max_r: 0.80}
+      UKOILm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.40, trail_points: null, trail_points_atr_mult: 0.35, trail_max_r: 0.82}
+      XNGUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.55, trail_points: null, trail_points_atr_mult: 0.50, trail_max_r: 1.00}
+      EURUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.28, trail_points: null, trail_points_atr_mult: 0.24, trail_max_r: 0.70}
+      GBPUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.32, trail_points: null, trail_points_atr_mult: 0.27, trail_max_r: 0.75}
+      USDJPYm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.28, trail_points: null, trail_points_atr_mult: 0.24, trail_max_r: 0.70}
+      USDCHFm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.30, trail_points: null, trail_points_atr_mult: 0.25, trail_max_r: 0.72}
+      AUDUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.32, trail_points: null, trail_points_atr_mult: 0.27, trail_max_r: 0.75}
+      USDCADm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.32, trail_points: null, trail_points_atr_mult: 0.27, trail_max_r: 0.75}
+      NZDUSDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.35, trail_points: null, trail_points_atr_mult: 0.29, trail_max_r: 0.78}
+      EURJPYm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.36, trail_points: null, trail_points_atr_mult: 0.30, trail_max_r: 0.80}
+      GBPJPYm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.42, trail_points: null, trail_points_atr_mult: 0.36, trail_max_r: 0.88}
+      EURGBPm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.26, trail_points: null, trail_points_atr_mult: 0.22, trail_max_r: 0.68}
+      EURAUDm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.38, trail_points: null, trail_points_atr_mult: 0.32, trail_max_r: 0.82}
+      EURCADm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.36, trail_points: null, trail_points_atr_mult: 0.31, trail_max_r: 0.80}
+      AUDJPYm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.36, trail_points: null, trail_points_atr_mult: 0.31, trail_max_r: 0.80}
+      CADJPYm: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.36, trail_points: null, trail_points_atr_mult: 0.31, trail_max_r: 0.80}
+      US500m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.40, trail_points: null, trail_points_atr_mult: 0.34, trail_max_r: 0.82}
+      US30m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.45, trail_points: null, trail_points_atr_mult: 0.38, trail_max_r: 0.90}
+      NAS100m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.45, trail_points: null, trail_points_atr_mult: 0.38, trail_max_r: 0.90}
+      UK100m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.40, trail_points: null, trail_points_atr_mult: 0.34, trail_max_r: 0.82}
+      FR40m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.40, trail_points: null, trail_points_atr_mult: 0.34, trail_max_r: 0.82}
+      DE30m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.42, trail_points: null, trail_points_atr_mult: 0.36, trail_max_r: 0.86}
+      JP225m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.45, trail_points: null, trail_points_atr_mult: 0.39, trail_max_r: 0.90}
+      HK50m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.50, trail_points: null, trail_points_atr_mult: 0.44, trail_max_r: 0.95}
+      AUS200m: {activation_profit_usd: null, activation_points: null, activation_atr_mult: 0.40, trail_points: null, trail_points_atr_mult: 0.34, trail_max_r: 0.82}
   exits:
     partial_tp:
       enabled: false
+    defer_trail_until:
+      require_partial_or_rr: false
+      min_rr: 0.0
 learning:
   enabled: true
   mode: observe_only
@@ -116,6 +244,7 @@ self_learning:
 thesis_reviewer:
   live_close_enabled: false
 app:
+  loop_interval_seconds: 20
   remote_access:
     enabled: false
   dashboard:
