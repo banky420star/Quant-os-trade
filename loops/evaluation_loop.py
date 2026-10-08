@@ -99,6 +99,41 @@ def run() -> dict | None:
         logger=logger,
     )
 
+    # JEV is advisory by default. Only an explicitly configured, paper-only
+    # profile may veto candidates here; live MT5 candidates remain unchanged.
+    jev_summary = None
+    jev_cfg = config.get("jev") or {}
+    if jev_cfg.get("enabled"):
+        from core.jev_shadow_runtime import evaluate_candidates
+        market_context = read_json_state("market_context.json", default={}) or {}
+        position_doc = read_json_state("paper_positions.json", default={}) or {}
+        risk_doc = read_json_state("risk_state.json", default={}) or {}
+        edge_scores = read_json_state("edge_scores.json", default={}) or {}
+        recent_trades = list(trades if isinstance(trades, list) else (trades or {}).get("trades") or [])
+        before_jev = list(evaluated)
+        try:
+            evaluated, jev_summary = evaluate_candidates(
+                before_jev, config, features=features,
+                market_context=market_context,
+                positions=list(position_doc.get("positions") or []),
+                risk_state=risk_doc, edge_scores=edge_scores,
+                recent_trades=recent_trades,
+            )
+        except Exception:
+            logger.exception("JEV evaluation failed")
+            # Fail closed for paper gate, preserve baseline for shadow/live.
+            paper_gate = (
+                str(jev_cfg.get("mode") or "") == "paper_gate"
+                and config.get("execution", {}).get("mode") == "paper"
+                and config.get("execution", {}).get("live_trading_enabled") is False
+            )
+            evaluated = [] if paper_gate else before_jev
+        logger.info(
+            "JEV mode=%s: baseline=%d accepted=%d",
+            (jev_summary or {}).get("mode", "error"),
+            len(before_jev), len(evaluated),
+        )
+
     doc = {
         "timestamp": utc_now_iso(),
         "mode": evaluation_mode(config),

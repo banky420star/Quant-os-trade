@@ -40,6 +40,7 @@ class JevDecision:
     provider:str; model:str; latency_ms:float; reason:str=""
     def as_dict(self)->dict[str,Any]:
         return {"action":self.action,"probabilities":dict(self.probabilities),
+                "choice_probability":self.probabilities.get(self.action,0.0),
                 "confidence":self.confidence,"provider":self.provider,"model":self.model,
                 "latency_ms":round(self.latency_ms,2),"reason":self.reason}
 
@@ -131,7 +132,11 @@ class JevDecisionBus:
         probs={k:_clamp01(raw.get(k),0.0) for k in ("BUY","SELL","WAIT")}
         if sum(probs.values())<=0: probs[action]=_clamp01(answer.get("confidence"),1.0)
         total=sum(probs.values()) or 1.0; probs={k:v/total for k,v in probs.items()}
-        return JevDecision(action,probs,max(probs.values()),"openrouter",self.model,latency)
+        # Choice confidence is a concentration score, not P(chosen).
+        # Keep the model's confidence separate from the choice probability.
+        return JevDecision(action,probs,
+            _clamp01(answer.get("confidence"),probs[action]),
+            "openrouter",self.model,latency)
 
     def _heuristic(self,state:dict[str,Any])->JevDecision:
         t0=time.perf_counter(); c=state.get("candidate") or {}; side=str(c.get("side") or "").upper()
