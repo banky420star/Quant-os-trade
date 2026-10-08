@@ -69,6 +69,14 @@ verifier and paper broker, without persisting fake outcomes:
 python3 scripts/jev_paper_demo.py
 ```
 
+Run one **paper-only JEV-gated evaluation, verification and simulated
+execution cycle** on fresh real Quant state. This command refuses missing/stale
+state and any live execution setting:
+
+```bash
+python3 scripts/jev_paper_once.py
+```
+
 Run one shadow pass on **real existing state files**:
 
 ```bash
